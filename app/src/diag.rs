@@ -408,7 +408,7 @@ fn system_proxy() -> String {
 }
 
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use super::{Adapter, vpn_like};
     use std::net::Ipv4Addr;
     use windows_sys::Win32::NetworkManagement::IpHelper::{
@@ -486,6 +486,41 @@ mod win {
                 ));
                 p = a.Next;
             }
+        }
+        out
+    }
+
+    /// Имена запущенных exe (в нижнем регистре).
+    pub fn processes() -> Vec<String> {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        };
+        let mut out = vec![];
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE || snap.is_null() {
+                return out;
+            }
+            let mut e = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if Process32FirstW(snap, &mut e) != 0 {
+                loop {
+                    let n = e
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(e.szExeFile.len());
+                    out.push(String::from_utf16_lossy(&e.szExeFile[..n]).to_lowercase());
+                    if Process32NextW(snap, &mut e) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
         }
         out
     }

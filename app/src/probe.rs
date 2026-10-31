@@ -44,6 +44,12 @@ pub struct ProbeResult {
     pub note: Option<String>,
     /// Чем и откуда авторизовались (без значения): «Basic (AD)», «Bearer (токен, secrets.env)», «нет».
     pub auth_used: String,
+    /// Через какой сетевой адаптер шёл трафик (v0.4).
+    pub adapter: Option<String>,
+    /// Описание адаптера — для определения клиента VPN.
+    pub adapter_desc: Option<String>,
+    /// `Some(false)` — «Без ВПН»: трафик к цели мимо туннеля.
+    pub via_vpn: Option<bool>,
 }
 
 impl ProbeResult {
@@ -68,6 +74,9 @@ impl ProbeResult {
             error: None,
             note: None,
             auth_used: "нет".into(),
+            adapter: None,
+            adapter_desc: None,
+            via_vpn: None,
         }
     }
 
@@ -95,6 +104,16 @@ impl ProbeResult {
         );
         if let (Some(ms), Some(ip)) = (self.dns_ms, &self.resolved) {
             s += &format!(" dns={ms:.0}мс→{ip}");
+        }
+        if let Some(a) = &self.adapter {
+            s += &format!(
+                " через=«{a}»{}",
+                if self.via_vpn == Some(false) {
+                    "(без ВПН)"
+                } else {
+                    ""
+                }
+            );
         }
         if let Some(ms) = self.latency_ms {
             s += &format!(" tcp={ms:.0}мс");

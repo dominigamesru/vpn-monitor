@@ -54,6 +54,7 @@ pub fn lock(s: &SharedRef) -> std::sync::MutexGuard<'_, Shared> {
 
 struct Ui {
     tray: TrayIcon,
+    title: MenuItem,
     status: MenuItem,
     targets: Vec<(String, MenuItem)>,
     internet: MenuItem,
@@ -292,7 +293,11 @@ fn spawn_checker(
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
             let _ = proxy.send_event(UserEvent::Checking);
-            lock(&shared).checking = true;
+            {
+                let mut sh = lock(&shared);
+                sh.checking = true;
+                m.baseline = sh.store.baseline(&sh.settings.thresholds);
+            }
             let snap = m.run_check(manual);
             manual = false;
             {
@@ -435,6 +440,7 @@ fn build_ui(settings: &Settings, api_ok: bool) -> Result<Ui, String> {
     let targets: Vec<(String, MenuItem)> = settings
         .targets
         .iter()
+        .filter(|t| t.enabled)
         .map(|t| (t.id.clone(), item(&format!("{}: —", t.name))))
         .collect();
     let internet = item(&format!("{}: —", settings.internet.name));
@@ -487,6 +493,7 @@ fn build_ui(settings: &Settings, api_ok: bool) -> Result<Ui, String> {
     info!("tray", "иконка в трее создана");
     Ok(Ui {
         tray,
+        title,
         status,
         targets,
         internet,
@@ -548,6 +555,18 @@ fn refresh(u: &mut Ui) {
         }
     };
     u.status.set_text(&status);
+    // «Domini VPN · Happ / профиль» — клиент и профиль VPN (R4.3)
+    u.title.set_text(match &s.client {
+        Some(c) => format!(
+            "Domini VPN · {}{}",
+            c.name,
+            c.profile
+                .as_deref()
+                .map(|p| format!(" / {p}"))
+                .unwrap_or_default()
+        ),
+        None => "Domini VPN".into(),
+    });
     for (id, item) in &u.targets {
         if let Some(r) = s.targets.iter().find(|r| &r.target_id == id) {
             item.set_text(target_line(r));
@@ -594,6 +613,9 @@ fn target_line(r: &ProbeResult) -> String {
     }
     if let Some(l) = r.latency_ms {
         s += &format!("{l:.0} мс");
+    }
+    if r.via_vpn == Some(false) {
+        s += " · без ВПН";
     }
     if !r.ok {
         s += &format!(" · ⚠ {}", fail_text(r));

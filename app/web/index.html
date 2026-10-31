@@ -114,6 +114,13 @@ form.login label { display: grid; gap: 4px; color: var(--ink-2); font-size: 12px
 form.login input { font: inherit; color: var(--ink); background: var(--surface); border: 0; box-shadow: 0 0 0 1px var(--axis); border-radius: 8px; padding: 9px 10px; min-width: 0; }
 form.login input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .checks { display: grid; gap: 4px; margin-top: 12px; }
+.why { margin-top: 16px; display: grid; gap: 8px; }
+.why .row2 { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center; }
+.why .bar { height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+.why .bar i { display: block; height: 100%; border-radius: 4px; }
+.why .d { color: var(--ink-2); font-size: 12px; grid-column: 2; }
+.tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--ring); color: var(--ink-2); margin-left: 6px; }
+@media (max-width: 640px) { .why .row2 { grid-template-columns: 1fr; } .why .d { grid-column: 1; } }
 [hidden] { display: none !important; }
 @media (max-width: 640px) {
   nav.tabs { margin-left: 0; width: 100%; } nav.tabs button { flex: 1; }
@@ -155,6 +162,7 @@ form.login input:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
         <button class="btn" id="checkBtn">Проверить сейчас</button>
       </div>
       <div class="tiles" id="tiles"></div>
+      <div id="why" class="why"></div>
       <div class="targets" id="targets"></div>
     </div>
 
@@ -310,13 +318,33 @@ function renderState() {
   else if (sn.badge === "weak") { scoreEl.textContent = sn.score != null ? pad(sn.score) : "—"; $("#title").textContent = "Слабый интернет — VPN тут ни при чём"; }
   else { scoreEl.textContent = sn.score != null ? pad(sn.score) : "—"; $("#title").textContent = `Оценка VPN — ${({ good: "работать удобно", warning: "терпимо, но медленно", critical: "работать тяжело" })[st]}`; }
   const nextSec = sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec;
-  $("#meta").textContent = `Проверено в ${hhmm(sn.at)} · следующая через ~${Math.round(nextSec / 60)} мин · ${S.computer}`;
+  const cl = sn.client ? ` · ${sn.client.name}${sn.client.profile ? " / " + sn.client.profile : ""}` : "";
+  $("#meta").textContent = `Проверено в ${hhmm(sn.at)} · следующая через ~${Math.round(nextSec / 60)} мин${cl}`;
+  const why = $("#why"); why.replaceChildren();
+  if (sn.parts && sn.parts.length) {
+    const b = sn.baseline;
+    why.append(el("div", { class: "st", text: b ? `Ваша норма за неделю: ${num(b.latency_ms)} мс, ${num(b.speed_mbps, 1)} Мбит/с — оценка сравнивает с ней` : "Своя норма ещё копится — пока оценка по общим порогам" }));
+    for (const p of sn.parts) {
+      const st = p.value >= 0.8 ? "good" : p.value >= 0.4 ? "warning" : "critical";
+      why.append(el("div", { class: "row2" }, el("span", {}, stBadge(st, p.name)),
+        el("div", { class: "bar", role: "img", "aria-label": `${p.name}: ${Math.round(p.value * 100)}%` }, el("i", { style: `width:${Math.max(2, p.value * 100)}%;background:var(--${st})` })),
+        el("div", { class: "d", text: p.detail })));
+    }
+  }
 
   const tiles = $("#tiles"); tiles.replaceChildren();
   const tile = (k, v, unit, kind, raw) => tiles.append(el("div", { class: "tile" },
     el("div", { class: "k", text: k }), el("div", { class: "v" }, v, unit ? el("small", { text: " " + unit }) : null), stBadge(cls(kind, raw))));
-  tile("Задержка до офиса", num(sn.latency), "мс", "lat", sn.latency);
-  tile("Скорость до офиса", num(sn.speed, 1), "Мбит/с", "spd", sn.speed);
+  // статус плиток задержки и скорости — тот же, что в оценке (относительно своей нормы)
+  const part = (n) => (sn.parts || []).find((p) => p.name === n);
+  const ptile = (k, v, unit, kind, raw, pname) => {
+    const p = part(pname);
+    if (!p) return tile(k, v, unit, kind, raw);
+    const st = p.value >= 0.8 ? "good" : p.value >= 0.4 ? "warning" : "critical";
+    tiles.append(el("div", { class: "tile" }, el("div", { class: "k", text: k }), el("div", { class: "v" }, v, el("small", { text: " " + unit })), stBadge(st)));
+  };
+  ptile("Задержка до офиса", num(sn.latency), "мс", "lat", sn.latency, "Задержка");
+  ptile("Скорость до офиса", num(sn.speed, 1), "Мбит/с", "spd", sn.speed, "Скорость");
   const inet = sn.internet?.mbps;
   tile("Интернет", num(inet, 1), "Мбит/с", "inet", inet);
   tile("Стабильность", sn.stability == null ? "—" : num(sn.stability * 100), "%", "stab", sn.stability);
@@ -329,7 +357,9 @@ function renderState() {
     if (r.mbps != null && r.ok) bits.push(`${num(r.mbps, 1)} Мбит/с`);
     if (r.ip) bits.push(r.ip);
     const d = el("div", { class: "d", text: bits.join(" · ") + (r.error ? " — " + r.error : r.note ? " — " + r.note : "") });
-    tg.append(el("div", { class: "target" }, el("span", { class: "st" }, el("i", { class: s, text: ICON[s] })), el("div", {}, el("div", { class: "n", text: r.name }), d)));
+    const nm = el("div", { class: "n", text: r.name });
+    if (r.via_vpn === false && r.id !== "internet") nm.append(el("span", { class: "tag", text: "без ВПН" }));
+    tg.append(el("div", { class: "target" }, el("span", { class: "st" }, el("i", { class: s, text: ICON[s] })), el("div", {}, nm, d)));
   }
 }
 

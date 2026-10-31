@@ -51,7 +51,7 @@ jobs:
       - name: Обновление «последний релиз → эта сборка»
         working-directory: .
         run: python .github/scripts/upgrade_test.py --exe app/target/release/vpn-monitor.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: vpn-monitor-${{ github.sha }}
           path: app/target/release/vpn-monitor.exe

@@ -47,6 +47,102 @@ pub struct Verdict {
     pub speed: Option<f64>,
     pub stability: Option<f64>,
     pub explain: String,
+    /// Из чего сложилась оценка — для окна («почему такая оценка»).
+    pub parts: Vec<Part>,
+    /// Норма, с которой сравнивали (если накопилась).
+    pub baseline: Option<Baseline>,
+}
+
+/// Компонент оценки: 0..1 и словами — почему.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Part {
+    pub name: String,
+    pub value: f64,
+    pub detail: String,
+}
+
+/// Своя норма: медианы за последние дни, когда VPN работал (v0.4).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct Baseline {
+    pub latency_ms: Option<f64>,
+    pub speed_mbps: Option<f64>,
+    pub samples: usize,
+}
+
+/// Задержка → 0..1: в пределах абсолютных порогов — по ним; между ними — относительно нормы (если есть).
+pub fn latency_part(l: f64, th: &Thresholds, base: Option<f64>) -> (f64, String) {
+    if l <= th.latency_good_ms {
+        return (
+            1.0,
+            format!(
+                "{l:.0} мс — не выше {:.0} мс, хорошо в любом случае",
+                th.latency_good_ms
+            ),
+        );
+    }
+    if l >= th.latency_bad_ms {
+        return (
+            0.0,
+            format!(
+                "{l:.0} мс — выше {:.0} мс, плохо в любом случае",
+                th.latency_bad_ms
+            ),
+        );
+    }
+    match base {
+        Some(b) if b > 0.0 => {
+            let ratio = l / b;
+            let v = lerp_down(ratio, th.latency_ratio_ok, th.latency_ratio_bad);
+            (
+                v,
+                format!("{l:.0} мс — в {ratio:.1} раза от вашей нормы {b:.0} мс"),
+            )
+        }
+        _ => (
+            lerp_down(l, th.latency_good_ms, th.latency_bad_ms),
+            format!("{l:.0} мс (норма ещё копится)"),
+        ),
+    }
+}
+
+/// Скорость → 0..1: так же — абсолютные пороги по краям, между ними — доля нормы.
+pub fn speed_part(s: f64, th: &Thresholds, base: Option<f64>) -> (f64, String) {
+    if s >= th.speed_good_mbps {
+        return (
+            1.0,
+            format!(
+                "{s:.1} Мбит/с — от {:.0} Мбит/с, хорошо в любом случае",
+                th.speed_good_mbps
+            ),
+        );
+    }
+    if s <= th.speed_bad_mbps {
+        return (
+            0.0,
+            format!(
+                "{s:.1} Мбит/с — ниже {:.0} Мбит/с, плохо в любом случае",
+                th.speed_bad_mbps
+            ),
+        );
+    }
+    match base {
+        Some(b) if b > 0.0 => {
+            let share = s / b;
+            let v = ((share - th.speed_ratio_bad) / (th.speed_ratio_ok - th.speed_ratio_bad))
+                .clamp(0.0, 1.0);
+            (
+                v,
+                format!(
+                    "{s:.1} Мбит/с — {:.0}% от вашей нормы {b:.1} Мбит/с",
+                    share * 100.0
+                ),
+            )
+        }
+        _ => (
+            lerp_up_log(s, th.speed_bad_mbps, th.speed_good_mbps),
+            format!("{s:.1} Мбит/с (норма ещё копится)"),
+        ),
+    }
 }
 
 /// История проверок светофора для стабильности.
@@ -108,6 +204,7 @@ fn lerp_up_log(v: f64, bad: f64, good: f64) -> f64 {
 
 /// Считает вердикт. `speeds` — последние скорости целей скорости (Мбит/с), `internet` — последняя скорость
 /// интернета, `weak_before` — был ли интернет слабым (гистерезис: число возвращается выше порога + 8 Мбит/с).
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate(
     light: &[ProbeResult],
     speeds: &[f64],
@@ -116,6 +213,7 @@ pub fn evaluate(
     history: &History,
     th: &Thresholds,
     now: SystemTime,
+    baseline: Option<Baseline>,
 ) -> Verdict {
     let light: Vec<&ProbeResult> = light
         .iter()
@@ -131,6 +229,8 @@ pub fn evaluate(
             speed: None,
             stability,
             explain: "нет проб светофора".into(),
+            parts: vec![],
+            baseline,
         };
     }
     if light.iter().all(|r| !r.reachable) {
@@ -149,6 +249,8 @@ pub fn evaluate(
                     .collect::<Vec<_>>()
                     .join("; ")
             ),
+            parts: vec![],
+            baseline,
         };
     }
 
@@ -159,26 +261,50 @@ pub fn evaluate(
     let speed = (!speeds.is_empty()).then(|| speeds.iter().cloned().fold(f64::MIN, f64::max));
 
     let mut parts: Vec<(f64, f64, &str)> = vec![]; // (значение, вес, имя)
+    let mut detail: Vec<Part> = vec![];
     if let Some(l) = latency {
-        parts.push((
-            lerp_down(l, th.latency_good_ms, th.latency_bad_ms),
-            1.0,
-            "задержка",
-        ));
+        let (v, d) = latency_part(l, th, baseline.and_then(|b| b.latency_ms));
+        parts.push((v, 1.0, "задержка"));
+        detail.push(Part {
+            name: "Задержка".into(),
+            value: v,
+            detail: d,
+        });
     }
     if let Some(s) = speed {
-        parts.push((
-            lerp_up_log(s, th.speed_bad_mbps, th.speed_good_mbps),
-            1.0,
-            "скорость",
-        ));
+        let (v, d) = speed_part(s, th, baseline.and_then(|b| b.speed_mbps));
+        parts.push((v, 1.0, "скорость"));
+        detail.push(Part {
+            name: "Скорость".into(),
+            value: v,
+            detail: d,
+        });
     }
     if let Some(st) = stability {
-        parts.push((((st - 0.8) / 0.2).clamp(0.0, 1.0), 1.0, "стабильность"));
+        let v = ((st - 0.8) / 0.2).clamp(0.0, 1.0);
+        parts.push((v, 1.0, "стабильность"));
+        detail.push(Part {
+            name: "Стабильность".into(),
+            value: v,
+            detail: format!(
+                "{:.0}% проверок с ответом с момента включения VPN",
+                st * 100.0
+            ),
+        });
     }
     let partial = light.iter().any(|r| !r.reachable);
     if partial {
         parts.push((0.3, 1.0, "часть целей недоступна"));
+        let names: Vec<&str> = light
+            .iter()
+            .filter(|r| !r.reachable)
+            .map(|r| r.name.as_str())
+            .collect();
+        detail.push(Part {
+            name: "Цели светофора".into(),
+            value: 0.3,
+            detail: format!("не отвечает: {}", names.join(", ")),
+        });
     }
     let wsum: f64 = parts.iter().map(|p| p.1).sum();
     let g = if wsum > 0.0 {
@@ -231,6 +357,8 @@ pub fn evaluate(
         speed,
         stability,
         explain,
+        parts: detail,
+        baseline,
     }
 }
 
@@ -258,6 +386,7 @@ mod tests {
             &History::default(),
             &th,
             SystemTime::now(),
+            None,
         );
         assert_eq!(v.badge, Badge::NoVpn);
         assert_eq!(v.color, Color::Red);
@@ -279,6 +408,7 @@ mod tests {
             &h,
             &th,
             now,
+            None,
         );
         assert_eq!(good.color, Color::Green, "{good:?}");
         assert!(matches!(good.badge, Badge::Score(s) if s >= 90));
@@ -290,6 +420,7 @@ mod tests {
             &h,
             &th,
             now,
+            None,
         );
         assert_eq!(slow.color, Color::Red, "{slow:?}");
     }
@@ -299,12 +430,39 @@ mod tests {
         let th = Settings::embedded().thresholds; // weak < 5
         let now = SystemTime::now();
         let h = History::default();
-        let v = evaluate(&[light(true, 40.0)], &[], Some(1.0), false, &h, &th, now);
+        let v = evaluate(
+            &[light(true, 40.0)],
+            &[],
+            Some(1.0),
+            false,
+            &h,
+            &th,
+            now,
+            None,
+        );
         assert_eq!(v.badge, Badge::WeakInternet(1));
         // 7 Мбит/с: выше порога, но ниже порога + 8 → остаются полоски
-        let v = evaluate(&[light(true, 40.0)], &[], Some(7.0), true, &h, &th, now);
+        let v = evaluate(
+            &[light(true, 40.0)],
+            &[],
+            Some(7.0),
+            true,
+            &h,
+            &th,
+            now,
+            None,
+        );
         assert!(matches!(v.badge, Badge::WeakInternet(_)));
-        let v = evaluate(&[light(true, 40.0)], &[], Some(14.0), true, &h, &th, now);
+        let v = evaluate(
+            &[light(true, 40.0)],
+            &[],
+            Some(14.0),
+            true,
+            &h,
+            &th,
+            now,
+            None,
+        );
         assert!(matches!(v.badge, Badge::Score(_)));
     }
 

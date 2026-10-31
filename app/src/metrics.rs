@@ -22,6 +22,9 @@ pub struct TargetRec {
     /// Причина провала (`Dns`, `Connect`, `Timeout`, `Auth`, `Http`, `Config`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub f: Option<String>,
+    /// `true` — трафик к цели идёт мимо VPN («Без ВПН», v0.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nv: Option<bool>,
 }
 
 /// Одна проверка.
@@ -48,6 +51,9 @@ pub struct Record {
     pub stab: Option<f64>,
     #[serde(default)]
     pub tg: BTreeMap<String, TargetRec>,
+    /// Клиент VPN (и профиль), v0.4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vpn: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +108,7 @@ impl Record {
                         lat: r.latency_ms.map(round1),
                         mbps: r.mbps.map(round2),
                         f: r.fail.map(|f| format!("{f:?}")),
+                        nv: r.via_vpn.map(|v| !v).filter(|nv| *nv),
                     },
                 )
             })
@@ -123,6 +130,10 @@ impl Record {
             },
             stab: v.stability.map(round2),
             tg,
+            vpn: s.client.as_ref().map(|c| match &c.profile {
+                Some(p) => format!("{} / {p}", c.name),
+                None => c.name.clone(),
+            }),
         }
     }
 }
@@ -205,6 +216,31 @@ impl Store {
         self.meta.login = login.into();
     }
 
+    /// Своя норма (v0.4): медианы задержки и скорости за `baseline_days` по проверкам, когда VPN работал. Пока
+    /// проверок меньше `baseline_min_samples` — нормы нет, оценка идёт по абсолютным порогам.
+    pub fn baseline(&self, th: &crate::settings::Thresholds) -> Option<crate::score::Baseline> {
+        let from = now_ms() - th.baseline_days as i64 * 86_400_000;
+        let ok: Vec<&Record> = self
+            .records
+            .iter()
+            .filter(|r| r.t >= from && r.b == "score")
+            .collect();
+        let med = |mut v: Vec<f64>| -> Option<f64> {
+            if v.len() < th.baseline_min_samples {
+                return None;
+            }
+            v.sort_by(|a, b| a.total_cmp(b));
+            Some(v[v.len() / 2])
+        };
+        let lat = med(ok.iter().filter_map(|r| r.lat).collect());
+        let spd = med(ok.iter().filter_map(|r| r.spd).collect());
+        (lat.is_some() || spd.is_some()).then_some(crate::score::Baseline {
+            latency_ms: lat,
+            speed_mbps: spd,
+            samples: ok.len(),
+        })
+    }
+
     /// Записи с момента `from_ms`.
     pub fn since(&self, from_ms: i64) -> Vec<Record> {
         self.records
@@ -225,12 +261,40 @@ mod tests {
             c: "green".into(),
             b: "score".into(),
             s: Some(80),
-            lat: None,
-            spd: None,
+            lat: Some(180.0),
+            spd: Some(3.0),
             inet: None,
             stab: None,
             tg: BTreeMap::new(),
+            vpn: None,
         }
+    }
+
+    #[test]
+    fn baseline_needs_enough_samples() {
+        let meta = Meta {
+            computer: "PC".into(),
+            user: "u".into(),
+            version: "0".into(),
+            login: String::new(),
+            period: String::new(),
+        };
+        let dir = std::env::temp_dir().join(format!("vpnmon-base-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut st = Store::open(&dir, meta);
+        let th = crate::settings::Settings::embedded().thresholds;
+        let now = now_ms();
+        for i in 0..10 {
+            st.records.push(rec(now - i * 60_000));
+        }
+        assert!(st.baseline(&th).is_none(), "10 проверок — мало");
+        for i in 10..100 {
+            st.records.push(rec(now - i * 60_000));
+        }
+        let b = st.baseline(&th).unwrap();
+        assert_eq!(b.latency_ms, Some(180.0));
+        assert_eq!(b.speed_mbps, Some(3.0));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
