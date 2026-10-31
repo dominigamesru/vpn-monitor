@@ -5,7 +5,7 @@ use crate::score::{self, History, Verdict};
 use crate::secrets::Secrets;
 use crate::settings::{Role, Settings};
 use crate::{info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -30,6 +30,34 @@ pub struct Monitor {
     last: HashMap<String, ProbeResult>,
     weak_internet: bool,
     check_no: u64,
+    /// Последние задержки целей светофора и скорости целей скорости — оценка считается по медиане, чтобы один
+    /// выброс не ронял светофор.
+    latencies: VecDeque<f64>,
+    speeds: VecDeque<f64>,
+}
+
+/// Сколько последних проверок сглаживает оценку.
+pub const SMOOTH_CHECKS: usize = 5;
+
+fn push_capped(q: &mut VecDeque<f64>, v: f64, cap: usize) {
+    q.push_back(v);
+    while q.len() > cap {
+        q.pop_front();
+    }
+}
+
+pub fn median(q: &VecDeque<f64>) -> Option<f64> {
+    if q.is_empty() {
+        return None;
+    }
+    let mut v: Vec<f64> = q.iter().copied().collect();
+    v.sort_by(|a, b| a.total_cmp(b));
+    let n = v.len();
+    Some(if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    })
 }
 
 impl Monitor {
@@ -44,6 +72,8 @@ impl Monitor {
             last: HashMap::new(),
             weak_internet: false,
             check_no: 0,
+            latencies: VecDeque::new(),
+            speeds: VecDeque::new(),
         }
     }
 
@@ -119,8 +149,30 @@ impl Monitor {
             .filter(|r| r.role == Some(Role::Light))
             .collect();
         if !light_results.is_empty() {
-            self.history
-                .push_check(now, light_results.iter().any(|r| r.reachable));
+            let reachable = light_results.iter().any(|r| r.reachable);
+            self.history.push_check(now, reachable);
+            if reachable {
+                // худшая задержка среди целей светофора в этой проверке
+                if let Some(l) = light_results
+                    .iter()
+                    .filter_map(|r| r.latency_ms)
+                    .reduce(f64::max)
+                {
+                    push_capped(&mut self.latencies, l, SMOOTH_CHECKS);
+                }
+            } else {
+                // VPN не включён — прошлые замеры относятся к другому подключению
+                self.latencies.clear();
+                self.speeds.clear();
+            }
+        }
+        if let Some(sp) = results
+            .iter()
+            .filter(|r| r.role == Some(Role::Speed) && r.ok)
+            .filter_map(|r| r.mbps)
+            .reduce(f64::max)
+        {
+            push_capped(&mut self.speeds, sp, SMOOTH_CHECKS);
         }
         for r in &results {
             // полная проба точнее по скорости — лёгкая не затирает её скорость, но обновляет доступность
@@ -143,16 +195,20 @@ impl Monitor {
             .iter()
             .filter_map(|t| self.last.get(&t.id).cloned())
             .collect();
+        // в оценку — медианы последних проверок (в меню остаются последние значения по целям)
+        let smooth_latency = median(&self.latencies);
         let light: Vec<ProbeResult> = targets
             .iter()
             .filter(|r| r.role == Some(Role::Light))
             .cloned()
+            .map(|mut r| {
+                if r.reachable {
+                    r.latency_ms = smooth_latency.or(r.latency_ms);
+                }
+                r
+            })
             .collect();
-        let speeds: Vec<f64> = targets
-            .iter()
-            .filter(|r| r.role == Some(Role::Speed) && r.ok)
-            .filter_map(|r| r.mbps)
-            .collect();
+        let speeds: Vec<f64> = median(&self.speeds).into_iter().collect();
         let inet_mbps = self.last_internet.as_ref().and_then(|r| r.mbps);
         let verdict = score::evaluate(
             &light,
@@ -182,5 +238,19 @@ impl Monitor {
             internet: self.last_internet.clone(),
             verdict,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn median_ignores_single_spike() {
+        let q: VecDeque<f64> = [171.0, 165.0, 1133.0, 176.0, 160.0].into_iter().collect();
+        assert_eq!(median(&q), Some(171.0));
+        let q: VecDeque<f64> = [2.0, 4.0].into_iter().collect();
+        assert_eq!(median(&q), Some(3.0));
+        assert_eq!(median(&VecDeque::new()), None);
     }
 }
