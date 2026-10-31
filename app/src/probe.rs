@@ -42,6 +42,8 @@ pub struct ProbeResult {
     pub error: Option<String>,
     /// Предупреждение без провала (например, нет кредов — проба без авторизации).
     pub note: Option<String>,
+    /// Чем авторизовались (вид, без значения): «Bearer», «Basic», «PRIVATE-TOKEN», «нет».
+    pub auth_used: &'static str,
 }
 
 impl ProbeResult {
@@ -65,6 +67,7 @@ impl ProbeResult {
             fail: None,
             error: None,
             note: None,
+            auth_used: "нет",
         }
     }
 
@@ -97,7 +100,7 @@ impl ProbeResult {
             s += &format!(" tcp={ms:.0}мс");
         }
         if let Some(c) = self.http_status {
-            s += &format!(" http={c}");
+            s += &format!(" http={c} auth={}", self.auth_used);
         }
         if self.bytes > 0 {
             s += &format!(" скачано={} за {:.2}с", fmt_bytes(self.bytes), self.secs);
@@ -200,6 +203,24 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         full.then(|| Duration::from_secs(FULL_PROBE_SECS)),
         full,
     );
+    r.auth_used = headers
+        .first()
+        .map(|(k, v)| {
+            if k == "PRIVATE-TOKEN" {
+                "PRIVATE-TOKEN"
+            } else if v.starts_with("Bearer") {
+                "Bearer"
+            } else {
+                "Basic"
+            }
+        })
+        .unwrap_or("нет");
+    if r.fail == Some(Fail::Http) && r.http_status == Some(404) && t.auth == AuthKind::Gitlab {
+        r.error = Some(format!(
+            "HTTP 404 — пробного файла нет по адресу или у GITLAB_TOKEN нет доступа к проекту (GitLab отвечает 404 и \
+             при нехватке прав); адрес: {url}"
+        ));
+    }
     if let Some(n) = note {
         r.note = Some(n);
         if r.ok {
@@ -319,8 +340,13 @@ fn probe_url(
             } else {
                 Fail::Connect
             };
+            let hint = if is_fake_ip(&addr) {
+                " (подставной адрес DNS клиента VPN вроде Happ — туннель не пропускает трафик)"
+            } else {
+                ""
+            };
             return Raw {
-                r: r.failed(fail, format!("TCP {addr}: {e}")),
+                r: r.failed(fail, format!("TCP {addr}: {e}{hint}")),
                 looks_like_login: false,
             };
         }
@@ -396,6 +422,18 @@ fn probe_url(
     Raw {
         r,
         looks_like_login,
+    }
+}
+
+/// Подставные адреса, которые отдаёт DNS клиентов VPN с раздельным туннелированием (Happ: `1.2.3.4`;
+/// sing-box/xray fake-ip: `198.18.0.0/15`).
+fn is_fake_ip(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => {
+            let o = ip.octets();
+            o == [1, 2, 3, 4] || (o[0] == 198 && (o[1] & 0xfe) == 18)
+        }
+        _ => false,
     }
 }
 

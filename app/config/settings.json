@@ -42,7 +42,7 @@
       "id": "gitlab",
       "name": "GitLab",
       "role": "speed",
-      "url": "https://gitlab.dominigames.com/api/v4/projects/devops%2Fvpn-monitor-cli/repository/files/probe%2Fsample_1mb.bin/raw?ref=main",
+      "url": "https://gitlab.dominigames.com/api/v4/projects/devops%2Fvpn-monitor-cli/repository/files/probe%2Fsample_1mb.bin/raw?ref=HEAD",
       "url_env": "GITLAB_PROBE_URL",
       "auth": "gitlab",
       "timeout_sec": 30

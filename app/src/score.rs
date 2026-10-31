@@ -49,13 +49,32 @@ pub struct Verdict {
     pub explain: String,
 }
 
-/// История проб светофора для стабильности.
+/// История проверок светофора для стабильности.
+///
+/// Окно стабильности — с момента включения VPN, но не больше `stability_window_min`: две проверки подряд без ответа
+/// цели светофора — это «VPN не включён» (знак «!»), а не нестабильность; история начинается заново. Одиночный
+/// провал среди успешных — нестабильность.
 #[derive(Debug, Default)]
 pub struct History {
     items: VecDeque<(SystemTime, bool)>,
+    off_streak: u32,
 }
 
 impl History {
+    /// Итог одной проверки: ответила ли хоть одна цель светофора.
+    pub fn push_check(&mut self, at: SystemTime, reachable: bool) {
+        if reachable {
+            self.off_streak = 0;
+        } else {
+            self.off_streak += 1;
+            if self.off_streak >= 2 {
+                self.items.clear();
+                return;
+            }
+        }
+        self.push(at, reachable);
+    }
+
     pub fn push(&mut self, at: SystemTime, reachable: bool) {
         self.items.push_back((at, reachable));
         let cutoff = at - Duration::from_secs(24 * 3600);
@@ -287,6 +306,23 @@ mod tests {
         assert!(matches!(v.badge, Badge::WeakInternet(_)));
         let v = evaluate(&[light(true, 40.0)], &[], Some(14.0), true, &h, &th, now);
         assert!(matches!(v.badge, Badge::Score(_)));
+    }
+
+    #[test]
+    fn vpn_off_is_not_instability() {
+        let now = SystemTime::now();
+        let mut h = History::default();
+        // VPN выключен несколько проверок, потом включили
+        for _ in 0..4 {
+            h.push_check(now, false);
+        }
+        h.push_check(now, true);
+        h.push_check(now, true);
+        assert_eq!(h.stability(now, Duration::from_secs(3600)), Some(1.0));
+        // одиночный провал среди успешных — нестабильность
+        h.push_check(now, false);
+        h.push_check(now, true);
+        assert_eq!(h.stability(now, Duration::from_secs(3600)), Some(0.75));
     }
 
     #[test]

@@ -104,7 +104,9 @@ impl Monitor {
             }
         }
 
-        if full_due {
+        // полная проба считается сделанной, только если все большие файлы скачались; иначе — повтор в следующую
+        // проверку (например, VPN включили сразу после неудачной пробы)
+        if full_due && results.iter().filter(|r| r.full).all(|r| r.ok) {
             self.last_full = Some(Instant::now());
         }
         if let Some(i) = internet {
@@ -112,10 +114,15 @@ impl Monitor {
             self.last_internet = Some(i);
         }
         let now = SystemTime::now();
+        let light_results: Vec<&ProbeResult> = results
+            .iter()
+            .filter(|r| r.role == Some(Role::Light))
+            .collect();
+        if !light_results.is_empty() {
+            self.history
+                .push_check(now, light_results.iter().any(|r| r.reachable));
+        }
         for r in &results {
-            if r.role == Some(Role::Light) {
-                self.history.push(now, r.reachable);
-            }
             // полная проба точнее по скорости — лёгкая не затирает её скорость, но обновляет доступность
             let keep_full_speed = !r.full
                 && self.last.get(&r.target_id).is_some_and(|p| {
