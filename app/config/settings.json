@@ -15,7 +15,13 @@
     "stability_window_min": 60,
     "score_green": 70,
     "score_yellow": 40,
-    "internet_weak_mbps": 5
+    "internet_weak_mbps": 5,
+    "baseline_days": 7,
+    "baseline_min_samples": 60,
+    "latency_ratio_ok": 1.3,
+    "latency_ratio_bad": 3.0,
+    "speed_ratio_ok": 0.75,
+    "speed_ratio_bad": 0.3
   },
   "targets": [
     {
@@ -55,7 +61,8 @@
       "url": "https://gitlab.dominigames.com/api/v4/projects/devops%2Fvpn-monitor-cli/repository/files/probe%2Fsample_1mb.bin/raw?ref=HEAD",
       "url_env": "GITLAB_PROBE_URL",
       "auth": "gitlab",
-      "timeout_sec": 30
+      "timeout_sec": 30,
+      "enabled": false
     }
   ],
   "internet": {
@@ -63,5 +70,49 @@
     "url": "https://proof.ovh.net/files/10Mb.dat",
     "max_seconds": 8,
     "timeout_sec": 20
-  }
+  },
+  "vpn_clients": [
+    {
+      "name": "Happ",
+      "adapters": [
+        "happ-tun",
+        "sing-tun"
+      ],
+      "processes": [
+        "Happ.exe",
+        "happd.exe"
+      ]
+    },
+    {
+      "name": "OpenVPN Connect",
+      "adapters": [
+        "OpenVPN Connect",
+        "Data Channel Offload"
+      ],
+      "processes": [
+        "OpenVPNConnect.exe"
+      ]
+    },
+    {
+      "name": "OpenVPN GUI",
+      "adapters": [
+        "TAP-Windows Adapter V9",
+        "Data Channel Offload",
+        "Wintun"
+      ],
+      "processes": [
+        "openvpn-gui.exe",
+        "openvpn.exe"
+      ]
+    }
+  ],
+  "ignore_adapters": [
+    "Tailscale",
+    "WSL",
+    "vEthernet",
+    "Hyper-V",
+    "ZeroTier",
+    "VirtualBox",
+    "VMware"
+  ]
 }

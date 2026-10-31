@@ -15,6 +15,7 @@ pub mod score;
 pub mod secrets;
 pub mod settings;
 pub mod update;
+pub mod vpn;
 
 /// Версия этой сборки (из Cargo.toml; CI проверяет, что совпадает с тегом релиза).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

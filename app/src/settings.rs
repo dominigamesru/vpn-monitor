@@ -24,6 +24,12 @@ pub struct Settings {
     pub internet: Internet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gitlab_oauth: Option<GitlabOauth>,
+    /// Клиенты VPN в офис и как их узнать (v0.4).
+    #[serde(default)]
+    pub vpn_clients: Vec<VpnClientRule>,
+    /// Адаптеры-туннели, которые не VPN в офис (Tailscale, WSL…).
+    #[serde(default)]
+    pub ignore_adapters: Vec<String>,
     /// Пишет CI при релизе: контрольные суммы exe этой версии.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe: Option<ExeInfo>,
@@ -39,6 +45,55 @@ pub struct Thresholds {
     pub score_green: u32,
     pub score_yellow: u32,
     pub internet_weak_mbps: f64,
+    // --- v0.4: оценка относительно своей нормы (медиана за `baseline_days`) ---
+    #[serde(default = "d_baseline_days")]
+    pub baseline_days: u64,
+    #[serde(default = "d_baseline_min")]
+    pub baseline_min_samples: usize,
+    /// Задержка во столько раз выше нормы — ещё «хорошо» / уже «плохо».
+    #[serde(default = "d_lat_ok")]
+    pub latency_ratio_ok: f64,
+    #[serde(default = "d_lat_bad")]
+    pub latency_ratio_bad: f64,
+    /// Скорость — такая доля нормы ещё «хорошо» / уже «плохо».
+    #[serde(default = "d_spd_ok")]
+    pub speed_ratio_ok: f64,
+    #[serde(default = "d_spd_bad")]
+    pub speed_ratio_bad: f64,
+}
+
+fn d_baseline_days() -> u64 {
+    7
+}
+fn d_baseline_min() -> usize {
+    60
+}
+fn d_lat_ok() -> f64 {
+    1.3
+}
+fn d_lat_bad() -> f64 {
+    3.0
+}
+fn d_spd_ok() -> f64 {
+    0.75
+}
+fn d_spd_bad() -> f64 {
+    0.3
+}
+fn d_true() -> bool {
+    true
+}
+
+/// Правило «адаптер / процесс → клиент VPN» (R3.6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VpnClientRule {
+    pub name: String,
+    /// Подстроки имени или описания адаптера (без учёта регистра).
+    #[serde(default)]
+    pub adapters: Vec<String>,
+    /// Имена exe клиента.
+    #[serde(default)]
+    pub processes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +151,9 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_kind: Option<AuthKind>,
     pub timeout_sec: u64,
+    /// `false` — цель на паузе: не проверяется (v0.4; старые версии поле не читают и проверяют).
+    #[serde(default = "d_true")]
+    pub enabled: bool,
 }
 
 impl Target {

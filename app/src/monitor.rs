@@ -18,6 +18,8 @@ pub struct Snapshot {
     pub internet: Option<ProbeResult>,
     /// Интернет мерился в этой проверке (а не взят из прошлой).
     pub internet_fresh: bool,
+    /// Клиент и профиль VPN, через который идут цели светофора (v0.4).
+    pub client: Option<crate::vpn::Client>,
     pub verdict: Verdict,
 }
 
@@ -36,6 +38,8 @@ pub struct Monitor {
     /// выброс не ронял светофор.
     latencies: VecDeque<f64>,
     speeds: VecDeque<f64>,
+    /// Своя норма (медианы за неделю) — задаёт трей перед проверкой из файлов метрик (v0.4).
+    pub baseline: Option<crate::score::Baseline>,
 }
 
 /// Сколько последних проверок сглаживает оценку.
@@ -76,6 +80,7 @@ impl Monitor {
             check_no: 0,
             latencies: VecDeque::new(),
             speeds: VecDeque::new(),
+            baseline: None,
         }
     }
 
@@ -109,6 +114,7 @@ impl Monitor {
             let handles: Vec<_> = s
                 .targets
                 .iter()
+                .filter(|t| t.enabled)
                 .map(|t| {
                     let secrets = &secrets;
                     sc.spawn(move || {
@@ -129,6 +135,25 @@ impl Monitor {
             (results, internet)
         });
 
+        let mut results = results;
+        let mut internet = internet;
+        for r in results.iter_mut().chain(internet.iter_mut()) {
+            annotate_route(r, &self.settings);
+        }
+        let client = detect_client(&results, &self.settings);
+        match &client {
+            Some(c) => info!(
+                "vpn",
+                "клиент VPN: {}{} (адаптер «{}»)",
+                c.name,
+                c.profile
+                    .as_deref()
+                    .map(|p| format!(", профиль «{p}»"))
+                    .unwrap_or_default(),
+                c.adapter
+            ),
+            None => info!("vpn", "клиент VPN не определён"),
+        }
         for r in results.iter().chain(internet.iter()) {
             if r.ok {
                 info!("probe", "{}", r.log_line());
@@ -172,7 +197,8 @@ impl Monitor {
         }
         if let Some(sp) = results
             .iter()
-            .filter(|r| r.role == Some(Role::Speed) && r.ok)
+            // «Без ВПН» — это скорость интернета, а не VPN: в оценку VPN не идёт
+            .filter(|r| r.role == Some(Role::Speed) && r.ok && r.via_vpn != Some(false))
             .filter_map(|r| r.mbps)
             .reduce(f64::max)
         {
@@ -213,6 +239,7 @@ impl Monitor {
             })
             .collect();
         let speeds: Vec<f64> = median(&self.speeds).into_iter().collect();
+        let baseline = self.baseline;
         let inet_mbps = self.last_internet.as_ref().and_then(|r| r.mbps);
         let verdict = score::evaluate(
             &light,
@@ -222,6 +249,7 @@ impl Monitor {
             &self.history,
             &self.settings.thresholds,
             now,
+            baseline,
         );
         self.weak_internet = matches!(verdict.badge, score::Badge::WeakInternet(_));
         info!(
@@ -241,9 +269,41 @@ impl Monitor {
             targets,
             internet: self.last_internet.clone(),
             internet_fresh,
+            client,
             verdict,
         }
     }
+}
+
+/// Маршрут до цели: адаптер и «через VPN ли» (по правилам клиентов из настроек).
+fn annotate_route(r: &mut ProbeResult, s: &Settings) {
+    let Some(ip) = r
+        .resolved
+        .as_deref()
+        .and_then(|x| x.parse::<std::net::IpAddr>().ok())
+    else {
+        return;
+    };
+    if let Some(route) = crate::vpn::route(&ip, &s.vpn_clients, &s.ignore_adapters) {
+        r.adapter = Some(route.adapter);
+        r.adapter_desc = Some(route.description);
+        // «Без ВПН» имеет смысл для целей офиса; интернет всегда мимо VPN
+        r.via_vpn = Some(route.via_vpn);
+    }
+}
+
+/// Клиент VPN — по адаптеру, через который идут цели светофора (если они идут через VPN).
+fn detect_client(results: &[ProbeResult], s: &Settings) -> Option<crate::vpn::Client> {
+    let r = results
+        .iter()
+        .find(|r| r.role == Some(Role::Light) && r.via_vpn == Some(true))?;
+    let procs = crate::vpn::processes();
+    crate::vpn::detect(
+        r.adapter.as_deref()?,
+        r.adapter_desc.as_deref().unwrap_or(""),
+        &s.vpn_clients,
+        &procs,
+    )
 }
 
 #[cfg(test)]

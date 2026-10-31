@@ -282,6 +282,7 @@ fn probe_json(r: &ProbeResult) -> Value {
         "at": ms(r.at), "full": r.full, "reachable": r.reachable, "ok": r.ok,
         "ip": r.resolved, "latency": r.latency_ms, "mbps": r.mbps, "http": r.http_status,
         "fail": r.fail.map(|f| format!("{f:?}")), "error": r.error, "note": r.note, "auth": r.auth_used,
+        "adapter": r.adapter, "via_vpn": r.via_vpn,
     })
 }
 
@@ -301,6 +302,8 @@ fn state(shared: &SharedRef) -> Value {
             },
             "score": v.score, "latency": v.latency, "speed": v.speed, "stability": v.stability,
             "explain": v.explain,
+            "parts": v.parts, "baseline": v.baseline,
+            "client": sn.client,
             "targets": sn.targets.iter().map(probe_json).collect::<Vec<_>>(),
             "internet": sn.internet.as_ref().map(probe_json),
         })
@@ -320,7 +323,7 @@ fn state(shared: &SharedRef) -> Value {
             "full_min": s.full_probe_interval_min, "internet_min": s.internet_interval_min,
             "update_min": s.update_interval_min,
         },
-        "targets": s.targets.iter().map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
+        "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
         "login": vpn_monitor::creds::load_ad().map(|c| c.login),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
