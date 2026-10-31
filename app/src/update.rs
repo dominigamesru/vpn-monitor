@@ -6,7 +6,7 @@
 //! - `{base}/v{ver}/settings.json` — настройки версии, в `exe.sha256` — контрольная сумма exe;
 //! - `{base}/v{ver}/vpn-monitor.exe`.
 
-use crate::settings::Settings;
+use crate::settings::ExeInfo;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -69,10 +69,23 @@ pub fn fetch_latest_version(base: &str) -> Result<String, String> {
 }
 
 /// Настройки версии `ver` (сырой текст и разобранные).
-pub fn fetch_settings(base: &str, ver: &str) -> Result<(String, Settings), String> {
+/// Настройки версии `ver`: сырой текст и данные exe. Целиком их здесь не разбираем — это схема другой версии;
+/// нужен только блок `exe` (контракт: все JSON обратно совместимы, ADR 0004).
+pub fn fetch_settings(base: &str, ver: &str) -> Result<(String, ExeInfo), String> {
     let text = get_text(&asset_url(base, ver, "settings.json"))?;
-    let s = Settings::parse(&text)?;
-    Ok((text, s))
+    let exe = exe_info(&text)?;
+    Ok((text, exe))
+}
+
+pub fn exe_info(settings_text: &str) -> Result<ExeInfo, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(settings_text).map_err(|e| format!("settings.json: {e}"))?;
+    serde_json::from_value::<ExeInfo>(
+        v.get("exe")
+            .cloned()
+            .ok_or("в settings.json релиза нет блока exe")?,
+    )
+    .map_err(|e| format!("settings.json, блок exe: {e}"))
 }
 
 /// Качает exe версии `ver` в `dest` через `dest.part`, сверяя SHA-256. Возвращает размер.
@@ -157,6 +170,16 @@ mod tests {
         assert!(needs_update("0.2.0", "0.1.0"), "откат тоже обновление");
         assert!(needs_update("0.1.0", "0.2.0"));
         assert!(!needs_update("0.1.0", "v0.1.0"));
+    }
+
+    #[test]
+    fn exe_info_ignores_unknown_settings() {
+        // настройки будущей версии с незнакомыми полями и значениями — блок exe всё равно читается
+        let text = r#"{"schema": 1, "targets": [{"auth": "kerberos"}], "new_field": {"x": 1},
+            "exe": {"version": "9.9.9", "sha256": "ab", "crc32": "01", "size": 3, "future": true}}"#;
+        let e = exe_info(text).unwrap();
+        assert_eq!(e.version, "9.9.9");
+        assert!(exe_info(r#"{"schema": 1}"#).is_err());
     }
 
     #[test]

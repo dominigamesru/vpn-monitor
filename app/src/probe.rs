@@ -166,7 +166,7 @@ pub fn auth(kind: AuthKind, secrets: &Secrets) -> Auth {
         })
     };
     match kind {
-        AuthKind::None => Auth {
+        AuthKind::None | AuthKind::Unknown => Auth {
             headers: vec![],
             label: "нет".into(),
             missing: None,
@@ -234,7 +234,7 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
                 .failed(Fail::Config, "нет адреса");
         }
     };
-    let a = auth(t.auth, secrets);
+    let a = auth(t.kind(), secrets);
     let (headers, note) = (a.headers, a.missing);
     let mut r = probe_url(
         &t.id,
@@ -252,11 +252,11 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         full,
     );
     r.auth_used = a.label.clone();
-    if r.fail == Some(Fail::Auth) && t.auth == AuthKind::Jira && note.is_some() {
+    if r.fail == Some(Fail::Auth) && t.kind() == AuthKind::Jira && note.is_some() {
         r.error =
             Some("Jira требует входа: войдите логином AD в окне (вкладка «Подключение»)".into());
     }
-    if r.fail == Some(Fail::Http) && r.http_status == Some(404) && t.auth == AuthKind::Gitlab {
+    if r.fail == Some(Fail::Http) && r.http_status == Some(404) && t.kind() == AuthKind::Gitlab {
         r.error = Some(format!(
             "HTTP 404 — пробного файла нет по адресу или у GITLAB_TOKEN нет доступа к проекту (GitLab отвечает 404 и \
              при нехватке прав); адрес: {url}"
@@ -271,7 +271,7 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
             }
         }
     }
-    if t.auth == AuthKind::Confluence
+    if t.kind() == AuthKind::Confluence
         && r.ok
         && r.error.is_none()
         && r.note.is_none()

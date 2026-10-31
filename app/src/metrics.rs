@@ -260,6 +260,18 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Все JSON обратно совместимы: файл старой версии (без новых полей) и файл будущей (с незнакомыми) читаются.
+    #[test]
+    fn metrics_files_are_backward_and_forward_compatible() {
+        let old = r#"{"meta":{"computer":"PC","user":"u","version":"0.2.0","period":"сутки"},
+            "records":[{"t":1,"c":"green","b":"score","s":80,"tg":{"svn":{"r":true,"ok":true}}}]}"#;
+        let f: File = serde_json::from_str(old).unwrap();
+        assert_eq!(f.meta.login, "");
+        let future = r#"{"meta":{"computer":"PC","user":"u","version":"9.0.0","login":"x","city":"Lisbon"},
+            "records":[{"t":1,"c":"green","b":"newbadge","vpn_client":"Happ","tg":{}}],"extra":1}"#;
+        assert!(serde_json::from_str::<File>(future).is_ok());
+    }
+
     #[test]
     fn day_start_is_before_or_equal() {
         let t = now_ms();

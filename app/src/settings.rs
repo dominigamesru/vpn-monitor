@@ -58,7 +58,14 @@ pub enum AuthKind {
     Svn,
     Gitlab,
     Jira,
+    /// Значение из будущих версий — читаем как «без входа», а не падаем (совместимость, ADR 0004).
+    #[serde(other)]
+    Unknown,
 }
+
+/// Значения `auth`, которые понимают все выпущенные версии (v0.1–v0.2). В `settings.json` поле `auth` — только из
+/// этого списка; новые виды входа — в `auth_kind` (старые версии его не читают, но и не падают).
+pub const LEGACY_AUTH: &[&str] = &["none", "confluence", "svn", "gitlab"];
 
 /// OAuth-приложение GitLab для входа паролем AD (ADR 0006). Пусто — GitLab только по `GITLAB_TOKEN`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,8 +90,19 @@ pub struct Target {
     pub full_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_url_env: Option<String>,
+    /// Вид входа, понятный и старым версиям (см. `LEGACY_AUTH`).
     pub auth: AuthKind,
+    /// Вид входа для версий v0.3+; если задан — главнее `auth`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_kind: Option<AuthKind>,
     pub timeout_sec: u64,
+}
+
+impl Target {
+    /// Действующий вид входа.
+    pub fn kind(&self) -> AuthKind {
+        self.auth_kind.unwrap_or(self.auth)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +216,29 @@ mod tests {
                 .any(|t| t.id == "confluence" && t.role == Role::Light)
         );
         assert!(s.release_base_url.starts_with("https://github.com/"));
+    }
+
+    /// Контракт с установленными копиями (ADR 0004): старый обновлятель (v0.2) разбирает `settings.json` новой
+    /// версии своей схемой. Поле `auth` — только из значений, которые он знает; роли — light/speed.
+    #[test]
+    fn settings_json_readable_by_v0_2() {
+        let v: serde_json::Value = serde_json::from_str(EMBEDDED).unwrap();
+        for t in v["targets"].as_array().unwrap() {
+            let auth = t["auth"].as_str().unwrap();
+            assert!(
+                LEGACY_AUTH.contains(&auth),
+                "auth={auth} не поймёт v0.2 — новый вид входа кладите в auth_kind"
+            );
+            assert!(matches!(t["role"].as_str(), Some("light" | "speed")));
+        }
+        assert_eq!(v["schema"], 1);
+    }
+
+    #[test]
+    fn unknown_auth_kind_does_not_break_parsing() {
+        let text = EMBEDDED.replace("\"auth_kind\": \"jira\"", "\"auth_kind\": \"kerberos\"");
+        let s = Settings::parse(&text).unwrap();
+        assert!(s.targets.iter().any(|t| t.kind() == AuthKind::Unknown));
     }
 
     #[test]

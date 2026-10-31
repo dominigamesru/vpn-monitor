@@ -91,7 +91,7 @@ pub fn login(settings: &Settings, user: &str, password: &str) -> LoginResult {
         settings
             .targets
             .iter()
-            .find(|t| t.auth == kind)
+            .find(|t| t.kind() == kind)
             .map(|t| t.url.clone())
     };
     let mut jobs: Vec<(String, String, Option<&str>)> = vec![];
