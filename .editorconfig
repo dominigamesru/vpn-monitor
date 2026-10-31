@@ -1,0 +1,20 @@
+# Форматирование: скрипты пишут файлы по этим же правилам (scripts/common.py: write_text / write_json / open_text).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+[*.md]
+# двойной пробел в конце строки — перенос строки в Markdown
+trim_trailing_whitespace = false
+
+[*.{bat,cmd,ps1}]
+end_of_line = crlf

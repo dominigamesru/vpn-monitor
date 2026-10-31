@@ -1,0 +1,25 @@
+# Концы строк: LF везде (скрипты пишут файлы через common.write_text / write_json / open_text — UTF-8 и LF);
+# bat/cmd/ps1 — CRLF, как принято в Windows
+* text=auto eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+# двоичные — без преобразования и без текстового diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.bin binary

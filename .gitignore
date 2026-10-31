@@ -1,0 +1,18 @@
+# отчёты и временное (scripts/*.py пишут в reports/)
+reports/
+
+# локальные инструменты
+/tools/
+
+# секреты
+.env
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# ОС
+Thumbs.db
+.DS_Store
