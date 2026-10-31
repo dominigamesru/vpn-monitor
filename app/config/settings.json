@@ -28,6 +28,15 @@
       "timeout_sec": 20
     },
     {
+      "id": "jira",
+      "name": "Jira",
+      "role": "light",
+      "url": "https://jira.corp.dominigames.com/rest/api/2/myself",
+      "url_env": "JIRA_PROBE_URL",
+      "auth": "jira",
+      "timeout_sec": 20
+    },
+    {
       "id": "svn",
       "name": "SVN",
       "role": "speed",

@@ -1,9 +1,12 @@
 //! VPN Monitor: логика, общая для всех платформ (пробы, оценка, иконка, обновление, лог).
 //! Трей и установка — только Windows, в `main.rs`.
 
+pub mod creds;
 pub mod diag;
+pub mod gitlab;
 pub mod icon;
 pub mod log;
+pub mod login;
 pub mod metrics;
 pub mod monitor;
 pub mod net;

@@ -22,6 +22,8 @@ pub struct Settings {
     pub thresholds: Thresholds,
     pub targets: Vec<Target>,
     pub internet: Internet,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitlab_oauth: Option<GitlabOauth>,
     /// Пишет CI при релизе: контрольные суммы exe этой версии.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe: Option<ExeInfo>,
@@ -55,6 +57,16 @@ pub enum AuthKind {
     Confluence,
     Svn,
     Gitlab,
+    Jira,
+}
+
+/// OAuth-приложение GitLab для входа паролем AD (ADR 0006). Пусто — GitLab только по `GITLAB_TOKEN`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitlabOauth {
+    /// Адрес GitLab, например `https://gitlab.dominigames.com`.
+    pub url: String,
+    /// Application ID (не секрет).
+    pub client_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

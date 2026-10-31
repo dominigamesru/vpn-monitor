@@ -27,14 +27,12 @@ pub fn run() {
                  Папка: {}\nЛог: vpn-monitor.log в этой папке.",
                 dir.display()
             );
-            if secrets_new || secrets_empty {
-                text += "\n\nЗаполните secrets.env (креды Confluence, SVN, GitLab) — он откроется в Блокноте. \
-                         Можно скопировать туда свой .env. После сохранения нажмите на иконку — проверка начнётся заново.";
+            let _ = secrets_new;
+            if secrets_empty {
+                text += "\n\nСейчас откроется окно в браузере — войдите логином и паролем AD (вкладка «Подключение»). \
+                         Пароль сохранится в Диспетчере учётных данных Windows.";
             }
             win::message("VPN Monitor", &text, false);
-            if secrets_new || secrets_empty {
-                win::open_in_notepad(&crate::secrets_path(&dir));
-            }
         }
         Err(e) => {
             error!("install", "{e}");
@@ -94,12 +92,8 @@ fn install(dir: &Path) -> Result<Done, String> {
         std::fs::write(&secrets, SECRETS_TEMPLATE).map_err(|e| format!("secrets.env: {e}"))?;
         info!("install", "создан шаблон {}", secrets.display());
     }
-    let secrets_empty = vpn_monitor::secrets::Secrets::load(&secrets)
-        .get("CONFLUENCE_TOKEN")
-        .is_none()
-        && vpn_monitor::secrets::Secrets::load(&secrets)
-            .get("CONFLUENCE_PASSWORD")
-            .is_none();
+    let loaded = vpn_monitor::secrets::Secrets::load(&secrets);
+    let secrets_empty = loaded.ad_login().is_none() && loaded.get("CONFLUENCE_TOKEN").is_none();
 
     cleanup_old_exes(dir, &target);
     win::autostart_set(&target)?;
@@ -108,7 +102,7 @@ fn install(dir: &Path) -> Result<Done, String> {
         "автозапуск: {}",
         win::autostart_get().unwrap_or_default()
     );
-    win::spawn_detached(&target, &["--tray"])?;
+    win::spawn_detached(&target, &["--tray", "--first-run"])?;
     Ok(Done {
         exe: target,
         secrets_new,

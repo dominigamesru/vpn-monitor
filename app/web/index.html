@@ -100,15 +100,29 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .diag { display: grid; gap: 12px; }
 .diag .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .diag ul { list-style: none; padding: 0; margin: 8px 0; }
-.diag li { display: grid; grid-template-columns: 22px 90px 1fr; gap: 6px; padding: 3px 0; align-items: start; }
+.diag li { display: grid; grid-template-columns: 22px 90px minmax(0, 1fr); gap: 6px; padding: 3px 0; align-items: start; }
+.diag li > span:last-child { overflow-wrap: anywhere; }
 .diag li .sn { color: var(--ink-2); }
 .hint { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
 pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; overflow: auto; max-height: 70vh; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 0; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
-.kv dt { color: var(--ink-2); } .kv dd { margin: 0; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; }
+.kv dt { color: var(--ink-2); } .kv dd { margin: 0; overflow-wrap: anywhere; }
 .banner { background: var(--surface-2); border-left: 4px solid var(--critical); padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
+.banner.info { border-left-color: var(--warning); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+form.login { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-top: 12px; }
+form.login label { display: grid; gap: 4px; color: var(--ink-2); font-size: 12px; }
+form.login input { font: inherit; color: var(--ink); background: var(--surface); border: 0; box-shadow: 0 0 0 1px var(--axis); border-radius: 8px; padding: 9px 10px; min-width: 0; }
+form.login input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.checks { display: grid; gap: 4px; margin-top: 12px; }
 [hidden] { display: none !important; }
-@media (max-width: 640px) { nav.tabs { margin-left: 0; width: 100%; } nav.tabs button { flex: 1; } .score { min-width: 88px; height: 72px; font-size: 36px; } }
+@media (max-width: 640px) {
+  nav.tabs { margin-left: 0; width: 100%; } nav.tabs button { flex: 1; }
+  .score { min-width: 88px; height: 72px; font-size: 36px; }
+  table { display: block; overflow-x: auto; }
+  form.login { grid-template-columns: minmax(0, 1fr); }
+  .kv { grid-template-columns: minmax(0, 1fr); } .kv dd { margin-bottom: 6px; }
+  .diag li { grid-template-columns: 22px 64px minmax(0, 1fr); }
+}
 @media (forced-colors: active) { .score, .st i { forced-color-adjust: none; } }
 </style>
 </head>
@@ -127,6 +141,10 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
 
   <!-- ОБЗОР -->
   <section id="tab-overview">
+    <div class="banner info" id="loginBanner" hidden>
+      <span>Вы не вошли логином AD — Confluence, Jira и SVN проверяются без входа, данные неполные.</span>
+      <button class="btn" id="goLogin">Войти</button>
+    </div>
     <div class="card">
       <div class="hero">
         <div class="score nodata" id="score">—</div>
@@ -170,6 +188,17 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
 
   <!-- ПОДКЛЮЧЕНИЕ -->
   <section id="tab-conn" hidden>
+    <div class="card" id="loginCard">
+      <h2>Вход логином AD</h2>
+      <p class="sub">Один логин и пароль для Jira, Confluence, SVN и GitLab. Пароль проверяется на сервисах и хранится в Диспетчере учётных данных Windows — не в файлах и не в логе. Приложение только читает.</p>
+      <div id="loginState"></div>
+      <form class="login" id="loginForm" autocomplete="on">
+        <label>Логин AD<input name="login" id="loginInput" autocomplete="username" placeholder="i.ivanov" required></label>
+        <label>Пароль<input name="password" id="passInput" type="password" autocomplete="current-password" required></label>
+        <button class="btn" type="submit" id="loginBtn">Проверить и сохранить</button>
+      </form>
+      <div class="checks" id="loginChecks"></div>
+    </div>
     <div class="card">
       <div class="hero">
         <div class="what">
@@ -189,7 +218,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     </div>
     <div class="card">
       <h2>Креды и настройки</h2>
-      <p class="sub">Секреты лежат в secrets.env на этой машине (в v0.3 — вход логином AD). Значения здесь не показываются — только «задано / пусто».</p>
+      <p class="sub">Откуда берётся каждый ключ: окружение → secrets.env → вход AD. Значения здесь не показываются. secrets.env нужен, только если вход AD не подходит (например, свой токен GitLab).</p>
       <div id="secrets" class="targets"></div>
       <div class="row" style="margin-top:12px">
         <button class="btn ghost" data-open="secrets">Открыть secrets.env</button>
@@ -231,7 +260,7 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 
 async function api(path, opts = {}) {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
-  if (init.method === "POST") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
+  if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, init);
   const ct = r.headers.get("content-type") || "";
   return ct.includes("json") ? r.json() : r.text();
@@ -565,7 +594,7 @@ function renderDiag(d) {
   } else ad.append(el("div", { class: "empty", text: "Список адаптеров недоступен." }));
   const px = $("#proxies"); px.replaceChildren(el("dt", { text: "Прокси системы" }), el("dd", { text: d.system_proxy }), el("dt", { text: "Прокси окружения" }), el("dd", { class: "mono", text: d.env_proxy }));
   const sc = $("#secrets"); sc.replaceChildren();
-  for (const [k, set] of d.secrets) sc.append(el("div", { class: "target" }, el("span", { class: "st" }, el("i", { class: set ? "good" : "nodata", text: set ? "✓" : "–" })), el("div", {}, el("div", { class: "n mono", text: k }), el("div", { class: "d", text: set ? "задано" : "пусто" }))));
+  for (const [k, src] of d.secrets) sc.append(el("div", { class: "target" }, el("span", { class: "st" }, el("i", { class: src ? "good" : "nodata", text: src ? "✓" : "–" })), el("div", {}, el("div", { class: "n mono", text: k }), el("div", { class: "d", text: src ? `задано · ${src}` : "пусто" }))));
 }
 function renderSettings() {
   if (!S) return;
@@ -581,17 +610,58 @@ function renderSettings() {
   add("Оценка", `зелёный от ${th.score_green}, жёлтый от ${th.score_yellow}; стабильность — за ${th.stability_window_min} мин с момента включения VPN`);
 }
 
+// ---------- вход AD ----------
+let editingLogin = false;
+function renderLogin() {
+  if (!S) return;
+  const host = $("#loginState"); host.replaceChildren();
+  const form = $("#loginForm");
+  $("#loginBanner").hidden = !!S.login || !S.snapshot || !(S.snapshot.targets || []).some((t) => t.note);
+  if (S.login && !editingLogin) {
+    form.hidden = true;
+    const gl = S.gitlab_oauth_configured ? "GitLab — по паролю AD (токен только на чтение)." : "GitLab — по GITLAB_TOKEN из secrets.env (вход паролем AD для GitLab ещё не настроен).";
+    const change = el("button", { class: "btn ghost", type: "button", text: "Сменить" });
+    const out = el("button", { class: "btn ghost", type: "button", text: "Выйти" });
+    change.addEventListener("click", () => { editingLogin = true; $("#loginInput").value = S.login; $("#passInput").value = ""; renderLogin(); $("#passInput").focus(); });
+    out.addEventListener("click", async () => { await api("/api/credentials", { method: "DELETE" }); $("#loginChecks").replaceChildren(); pollState(true); });
+    host.append(el("div", { class: "head", style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" },
+      stBadge("good", `Вошли как ${S.login}`), el("span", { class: "st", text: "Диспетчер учётных данных Windows" }), change, out),
+      el("p", { class: "sub", style: "margin:8px 0 0", text: gl }));
+  } else {
+    form.hidden = false;
+    if (!S.login) host.append(stBadge("nodata", "Не вошли"));
+  }
+}
+const RES = { ok: ["good", "вход принят"], denied: ["critical", "не принят"], unreachable: ["warning", "не ответил"] };
+$("#loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#loginBtn"), checks = $("#loginChecks");
+  btn.disabled = true; btn.textContent = "Проверяю на сервисах…"; checks.replaceChildren();
+  try {
+    const r = await api("/api/credentials", { method: "POST", body: JSON.stringify({ login: $("#loginInput").value, password: $("#passInput").value }) });
+    for (const c of r.checks || []) { const [st, lbl] = RES[c.result] || ["nodata", c.result]; checks.append(el("div", {}, stBadge(st, `${c.service}: ${lbl}`), el("span", { class: "st", style: "margin-left:8px", text: c.detail }))); }
+    checks.append(el("div", { class: "hint", style: "margin-top:6px", text: r.message || "" }));
+    if (r.saved) { $("#passInput").value = ""; editingLogin = false; }
+  } catch { checks.append(el("div", { class: "hint", text: "Приложение не ответило." })); }
+  btn.disabled = false; btn.textContent = "Проверить и сохранить";
+  pollState(true);
+});
+$("#goLogin").addEventListener("click", () => document.querySelector('nav.tabs button[data-tab="conn"]').click());
+
 // ---------- опрос ----------
 let offline = false;
-async function pollState() {
+let pollTimer = null;
+async function pollState(once) {
+  if (once === true) clearTimeout(pollTimer);
   try {
     S = await api("/api/state");
     if (offline) { offline = false; $("#offline").style.display = "none"; }
-    renderState(); renderSettings();
+    renderState(); renderSettings(); renderLogin();
     const at = S.snapshot?.at || 0;
     if (at !== lastSnapAt) { lastSnapAt = at; await loadHistory(); }
   } catch { offline = true; $("#offline").style.display = "block"; }
-  setTimeout(pollState, S?.checking ? 1000 : 4000);
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(pollState, S?.checking ? 1000 : 4000);
 }
 async function loadHistory() { try { H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
 
@@ -623,14 +693,20 @@ document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("clic
   document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
   loadHistory();
 }));
-$("#checkBtn").addEventListener("click", async () => { $("#checkBtn").disabled = true; await api("/api/check", { method: "POST", body: "{}" }); setTimeout(pollState, 300); });
+$("#checkBtn").addEventListener("click", async () => { $("#checkBtn").disabled = true; await api("/api/check", { method: "POST", body: "{}" }); setTimeout(() => pollState(true), 300); });
 $("#diagBtn").addEventListener("click", async () => { await api("/api/diagnostics", { method: "POST", body: "{}" }); clearTimeout(diagTimer); pollDiag(); });
 $("#updBtn").addEventListener("click", async () => { await api("/api/update", { method: "POST", body: "{}" }); $("#updBtn").textContent = "Проверяю…"; setTimeout(() => { $("#updBtn").textContent = "Проверить обновление"; }, 15000); });
 $("#autostart").addEventListener("change", async (e) => { await api("/api/autostart", { method: "POST", body: JSON.stringify({ on: e.target.checked }) }); });
 document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => api("/api/open", { method: "POST", body: JSON.stringify({ what: b.dataset.open }) })));
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderHistory, 150); });
 setInterval(() => { if ($("#logAuto").checked) loadLog(); }, 5000);
-try { const t = localStorage.getItem("tab"); if (t) document.querySelector(`nav.tabs button[data-tab="${t}"]`)?.click(); } catch {}
+// вкладка: адрес #conn / #log (так окно открывается после установки) → иначе запомненная
+{
+  let t = location.hash.slice(1);
+  if (!["overview", "conn", "log"].includes(t)) { try { t = localStorage.getItem("tab") || ""; } catch { t = ""; } }
+  if (t) document.querySelector(`nav.tabs button[data-tab="${t}"]`)?.click();
+}
+addEventListener("hashchange", () => { const t = location.hash.slice(1); if (["overview", "conn", "log"].includes(t)) document.querySelector(`nav.tabs button[data-tab="${t}"]`)?.click(); });
 pollState();
 </script>
 </body>

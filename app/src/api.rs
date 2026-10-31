@@ -85,7 +85,7 @@ fn handle(
     let method = req.method().clone();
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
-    if method == Method::Post && header(&req, "X-VPN-Monitor").as_deref() != Some("1") {
+    if method != Method::Get && header(&req, "X-VPN-Monitor").as_deref() != Some("1") {
         return req
             .respond(json_resp(
                 &json!({"error": "нужен заголовок X-VPN-Monitor: 1"}),
@@ -96,6 +96,34 @@ fn handle(
     let mut body = String::new();
     if method == Method::Post {
         let _ = req.as_reader().take(64 * 1024).read_to_string(&mut body);
+    }
+    if method == Method::Post && path == "/api/credentials" {
+        // проверка логина на сервисах — до ~15 с; отвечаем из своего потока, чтобы окно не замирало
+        let shared = shared.clone();
+        let cmd = cmd.clone();
+        std::thread::spawn(move || {
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let (login, password) = (
+                v["login"].as_str().unwrap_or("").trim().to_string(),
+                v["password"].as_str().unwrap_or("").to_string(),
+            );
+            let resp = if login.is_empty() || password.is_empty() {
+                json_resp(
+                    &json!({"saved": false, "message": "Введите логин и пароль AD."}),
+                    400,
+                )
+            } else {
+                let settings = lock(&shared).settings.clone();
+                let r = vpn_monitor::login::login(&settings, &login, &password);
+                if r.saved {
+                    lock(&shared).store.set_login(&r.login);
+                    let _ = cmd.send(Cmd::CheckNow);
+                }
+                json_resp(&serde_json::to_value(&r).unwrap_or(Value::Null), 200)
+            };
+            let _ = req.respond(resp);
+        });
+        return Ok(());
     }
 
     let resp = match (&method, path) {
@@ -127,6 +155,15 @@ fn handle(
             let _ = update_now.send(());
             json_resp(&json!({"started": true}), 202)
         }
+        (Method::Get, "/api/credentials") => json_resp(&credentials(), 200),
+        (Method::Delete, "/api/credentials") => match vpn_monitor::creds::delete_ad() {
+            Ok(()) => {
+                info!("login", "вход AD удалён из Диспетчера учётных данных");
+                lock(shared).store.set_login("");
+                json_resp(&credentials(), 200)
+            }
+            Err(e) => json_resp(&json!({"error": e}), 500),
+        },
         (Method::Get, "/api/diagnostics") => {
             let sh = lock(shared);
             json_resp(&json!({"running": sh.diag_running, "report": sh.diag}), 200)
@@ -221,6 +258,17 @@ fn start_diag(shared: &SharedRef) -> bool {
     true
 }
 
+/// Кто вошёл — без пароля и токенов.
+fn credentials() -> Value {
+    let ad = vpn_monitor::creds::load_ad();
+    let gl = vpn_monitor::creds::load_gitlab();
+    json!({
+        "login": ad.as_ref().map(|c| c.login.clone()),
+        "store": "Диспетчер учётных данных Windows",
+        "gitlab_oauth": gl.is_some(),
+    })
+}
+
 fn ms(t: std::time::SystemTime) -> i64 {
     t.duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -274,6 +322,8 @@ fn state(shared: &SharedRef) -> Value {
         },
         "targets": s.targets.iter().map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
+        "login": vpn_monitor::creds::load_ad().map(|c| c.login),
+        "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
     })
 }
 
