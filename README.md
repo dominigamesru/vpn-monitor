@@ -3,9 +3,14 @@
 Приложение в трее Windows, которое показывает, работает ли VPN в офис. Оно регулярно скачивает пробные данные с GitLab
 и SVN офиса (и для сравнения — из интернета), красит иконку как светофор и шлёт метрики в Prometheus.
 
-Статус: прототип замера — `scripts/net_speed.py`; приложение в трее — в работе. Схема — [docs/architecture.html](docs/architecture.html).
+Статус: приложение в трее v0.1 (Rust, `app/`) — Confluence, SVN, GitLab, интернет, светофор, самообновление из GitHub
+Releases; прототип замера — `scripts/net_speed.py`. Схема — [docs/architecture.html](docs/architecture.html).
 
-## Быстрый старт
+## Установить и проверить
+Скачать `vpn-monitor.exe` из [последнего релиза](https://github.com/dominigamesru/vpn-monitor/releases), запустить двойным
+кликом, вписать креды в открывшийся `secrets.env`. Подробно и про лог — [docs/app.md](docs/app.md).
+
+## Быстрый старт (скрипты)
 
 ```text
 python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
@@ -19,6 +24,7 @@ copy .env.example .env                       # заполнить: GitLab, SVN (
 
 ## Документация
 - [docs/README.md](docs/README.md) — что где лежит;
+- [docs/app.md](docs/app.md) — приложение в трее: что умеет, как тестировать, лог, релиз;
 - [GLOSSARY.md](GLOSSARY.md) — термины;
 - [docs/scripts-guide.md](docs/scripts-guide.md) — как писать скрипты;
 - [docs/net_speed.md](docs/net_speed.md) — что меряет прототип и как читать результат.

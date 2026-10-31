@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "release_base_url": "https://github.com/dominigamesru/vpn-monitor/releases/download",
+  "install_dir": "%LOCALAPPDATA%\\DominiVPNMonitor",
+  "check_interval_green_sec": 180,
+  "check_interval_alert_sec": 60,
+  "full_probe_interval_min": 30,
+  "internet_interval_min": 15,
+  "update_interval_min": 5,
+  "thresholds": {
+    "latency_good_ms": 150,
+    "latency_bad_ms": 500,
+    "speed_good_mbps": 10,
+    "speed_bad_mbps": 1,
+    "stability_window_min": 60,
+    "score_green": 70,
+    "score_yellow": 40,
+    "internet_weak_mbps": 5
+  },
+  "targets": [
+    {
+      "id": "confluence",
+      "name": "Confluence",
+      "role": "light",
+      "url": "https://confluence.corp.dominigames.com/spaces/IT/pages/37980442",
+      "url_env": "CONFLUENCE_TEST_PAGE_URL",
+      "auth": "confluence",
+      "timeout_sec": 20
+    },
+    {
+      "id": "svn",
+      "name": "SVN",
+      "role": "speed",
+      "url": "http://svn.corp.dominigames.com/svn/DC1/DC1_S1/Branches/HUB_FREE/RU/data/movies/se/anim/cmn_map_get_alpha.mp4",
+      "url_env": "SVN_TEST_FILE_LITE_PATH",
+      "full_url": "http://svn.corp.dominigames.com/svn/DC1/DC1_S1/Branches/HUB_FREE/RU/data/movies/se/anim/cmn_map_get.mp4",
+      "full_url_env": "SVN_TEST_FILE_PATH",
+      "auth": "svn",
+      "timeout_sec": 30
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "role": "speed",
+      "url": "https://gitlab.dominigames.com/api/v4/projects/devops%2Fvpn-monitor-cli/repository/files/probe%2Fsample_1mb.bin/raw?ref=main",
+      "url_env": "GITLAB_PROBE_URL",
+      "auth": "gitlab",
+      "timeout_sec": 30
+    }
+  ],
+  "internet": {
+    "name": "Интернет",
+    "url": "https://proof.ovh.net/files/10Mb.dat",
+    "max_seconds": 8,
+    "timeout_sec": 20
+  }
+}

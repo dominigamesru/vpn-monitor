@@ -11,6 +11,8 @@ GitLab `devops/vpn-monitor-cli`).
   - `console.py` — цветной вывод с иконками (`section/ok/fail/warn/info/detail`), `fmt_duration`;
   - `check_env.py` — что установлено и чего не хватает;
   - `net_speed.py` — первый прототип замера канала до GitLab/SVN/интернета ([docs/net_speed.md](docs/net_speed.md)).
+- `app/` — приложение в трее (Rust): `cargo test`, сборка exe — CI; как устроено и как тестировать — [docs/app.md](docs/app.md).
+- `.github/workflows/` — CI (`ci.yml`), релиз по тегу `vX.Y.Z` (`release.yml`), смена последней версии (`promote.yml`).
 - `docs/` — устройство и решения ([docs/README.md](docs/README.md) — что куда), схема — [docs/architecture.html](docs/architecture.html).
 - `GLOSSARY.md` — термины.
 - `reports/`, `tools/`, `.venv/`, `.env` — в `.gitignore`.
@@ -35,11 +37,11 @@ GitLab `devops/vpn-monitor-cli`).
 
 ## Сборка и поставка
 - Приложение в трее и CI/CD ведёт Claude: сборка, проверки и публикация — GitHub Actions; ручных шагов в релизе нет.
-- Поставка — GitHub Releases этого репо (вместо GitLab `devops/vpn-monitor-cli`):
-  - **релиз** (см. `GLOSSARY.md`) — свой GitHub Release с тегом `vX.Y.Z`, всегда с `make_latest: false`; никогда не
-    в `latest`. Опубликованный релиз не перезаписывается и не удаляется;
-  - **настройки** — в релизе с тегом `latest` (он же помечен Latest), их адрес стабилен:
-    `releases/download/latest/<файл настроек>`.
-- Раскладка `latest/` и `releases/` и формат настроек — контракт со всеми установленными копиями
-  ([ADR 0003](docs/adr/0003-update-from-share.md)): менять только с обратной совместимостью.
+- Поставка — GitHub Releases ([ADR 0004](docs/adr/0004-delivery-github-releases.md)):
+  - **релиз** (`GLOSSARY.md`) — GitHub Release `vX.Y.Z` с exe, настройками и `SHA256SUMS`, всегда `make_latest: false`;
+    опубликованный релиз не перезаписывается и не удаляется;
+  - релиз `latest` — только `latest.version` (последняя версия); откат — workflow `promote` со старой версией.
+- Секретов в настройках нет — репо публичное.
+- Раскладка релизов и формат настроек — контракт со всеми установленными копиями: менять только с обратной
+  совместимостью.
 - Секреты CI — только в secrets репозитория/окружения GitHub; в workflow и логах не печатать.

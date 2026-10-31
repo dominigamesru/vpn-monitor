@@ -1,0 +1,90 @@
+# Релиз по тегу vX.Y.Z (ADR 0004): GitHub Release vX.Y.Z с exe, settings.json (с SHA-256 exe) и SHA256SUMS,
+# make_latest=false; затем latest/latest.version := X.Y.Z — установленные копии обновятся сами за ~5 минут.
+# Опубликованный релиз не перезаписывается: повторный тег той же версии упадёт.
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-latest
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: Версия тега = версия в app/Cargo.toml
+        id: ver
+        shell: python
+        run: |
+          import os, re, tomllib
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          cargo = tomllib.load(open("app/Cargo.toml", "rb"))["package"]["version"]
+          if tag != cargo:
+              raise SystemExit(f"Тег v{tag} не совпадает с версией {cargo} в app/Cargo.toml — поднимите версию и поставьте тег заново")
+          open(os.environ["GITHUB_OUTPUT"], "a").write(f"version={tag}\n")
+
+      - name: Фавикон dominigames.com (логотип в трее и иконка exe)
+        shell: pwsh
+        continue-on-error: true
+        run: Invoke-WebRequest https://dominigames.com/favicon.ico -OutFile app/assets/favicon.ico
+
+      - name: Тесты и сборка
+        working-directory: app
+        run: |
+          cargo test
+          cargo build --release
+
+      - name: Файлы релиза
+        shell: python
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          import hashlib, json, os, pathlib, zlib
+          ver = os.environ["VERSION"]
+          out = pathlib.Path("dist"); out.mkdir()
+          exe = pathlib.Path("app/target/release/vpn-monitor.exe").read_bytes()
+          (out / "vpn-monitor.exe").write_bytes(exe)
+          settings = json.loads(pathlib.Path("app/config/settings.json").read_text(encoding="utf-8"))
+          settings["exe"] = {
+              "version": ver,
+              "sha256": hashlib.sha256(exe).hexdigest(),
+              "crc32": f"{zlib.crc32(exe) & 0xFFFFFFFF:08x}",
+              "size": len(exe),
+          }
+          (out / "settings.json").write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+          sums = "".join(f"{hashlib.sha256((out / n).read_bytes()).hexdigest()}  {n}\n" for n in ("vpn-monitor.exe", "settings.json"))
+          (out / "SHA256SUMS").write_text(sums, encoding="utf-8", newline="\n")
+          (out / "latest.version").write_text(ver + "\n", encoding="utf-8", newline="\n")
+          print(sums)
+
+      - name: GitHub Release v${{ steps.ver.outputs.version }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/vpn-monitor.exe dist/settings.json dist/SHA256SUMS \
+            --title "VPN Monitor $GITHUB_REF_NAME" --generate-notes --latest=false
+
+      - name: latest.version := ${{ steps.ver.outputs.version }}
+        shell: bash
+        run: |
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest --target "$GITHUB_SHA" --title "Последняя версия" \
+              --notes "Служебный релиз: latest.version — версия, которую ставят все установленные копии. Сами сборки — в релизах vX.Y.Z. Откат — workflow promote."
+          fi
+          gh release upload latest dist/latest.version --clobber
+          gh release edit latest --latest
+          echo "latest.version = $(cat dist/latest.version)"
