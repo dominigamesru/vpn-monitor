@@ -37,6 +37,9 @@ def fetch(url: str) -> bytes:
 
 
 def main() -> int:
+    # консоль Windows-runner — cp1252; лог и сообщения — по-русски
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--exe", required=True, help="новая сборка vpn-monitor.exe")
     ap.add_argument("--timeout", type=int, default=150, help="сколько ждать обновления, с")
