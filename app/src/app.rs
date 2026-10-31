@@ -72,7 +72,7 @@ struct Ui {
     update_error: Option<String>,
 }
 
-pub fn run(replace: bool) {
+pub fn run(replace: bool, first_run: bool) {
     let embedded = Settings::embedded();
     let dir = embedded.install_dir();
     log::init(&dir.join("vpn-monitor.log"), false);
@@ -113,6 +113,9 @@ pub fn run(replace: bool) {
         computer: std::env::var("COMPUTERNAME").unwrap_or_default(),
         user: std::env::var("USERNAME").unwrap_or_default(),
         version: VERSION.into(),
+        login: vpn_monitor::creds::load_ad()
+            .map(|c| c.login)
+            .unwrap_or_default(),
         period: String::new(),
     };
     let store = Store::open(&dir, meta);
@@ -140,6 +143,12 @@ pub fn run(replace: bool) {
     match crate::api::start(shared.clone(), cmd_tx.clone(), upd_tx) {
         Ok(url) => {
             info!("api", "окно и API: {url}");
+            // первый запуск после установки и нет входа — сразу открыть окно на вкладке входа
+            let creds = vpn_monitor::secrets::Secrets::load(&crate::secrets_path(&dir));
+            if first_run && creds.ad_login().is_none() && creds.get("CONFLUENCE_TOKEN").is_none() {
+                info!("tray", "входа нет — открываю окно на вкладке «Подключение»");
+                win::open_url(&format!("{url}#conn"));
+            }
             lock(&shared).api_url = Some(url);
         }
         Err(e) => {

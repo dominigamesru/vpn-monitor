@@ -42,8 +42,8 @@ pub struct ProbeResult {
     pub error: Option<String>,
     /// Предупреждение без провала (например, нет кредов — проба без авторизации).
     pub note: Option<String>,
-    /// Чем авторизовались (вид, без значения): «Bearer», «Basic», «PRIVATE-TOKEN», «нет».
-    pub auth_used: &'static str,
+    /// Чем и откуда авторизовались (без значения): «Basic (AD)», «Bearer (токен, secrets.env)», «нет».
+    pub auth_used: String,
 }
 
 impl ProbeResult {
@@ -67,7 +67,7 @@ impl ProbeResult {
             fail: None,
             error: None,
             note: None,
-            auth_used: "нет",
+            auth_used: "нет".into(),
         }
     }
 
@@ -126,39 +126,86 @@ pub fn fmt_bytes(b: u64) -> String {
     }
 }
 
-/// Креды для цели: заголовки и заметка, если чего-то не хватает.
-fn auth_headers(kind: AuthKind, secrets: &Secrets) -> (Vec<(String, String)>, Option<String>) {
-    let basic = |u: &str, p: &str| -> Vec<(String, String)> {
-        vec![(
-            "Authorization".into(),
-            format!("Basic {}", base64(format!("{u}:{p}").as_bytes())),
-        )]
+/// Как авторизоваться у цели: заголовки, подпись для лога и окна (без значений) и заметка, если чего-то не хватает.
+pub struct Auth {
+    pub headers: Vec<(String, String)>,
+    /// Например «Basic (AD)», «Bearer (токен, secrets.env)», «нет».
+    pub label: String,
+    pub missing: Option<String>,
+}
+
+fn basic(u: &str, p: &str) -> Vec<(String, String)> {
+    vec![(
+        "Authorization".into(),
+        format!("Basic {}", base64(format!("{u}:{p}").as_bytes())),
+    )]
+}
+
+/// Креды для цели. Порядок: токен из окружения / secrets.env → логин и пароль (окружение / secrets.env / AD).
+pub fn auth(kind: AuthKind, secrets: &Secrets) -> Auth {
+    let none = |missing: &str| Auth {
+        headers: vec![],
+        label: "нет".into(),
+        missing: Some(missing.into()),
+    };
+    let user_pass = |prefix: &str| -> Option<Auth> {
+        let (uk, pk) = (format!("{prefix}_USER"), format!("{prefix}_PASSWORD"));
+        let (u, p) = (secrets.get(&uk)?, secrets.get(&pk)?);
+        Some(Auth {
+            headers: basic(&u, &p),
+            label: format!("Basic ({})", secrets.source(&pk).unwrap_or("?")),
+            missing: None,
+        })
+    };
+    let token = |key: &str| -> Option<Auth> {
+        let t = secrets.get(key)?;
+        Some(Auth {
+            headers: vec![("Authorization".into(), format!("Bearer {t}"))],
+            label: format!("Bearer (токен, {})", secrets.source(key).unwrap_or("?")),
+            missing: None,
+        })
     };
     match kind {
-        AuthKind::None => (vec![], None),
-        AuthKind::Confluence => {
-            if let Some(t) = secrets.get("CONFLUENCE_TOKEN") {
-                (vec![("Authorization".into(), format!("Bearer {t}"))], None)
-            } else if let (Some(u), Some(p)) = (
-                secrets.get("CONFLUENCE_USER"),
-                secrets.get("CONFLUENCE_PASSWORD"),
-            ) {
-                (basic(&u, &p), None)
+        AuthKind::None => Auth {
+            headers: vec![],
+            label: "нет".into(),
+            missing: None,
+        },
+        AuthKind::Confluence => token("CONFLUENCE_TOKEN")
+            .or_else(|| user_pass("CONFLUENCE"))
+            .unwrap_or_else(|| {
+                none("нет входа: войдите логином AD в окне (или CONFLUENCE_TOKEN в secrets.env)")
+            }),
+        AuthKind::Jira => token("JIRA_TOKEN")
+            .or_else(|| user_pass("JIRA"))
+            .unwrap_or_else(|| {
+                none("нет входа: войдите логином AD в окне (или JIRA_TOKEN в secrets.env)")
+            }),
+        AuthKind::Svn => user_pass("SVN").unwrap_or_else(|| {
+            none("нет входа: войдите логином AD в окне (или SVN_USER/SVN_PASSWORD)")
+        }),
+        AuthKind::Gitlab => {
+            if let Some(t) = secrets.get("GITLAB_TOKEN") {
+                Auth {
+                    headers: vec![("PRIVATE-TOKEN".into(), t)],
+                    label: format!(
+                        "PRIVATE-TOKEN ({})",
+                        secrets.source("GITLAB_TOKEN").unwrap_or("?")
+                    ),
+                    missing: None,
+                }
+            } else if let Some(t) = secrets.gitlab_oauth() {
+                Auth {
+                    headers: vec![("Authorization".into(), format!("Bearer {t}"))],
+                    label: "OAuth read_api (по паролю AD)".into(),
+                    missing: None,
+                }
             } else {
-                (vec![], Some("нет CONFLUENCE_TOKEN (или CONFLUENCE_USER+CONFLUENCE_PASSWORD) в secrets.env".into()))
+                none(
+                    "нет GITLAB_TOKEN и OAuth-токена GitLab (вход паролем AD для GitLab ещё не настроен)",
+                )
             }
         }
-        AuthKind::Svn => match (secrets.get("SVN_USER"), secrets.get("SVN_PASSWORD")) {
-            (Some(u), Some(p)) => (basic(&u, &p), None),
-            _ => (
-                vec![],
-                Some("нет SVN_USER/SVN_PASSWORD в secrets.env".into()),
-            ),
-        },
-        AuthKind::Gitlab => match secrets.get("GITLAB_TOKEN") {
-            Some(t) => (vec![("PRIVATE-TOKEN".into(), t)], None),
-            None => (vec![], Some("нет GITLAB_TOKEN в secrets.env".into())),
-        },
     }
 }
 
@@ -187,7 +234,8 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
                 .failed(Fail::Config, "нет адреса");
         }
     };
-    let (headers, note) = auth_headers(t.auth, secrets);
+    let a = auth(t.auth, secrets);
+    let (headers, note) = (a.headers, a.missing);
     let mut r = probe_url(
         &t.id,
         &t.name,
@@ -203,18 +251,11 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         full.then(|| Duration::from_secs(FULL_PROBE_SECS)),
         full,
     );
-    r.auth_used = headers
-        .first()
-        .map(|(k, v)| {
-            if k == "PRIVATE-TOKEN" {
-                "PRIVATE-TOKEN"
-            } else if v.starts_with("Bearer") {
-                "Bearer"
-            } else {
-                "Basic"
-            }
-        })
-        .unwrap_or("нет");
+    r.auth_used = a.label.clone();
+    if r.fail == Some(Fail::Auth) && t.auth == AuthKind::Jira && note.is_some() {
+        r.error =
+            Some("Jira требует входа: войдите логином AD в окне (вкладка «Подключение»)".into());
+    }
     if r.fail == Some(Fail::Http) && r.http_status == Some(404) && t.auth == AuthKind::Gitlab {
         r.error = Some(format!(
             "HTTP 404 — пробного файла нет по адресу или у GITLAB_TOKEN нет доступа к проекту (GitLab отвечает 404 и \
@@ -517,9 +558,12 @@ mod tests {
     #[test]
     fn missing_creds_give_note_not_secret() {
         let s = Secrets::from_text("");
-        let (h, note) = auth_headers(AuthKind::Svn, &s);
-        assert!(h.is_empty());
-        assert!(note.unwrap().contains("SVN_USER"));
+        let a = auth(AuthKind::Svn, &s);
+        assert!(a.headers.is_empty());
+        assert!(a.missing.unwrap().contains("логином AD"));
+        let a = auth(AuthKind::Jira, &Secrets::from_text("").with_ad("u", "p"));
+        assert_eq!(a.label, "Basic (AD)");
+        assert!(a.headers[0].1.starts_with("Basic "));
     }
 
     #[test]

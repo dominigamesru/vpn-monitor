@@ -23,7 +23,7 @@ pub struct TargetDiag {
     pub id: String,
     pub name: String,
     pub url: String,
-    pub auth: &'static str,
+    pub auth: String,
     pub steps: Vec<Step>,
     /// Итог одной строкой и что сделать.
     pub verdict: &'static str,
@@ -47,7 +47,9 @@ pub struct Report {
     pub adapters: Vec<Adapter>,
     pub system_proxy: String,
     pub env_proxy: String,
-    pub secrets: Vec<(String, bool)>,
+    /// Ключ → откуда задан (`окружение` / `secrets.env` / `AD`), `None` — пусто.
+    pub secrets: Vec<(String, Option<String>)>,
+    pub ad_login: Option<String>,
     pub took_ms: u64,
 }
 
@@ -154,8 +156,9 @@ pub fn run(settings: &Settings, secrets: &Secrets) -> Report {
         },
         secrets: KNOWN_KEYS
             .iter()
-            .map(|k| (k.to_string(), secrets.get(k).is_some()))
+            .map(|k| (k.to_string(), secrets.source(k).map(str::to_string)))
             .collect(),
+        ad_login: secrets.ad_login().map(str::to_string),
         took_ms: t0.elapsed().as_millis() as u64,
     }
 }
@@ -168,12 +171,13 @@ fn diag_url(
     secrets: &Secrets,
     adapters: &[Adapter],
 ) -> TargetDiag {
-    let (headers, auth_name, missing) = auth_for(auth, secrets);
+    let a = crate::probe::auth(auth, secrets);
+    let (headers, auth_name, missing) = (a.headers, a.label, a.missing);
     let mut d = TargetDiag {
         id: id.into(),
         name: name.into(),
         url: url.into(),
-        auth: auth_name,
+        auth: auth_name.clone(),
         steps: vec![],
         verdict: "fail",
         hint: String::new(),
@@ -314,7 +318,7 @@ fn diag_url(
                     "ok",
                     format!("сервер узнал пользователя «{u}»"),
                 ));
-            } else if matches!(auth, AuthKind::Confluence) && ok {
+            } else if matches!(auth, AuthKind::Confluence | AuthKind::Jira) && ok {
                 d.steps.push(step(
                     "Вход",
                     "warn",
@@ -347,48 +351,6 @@ fn diag_url(
         }
     }
     d
-}
-
-fn auth_for(kind: AuthKind, s: &Secrets) -> (Vec<(String, String)>, &'static str, Option<String>) {
-    let basic = |u: String, p: String| {
-        vec![(
-            "Authorization".to_string(),
-            format!(
-                "Basic {}",
-                crate::probe::base64(format!("{u}:{p}").as_bytes())
-            ),
-        )]
-    };
-    match kind {
-        AuthKind::None => (vec![], "нет", None),
-        AuthKind::Confluence => {
-            if let Some(t) = s.get("CONFLUENCE_TOKEN") {
-                (
-                    vec![("Authorization".into(), format!("Bearer {t}"))],
-                    "Bearer (токен)",
-                    None,
-                )
-            } else if let (Some(u), Some(p)) =
-                (s.get("CONFLUENCE_USER"), s.get("CONFLUENCE_PASSWORD"))
-            {
-                (basic(u, p), "Basic (логин и пароль)", None)
-            } else {
-                (
-                    vec![],
-                    "нет",
-                    Some("нет CONFLUENCE_TOKEN или CONFLUENCE_USER + CONFLUENCE_PASSWORD".into()),
-                )
-            }
-        }
-        AuthKind::Svn => match (s.get("SVN_USER"), s.get("SVN_PASSWORD")) {
-            (Some(u), Some(p)) => (basic(u, p), "Basic (логин и пароль)", None),
-            _ => (vec![], "нет", Some("нет SVN_USER / SVN_PASSWORD".into())),
-        },
-        AuthKind::Gitlab => match s.get("GITLAB_TOKEN") {
-            Some(t) => (vec![("PRIVATE-TOKEN".into(), t)], "PRIVATE-TOKEN", None),
-            None => (vec![], "нет", Some("нет GITLAB_TOKEN".into())),
-        },
-    }
 }
 
 // ---------- платформенная часть ----------

@@ -55,7 +55,10 @@ pub struct Meta {
     pub computer: String,
     pub user: String,
     pub version: String,
-    /// Сюда в v0.3 — логин AD, клиент и профиль VPN, город.
+    /// Логин AD (R5.4); пусто — не вошли.
+    #[serde(default)]
+    pub login: String,
+    /// Позже — клиент и профиль VPN, город.
     #[serde(default)]
     pub period: String,
 }
@@ -197,6 +200,11 @@ impl Store {
         std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Логин AD для шапки файлов (после входа или выхода в окне).
+    pub fn set_login(&mut self, login: &str) {
+        self.meta.login = login.into();
+    }
+
     /// Записи с момента `from_ms`.
     pub fn since(&self, from_ms: i64) -> Vec<Record> {
         self.records
@@ -233,6 +241,7 @@ mod tests {
             computer: "PC".into(),
             user: "u".into(),
             version: "0".into(),
+            login: String::new(),
             period: String::new(),
         };
         let mut st = Store::open(&dir, meta.clone());

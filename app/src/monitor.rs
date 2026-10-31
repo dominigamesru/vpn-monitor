@@ -82,6 +82,7 @@ impl Monitor {
     /// Одна проверка. `manual` — по клику: интернет мерится, только если подошёл его интервал (рейт-лимиты).
     pub fn run_check(&mut self, manual: bool) -> Snapshot {
         self.check_no += 1;
+        crate::gitlab::ensure_fresh(self.settings.gitlab_oauth.as_ref());
         let secrets = Secrets::load(&self.secrets_path);
         let s = &self.settings;
         let full_due = self

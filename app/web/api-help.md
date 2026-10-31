@@ -1,6 +1,6 @@
 # VPN Monitor — локальный API (для скриптов и ИИ-агентов)
 
-Адрес: `http://127.0.0.1:{port}` — только с этой машины. Меняющие запросы (POST) требуют заголовка
+Адрес: `http://127.0.0.1:{port}` — только с этой машины. Меняющие запросы (POST, DELETE) требуют заголовка
 `X-VPN-Monitor: 1`. Ответы — JSON (UTF-8). Секретов в ответах нет.
 
 | Метод | Адрес | Что делает |
@@ -11,6 +11,9 @@
 | POST | `/api/update` | проверить обновление сейчас (последняя версия — в `latest.version` релиза `latest`) |
 | POST | `/api/diagnostics` | запустить диагностику подключения; результат — `GET /api/diagnostics` (`running`, `report`) |
 | GET | `/api/log?lines=300` | хвост лога |
+| GET | `/api/credentials` | кто вошёл логином AD (без пароля) |
+| POST | `/api/credentials` | войти: `{"login": "...", "password": "..."}` — проверка на Jira, Confluence, SVN, при успехе пароль уходит в Диспетчер учётных данных Windows |
+| DELETE | `/api/credentials` | выйти — удалить логин AD и токен GitLab из Диспетчера |
 | GET | `/api/help` | эта инструкция |
 
 Поля записи истории: `t` — время, мс UNIX; `c` — цвет (`green`/`yellow`/`red`); `b` — знак (`score`, `novpn` — VPN не
