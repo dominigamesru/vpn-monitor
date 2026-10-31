@@ -16,3 +16,7 @@ __pycache__/
 # ОС
 Thumbs.db
 .DS_Store
+
+# Rust
+/app/target/
+/app/assets/favicon.ico

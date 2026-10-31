@@ -1,15 +1,59 @@
 # VPN Monitor
 
-Приложение в трее Windows, которое показывает, работает ли VPN в офис. Оно регулярно скачивает пробные данные с GitLab
-и SVN офиса (и для сравнения — из интернета), красит иконку как светофор и шлёт метрики в Prometheus.
+Приложение в трее Windows, которое показывает, работает ли VPN в офис и насколько он быстрый, — до того как начнёт
+тормозить работа. Оно регулярно проверяет Confluence, SVN и GitLab офиса (и для сравнения — интернет) и красит
+иконку как светофор.
 
-Статус: прототип замера — `scripts/net_speed.py`; приложение в трее — в работе. Схема — [docs/architecture.html](docs/architecture.html).
+**Статус — v0.1.x, тестируется.** Работают: установка двойным кликом, светофор с оценкой VPN, пробы Confluence, SVN,
+GitLab и интернета, самообновление и откат через GitHub Releases, подробный лог. Дальше: Jira, «Без ВПН», клиент и
+профиль VPN, город, метрики в Prometheus, «Собрать контекст», режим API. Требования —
+[docs/requirements.md](docs/requirements.md).
 
-## Быстрый старт
+## Установить
+1. Скачать `vpn-monitor.exe` из [релизов](https://github.com/dominigamesru/vpn-monitor/releases) (последняя версия —
+   в `latest.version` релиза `latest`).
+2. Запустить двойным кликом: приложение встанет в `%LOCALAPPDATA%\DominiVPNMonitor`, включит автозапуск и откроет
+   `secrets.env`.
+3. Вписать креды Confluence, SVN и GitLab (имена ключей — как в [.env.example](.env.example), можно вставить свой
+   `.env` целиком) и сохранить. Права администратора не нужны.
+
+Повторный запуск exe чинит любую сбитую установку. Обновления приходят сами — проверка раз в 5 минут.
+
+## Как читать иконку
+| Знак | Что значит |
+|---|---|
+| число `01`–`99` на зелёном / жёлтом / красном | оценка VPN: задержка, скорость и стабильность (медиана последних проверок) |
+| красный `!` | VPN не включён — Confluence не отвечает |
+| полоски как у Wi‑Fi | слабый сам интернет, VPN тут ни при чём |
+| синяя стрелка | идёт проверка |
+
+Левый клик — проверить сейчас. Правый — меню: состояние по каждой цели, интернет, стабильность, время проверки,
+«Открыть лог», «Открыть папку», «Автозапуск», версия, «Выйти». Подробно — [docs/app.md](docs/app.md).
+
+## Если что-то не так
+Меню → «Открыть лог» и прислать `vpn-monitor.log` — в нём каждая проба (адрес, DNS, задержка, код ответа, скорость,
+причина ошибки) и каждый шаг обновления; секретов в логе нет. Разовая проверка из консоли:
+`%LOCALAPPDATA%\DominiVPNMonitor\vpn-monitor-<версия>.exe --check`.
+
+## Разработка
+| Где | Что |
+|---|---|
+| `app/` | приложение (Rust): `cd app && cargo test`; настройки по умолчанию — `app/config/settings.json` |
+| `.github/workflows/` | `ci` — формат, clippy, тесты, exe в артефактах; `release` — релиз, когда в `main` приходит новая версия; `promote` — смена последней версии (откат) |
+| `scripts/` | прототип замера `net_speed.py` и служебные скрипты (Python) |
+| `docs/` | устройство и решения, ADR |
+
+Выпуск версии: поднять `version` в `app/Cargo.toml` → pull request → слияние в `main` → CI публикует релиз `vX.Y.Z` и
+обновляет `latest.version`; установленные копии переходят на неё сами. Откат — Actions → `promote` → старая версия
+([ADR 0004](docs/adr/0004-delivery-github-releases.md)).
+
+Правила работы (термины, секреты, ветки, релизы) — [CLAUDE.md](CLAUDE.md).
+
+### Скрипты
 
 ```text
 python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
-copy .env.example .env                       # заполнить: GitLab, SVN (скилл /setup-env)
+copy .env.example .env                       # заполнить: GitLab, SVN, Confluence (скилл /setup-env)
 .venv\Scripts\python scripts\check_env.py    # что установлено, чего не хватает и откуда взять
 .venv\Scripts\python scripts\net_speed.py    # разовый замер канала до GitLab / SVN / интернета
 ```
@@ -18,7 +62,10 @@ copy .env.example .env                       # заполнить: GitLab, SVN (
 `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`, в cmd — `chcp 65001`.
 
 ## Документация
-- [docs/README.md](docs/README.md) — что где лежит;
+- [docs/app.md](docs/app.md) — приложение в трее: что умеет, как тестировать, лог, релиз;
+- [docs/requirements.md](docs/requirements.md) — требования;
 - [GLOSSARY.md](GLOSSARY.md) — термины;
-- [docs/scripts-guide.md](docs/scripts-guide.md) — как писать скрипты;
-- [docs/net_speed.md](docs/net_speed.md) — что меряет прототип и как читать результат.
+- [docs/adr/](docs/adr/) — решения: Rust, метрики, поставка через GitHub Releases;
+- [docs/README.md](docs/README.md) — что где лежит;
+- [docs/net_speed.md](docs/net_speed.md) — прототип замера и как читать результат;
+- [docs/scripts-guide.md](docs/scripts-guide.md) — как писать скрипты.

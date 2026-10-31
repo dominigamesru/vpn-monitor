@@ -1,0 +1,40 @@
+# Смена последней версии без пересборки (ADR 0004): откат или повторное продвижение.
+# Actions → promote → Run workflow → версия (например 0.1.0). Релиз vX.Y.Z должен уже существовать.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия, которую считать последней (X.Y.Z)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-latest
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Проверить версию и релиз
+        run: |
+          v="${VERSION#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Не версия: $VERSION"; exit 1; }
+          gh release view "v$v" --json assets --jq '.assets[].name' | grep -qx vpn-monitor.exe \
+            || { echo "::error::Нет релиза v$v с vpn-monitor.exe"; exit 1; }
+          gh release view "v$v" --json assets --jq '.assets[].name' | grep -qx settings.json \
+            || { echo "::error::В релизе v$v нет settings.json"; exit 1; }
+          echo "$v" > latest.version
+      - name: Записать latest.version
+        run: |
+          gh release upload latest latest.version --clobber
+          gh release edit latest --latest
+          echo "latest.version = $(cat latest.version)"

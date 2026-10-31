@@ -1,7 +1,9 @@
-# vpn-monitor-cli
+# vpn-monitor
 
 Приложение в трее Windows: регулярно скачивает пробные данные с GitLab и SVN офиса, показывает состояние VPN
-иконкой-светофором и шлёт метрики в Prometheus. Windows, Python 3.11+ в `.venv`, скрипты — из корня.
+иконкой-светофором и шлёт метрики в Prometheus. Приложение — Rust ([ADR 0001](docs/adr/0001-rust.md)); вспомогательные
+скрипты — Python 3.11+ в `.venv`, запуск из корня. Репозиторий — GitHub `dominigamesru/vpn-monitor` (перенесён из
+GitLab `devops/vpn-monitor-cli`).
 
 ## Где что
 - `scripts/` — скрипты (запуск из корня: `python scripts/<имя>.py`), как писать — [docs/scripts-guide.md](docs/scripts-guide.md):
@@ -9,6 +11,8 @@
   - `console.py` — цветной вывод с иконками (`section/ok/fail/warn/info/detail`), `fmt_duration`;
   - `check_env.py` — что установлено и чего не хватает;
   - `net_speed.py` — первый прототип замера канала до GitLab/SVN/интернета ([docs/net_speed.md](docs/net_speed.md)).
+- `app/` — приложение в трее (Rust): `cargo test`, сборка exe — CI; как устроено и как тестировать — [docs/app.md](docs/app.md).
+- `.github/workflows/` — CI (`ci.yml`), релиз при новой версии в `main` (`release.yml`), смена последней версии (`promote.yml`).
 - `docs/` — устройство и решения ([docs/README.md](docs/README.md) — что куда), схема — [docs/architecture.html](docs/architecture.html).
 - `GLOSSARY.md` — термины.
 - `reports/`, `tools/`, `.venv/`, `.env` — в `.gitignore`.
@@ -29,4 +33,15 @@
 - Ретро — `docs/process/retro.md` (роли, шаги), журнал `docs/process/retro-log.md`; после крупного результата, серии
   ~10 попыток, нового класса ошибки и перед компактом. Правки скиллов — только через `docs/process/skill-notes.md`.
 - Новые папки — `git check-ignore -v <путь>` до коммита.
-- Работа — в feature-ветках + merge request; в `main` сливает пользователь.
+- Работа — в feature-ветках + pull request на GitHub; в `main` сливает пользователь.
+
+## Сборка и поставка
+- Приложение в трее и CI/CD ведёт Claude: сборка, проверки и публикация — GitHub Actions; ручных шагов в релизе нет.
+- Поставка — GitHub Releases ([ADR 0004](docs/adr/0004-delivery-github-releases.md)):
+  - **релиз** (`GLOSSARY.md`) — GitHub Release `vX.Y.Z` с exe, настройками и `SHA256SUMS`, всегда `make_latest: false`;
+    опубликованный релиз не перезаписывается и не удаляется;
+  - релиз `latest` — только `latest.version` (последняя версия); откат — workflow `promote` со старой версией.
+- Секретов в настройках нет — репо публичное.
+- Раскладка релизов и формат настроек — контракт со всеми установленными копиями: менять только с обратной
+  совместимостью.
+- Секреты CI — только в secrets репозитория/окружения GitHub; в workflow и логах не печатать.
