@@ -50,9 +50,10 @@ vpn-monitor-0.1.0.exe --check
 `install`, `panic` (падение со стеком).
 
 ## Релиз
-1. Поднять `version` в `app/Cargo.toml`, слить в `main`.
-2. Тег `vX.Y.Z` на этот коммит → workflow `release`: тесты, сборка, GitHub Release `vX.Y.Z`
-   (`vpn-monitor.exe`, `settings.json` с SHA-256 exe, `SHA256SUMS`), затем `latest.version := X.Y.Z`.
+1. Поднять `version` в `app/Cargo.toml` в ветке, pull request, слить в `main` (сливает пользователь).
+2. Workflow `release` видит новую версию: тесты, сборка, GitHub Release `vX.Y.Z` с тегом на этот коммит
+   (`vpn-monitor.exe`, `settings.json` с SHA-256 exe, `SHA256SUMS`), затем `latest.version := X.Y.Z`. Если `vX.Y.Z`
+   уже есть — ничего не делает. Можно и вручную: Actions → `release` → Run workflow, или тег `vX.Y.Z`.
 3. Откат — Actions → `promote` → старая версия. Установленные копии перейдут на неё за ~5 минут.
 
 Настройки едут с релизом: поменять цели или пороги — значит выпустить новую версию.

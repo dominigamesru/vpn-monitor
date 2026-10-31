@@ -12,7 +12,7 @@ GitLab `devops/vpn-monitor-cli`).
   - `check_env.py` — что установлено и чего не хватает;
   - `net_speed.py` — первый прототип замера канала до GitLab/SVN/интернета ([docs/net_speed.md](docs/net_speed.md)).
 - `app/` — приложение в трее (Rust): `cargo test`, сборка exe — CI; как устроено и как тестировать — [docs/app.md](docs/app.md).
-- `.github/workflows/` — CI (`ci.yml`), релиз по тегу `vX.Y.Z` (`release.yml`), смена последней версии (`promote.yml`).
+- `.github/workflows/` — CI (`ci.yml`), релиз при новой версии в `main` (`release.yml`), смена последней версии (`promote.yml`).
 - `docs/` — устройство и решения ([docs/README.md](docs/README.md) — что куда), схема — [docs/architecture.html](docs/architecture.html).
 - `GLOSSARY.md` — термины.
 - `reports/`, `tools/`, `.venv/`, `.env` — в `.gitignore`.
