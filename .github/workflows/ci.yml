@@ -5,9 +5,9 @@ name: ci
 on:
   push:
     branches: ["**"]
-    paths: ["app/**", ".github/workflows/**"]
+    paths: ["app/**", ".github/**"]
   pull_request:
-    paths: ["app/**", ".github/workflows/**"]
+    paths: ["app/**", ".github/**"]
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -34,7 +34,7 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -48,6 +48,9 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      - name: Обновление «последний релиз → эта сборка»
+        working-directory: .
+        run: python .github/scripts/upgrade_test.py --exe app/target/release/vpn-monitor.exe
       - uses: actions/upload-artifact@v4
         with:
           name: vpn-monitor-${{ github.sha }}

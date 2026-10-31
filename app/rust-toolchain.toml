@@ -1,0 +1,5 @@
+# Версия Rust закреплена: новая версия clippy в CI не должна внезапно ронять сборку (ретро 2026-11-01).
+# Обновлять осознанно: поднять здесь, прогнать `cargo clippy --all-targets -- -D warnings` на Linux и Windows.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
