@@ -110,7 +110,7 @@ pub fn run(settings: &Settings, secrets: &Secrets) -> Report {
                 } else {
                     t.name.clone()
                 };
-                let (id, auth) = (t.id.clone(), t.auth);
+                let (id, auth) = (t.id.clone(), t.kind());
                 let adapters = &adapters;
                 hs.push(sc.spawn(move || diag_url(&id, &name, &url, auth, secrets, adapters)));
             }

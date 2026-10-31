@@ -386,11 +386,7 @@ fn spawn_updater(
 
 fn apply_update(base: &str, ver: &str, dir: &std::path::Path) -> Result<PathBuf, String> {
     info!("update", "ставлю версию {ver}: качаю настройки");
-    let (raw, s) = update::fetch_settings(base, ver)?;
-    let exe_info = s
-        .exe
-        .as_ref()
-        .ok_or("в settings.json релиза нет exe.sha256")?;
+    let (raw, exe_info) = update::fetch_settings(base, ver)?;
     if exe_info.version.trim_start_matches('v') != ver {
         return Err(format!(
             "settings.json релиза {ver} описывает exe версии {}",
