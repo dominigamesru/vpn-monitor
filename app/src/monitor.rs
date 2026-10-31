@@ -16,6 +16,8 @@ pub struct Snapshot {
     /// Последний результат по каждой цели (в порядке настроек).
     pub targets: Vec<ProbeResult>,
     pub internet: Option<ProbeResult>,
+    /// Интернет мерился в этой проверке (а не взят из прошлой).
+    pub internet_fresh: bool,
     pub verdict: Verdict,
 }
 
@@ -139,6 +141,7 @@ impl Monitor {
         if full_due && results.iter().filter(|r| r.full).all(|r| r.ok) {
             self.last_full = Some(Instant::now());
         }
+        let internet_fresh = internet.is_some();
         if let Some(i) = internet {
             self.last_internet_at = Some(Instant::now());
             self.last_internet = Some(i);
@@ -236,6 +239,7 @@ impl Monitor {
             at: now,
             targets,
             internet: self.last_internet.clone(),
+            internet_fresh,
             verdict,
         }
     }

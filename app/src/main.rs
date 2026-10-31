@@ -8,6 +8,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod api;
+#[cfg(windows)]
 mod app;
 #[cfg(windows)]
 mod install;

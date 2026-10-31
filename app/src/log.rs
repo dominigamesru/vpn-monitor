@@ -89,7 +89,7 @@ pub fn hhmm(t: SystemTime) -> String {
 }
 
 #[cfg(windows)]
-fn local_offset_secs() -> i64 {
+pub fn local_offset_secs() -> i64 {
     use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
     unsafe {
         let mut tz: TIME_ZONE_INFORMATION = std::mem::zeroed();
@@ -103,7 +103,7 @@ fn local_offset_secs() -> i64 {
 }
 
 #[cfg(not(windows))]
-fn local_offset_secs() -> i64 {
+pub fn local_offset_secs() -> i64 {
     0
 }
 

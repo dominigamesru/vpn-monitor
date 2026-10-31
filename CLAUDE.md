@@ -11,14 +11,19 @@ GitLab `devops/vpn-monitor-cli`).
   - `console.py` — цветной вывод с иконками (`section/ok/fail/warn/info/detail`), `fmt_duration`;
   - `check_env.py` — что установлено и чего не хватает;
   - `net_speed.py` — первый прототип замера канала до GitLab/SVN/интернета ([docs/net_speed.md](docs/net_speed.md)).
-- `app/` — приложение в трее (Rust): `cargo test`, сборка exe — CI; как устроено и как тестировать — [docs/app.md](docs/app.md).
+- `app/` — приложение в трее (Rust): `cargo test`, сборка exe — CI; как устроено и как тестировать — [docs/app.md](docs/app.md);
+  окно в браузере — `app/web/index.html` (отдаёт локальный API, `app/src/api.rs`, [ADR 0005](docs/adr/0005-window-in-browser.md)).
 - `.github/workflows/` — CI (`ci.yml`), релиз при новой версии в `main` (`release.yml`), смена последней версии (`promote.yml`).
 - `docs/` — устройство и решения ([docs/README.md](docs/README.md) — что куда), схема — [docs/architecture.html](docs/architecture.html).
 - `GLOSSARY.md` — термины.
 - `reports/`, `tools/`, `.venv/`, `.env` — в `.gitignore`.
 
 ## Скиллы
-`/setup-env` (окружение и `.env`) · `/grill-with-docs` (допрос плана + глоссарий и ADR) · `grilling` · `domain-modeling`.
+`/setup-env` (окружение и `.env`) · `/grill-with-docs` (допрос плана + глоссарий и ADR) · `grilling` · `domain-modeling` ·
+`web-ui` (всё, что в браузере).
+
+**Любая веб-задача — окно приложения (`app/web/`), графики, HTML-страницы и отчёты — только со скиллом `web-ui`**
+(`.claude/skills/web-ui`): он подключает встроенный `dataviz` для графиков и требует скриншоты в светлой и тёмной теме.
 
 ## Правила
 - Термины — по `GLOSSARY.md` (корень репо): канонические слова пользователя, синонимы в `_Avoid_`. Новый или
