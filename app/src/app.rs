@@ -1,13 +1,15 @@
-//! Режим трея: иконка-светофор, меню со срезом, проверки по расписанию и по левому клику, обновление.
+//! Режим трея: иконка-светофор, меню со срезом, проверки по расписанию и по левому клику, обновление,
+//! запись метрик, локальный API и окно в браузере (`api.rs`).
 
 use crate::win;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use vpn_monitor::metrics::{Meta, Record, Store};
 use vpn_monitor::monitor::{Monitor, Snapshot};
 use vpn_monitor::probe::{Fail, ProbeResult};
 use vpn_monitor::score::{Badge, Color};
@@ -25,8 +27,29 @@ enum UserEvent {
     Quit,
 }
 
-enum Cmd {
+pub enum Cmd {
     CheckNow,
+}
+
+/// Состояние, общее для трея, проверок, обновления и API.
+pub struct Shared {
+    pub settings: Settings,
+    pub dir: PathBuf,
+    pub snapshot: Option<Snapshot>,
+    pub checking: bool,
+    pub latest: Option<String>,
+    pub update_error: Option<String>,
+    pub store: Store,
+    pub api_url: Option<String>,
+    pub api_error: Option<String>,
+    pub diag: Option<serde_json::Value>,
+    pub diag_running: bool,
+}
+
+pub type SharedRef = Arc<Mutex<Shared>>;
+
+pub fn lock(s: &SharedRef) -> std::sync::MutexGuard<'_, Shared> {
+    s.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 struct Ui {
@@ -37,6 +60,7 @@ struct Ui {
     stability: MenuItem,
     updated: MenuItem,
     check_now: MenuItem,
+    open_window: MenuItem,
     open_log: MenuItem,
     open_dir: MenuItem,
     autostart: CheckMenuItem,
@@ -85,20 +109,65 @@ pub fn run(replace: bool) {
         });
     }
 
+    let meta = Meta {
+        computer: std::env::var("COMPUTERNAME").unwrap_or_default(),
+        user: std::env::var("USERNAME").unwrap_or_default(),
+        version: VERSION.into(),
+        period: String::new(),
+    };
+    let store = Store::open(&dir, meta);
+    info!(
+        "metrics",
+        "история: {} проверок из metrics_7d.json",
+        store.records.len()
+    );
+    let shared: SharedRef = Arc::new(Mutex::new(Shared {
+        settings: settings.clone(),
+        dir: dir.clone(),
+        snapshot: None,
+        checking: false,
+        latest: None,
+        update_error: None,
+        store,
+        api_url: None,
+        api_error: None,
+        diag: None,
+        diag_running: false,
+    }));
+
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
+    let (upd_tx, upd_rx) = mpsc::channel::<()>();
+    match crate::api::start(shared.clone(), cmd_tx.clone(), upd_tx) {
+        Ok(url) => {
+            info!("api", "окно и API: {url}");
+            lock(&shared).api_url = Some(url);
+        }
+        Err(e) => {
+            error!("api", "окно и API не запустились: {e}");
+            lock(&shared).api_error = Some(e);
+        }
+    }
     spawn_checker(
         settings.clone(),
         crate::secrets_path(&dir),
         cmd_rx,
         proxy.clone(),
+        shared.clone(),
     );
-    spawn_updater(settings.clone(), dir.clone(), proxy.clone());
+    spawn_updater(
+        settings.clone(),
+        dir.clone(),
+        proxy.clone(),
+        upd_rx,
+        shared.clone(),
+    );
+    let api_url = lock(&shared).api_url.clone();
 
     let mut ui: Option<Ui> = None;
     event_loop.run(move |event, _, flow| {
         *flow = ControlFlow::Wait;
         match event {
-            Event::NewEvents(StartCause::Init) => match build_ui(&settings) {
+            Event::NewEvents(StartCause::Init) => match build_ui(&settings, api_url.is_some()) {
                 Ok(u) => ui = Some(u),
                 Err(e) => {
                     error!("tray", "не создать иконку в трее: {e}");
@@ -120,10 +189,23 @@ pub fn run(replace: bool) {
                             let _ = cmd_tx.send(Cmd::CheckNow);
                         }
                     }
+                    UserEvent::Tray(TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    }) => {
+                        if let Some(url) = &api_url {
+                            info!("tray", "двойной клик — открываю окно");
+                            win::open_url(url);
+                        }
+                    }
                     UserEvent::Tray(_) => {}
                     UserEvent::Menu(m) => {
                         if m.id == *u.check_now.id() && !u.checking {
                             let _ = cmd_tx.send(Cmd::CheckNow);
+                        } else if m.id == *u.open_window.id() {
+                            if let Some(url) = &api_url {
+                                win::open_url(url);
+                            }
                         } else if m.id == *u.open_log.id() {
                             if let Some(p) = log::path() {
                                 win::open_in_notepad(&p);
@@ -184,6 +266,7 @@ fn spawn_checker(
     secrets: PathBuf,
     rx: mpsc::Receiver<Cmd>,
     proxy: EventLoopProxy<UserEvent>,
+    shared: SharedRef,
 ) {
     std::thread::spawn(move || {
         let (green, alert) = (
@@ -200,8 +283,20 @@ fn spawn_checker(
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
             let _ = proxy.send_event(UserEvent::Checking);
+            lock(&shared).checking = true;
             let snap = m.run_check(manual);
             manual = false;
+            {
+                let mut sh = lock(&shared);
+                sh.checking = false;
+                if let Err(e) = sh
+                    .store
+                    .push(Record::from_snapshot(&snap, snap.internet_fresh))
+                {
+                    error!("metrics", "не записать метрики: {e}");
+                }
+                sh.snapshot = Some(snap.clone());
+            }
             // R3.4: зелёный — раз в 3 минуты, иначе — раз в минуту
             wait = Duration::from_secs(if snap.verdict.color == Color::Green {
                 green
@@ -219,7 +314,13 @@ fn spawn_checker(
     });
 }
 
-fn spawn_updater(settings: Settings, dir: PathBuf, proxy: EventLoopProxy<UserEvent>) {
+fn spawn_updater(
+    settings: Settings,
+    dir: PathBuf,
+    proxy: EventLoopProxy<UserEvent>,
+    now_rx: mpsc::Receiver<()>,
+    shared: SharedRef,
+) {
     std::thread::spawn(move || {
         let base = settings.release_base_url.clone();
         let period = Duration::from_secs(settings.update_interval_min.max(1) * 60);
@@ -230,6 +331,11 @@ fn spawn_updater(settings: Settings, dir: PathBuf, proxy: EventLoopProxy<UserEve
                 Ok(latest) => {
                     info!("update", "последняя версия {latest}, своя {VERSION}");
                     let _ = proxy.send_event(UserEvent::LatestVersion(latest.clone()));
+                    {
+                        let mut sh = lock(&shared);
+                        sh.latest = Some(latest.clone());
+                        sh.update_error = None;
+                    }
                     let tries = failed
                         .as_ref()
                         .filter(|(v, _)| *v == latest)
@@ -246,6 +352,7 @@ fn spawn_updater(settings: Settings, dir: PathBuf, proxy: EventLoopProxy<UserEve
                                     "обновление до {latest} не удалось (попытка {}): {e}",
                                     tries + 1
                                 );
+                                lock(&shared).update_error = Some(e.clone());
                                 let _ = proxy.send_event(UserEvent::UpdateError(e));
                                 failed = Some((latest, tries + 1));
                             }
@@ -254,10 +361,16 @@ fn spawn_updater(settings: Settings, dir: PathBuf, proxy: EventLoopProxy<UserEve
                 }
                 Err(e) => {
                     warn!("update", "не узнать последнюю версию: {e}");
+                    lock(&shared).update_error = Some(e.clone());
                     let _ = proxy.send_event(UserEvent::UpdateError(e));
                 }
             }
-            std::thread::sleep(period);
+            // ждём период или запрос «обновить сейчас» из окна (R7.3)
+            match now_rx.recv_timeout(period) {
+                Ok(()) => info!("update", "проверка обновления по запросу из окна"),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(period),
+            }
         }
     });
 }
@@ -309,7 +422,7 @@ fn toggle_autostart(u: &mut Ui) {
     }
 }
 
-fn build_ui(settings: &Settings) -> Result<Ui, String> {
+fn build_ui(settings: &Settings, api_ok: bool) -> Result<Ui, String> {
     let menu = Menu::new();
     let item = |t: &str| MenuItem::new(t, false, None);
     let title = item("Domini VPN");
@@ -323,6 +436,15 @@ fn build_ui(settings: &Settings) -> Result<Ui, String> {
     let stability = item("Стабильность: —");
     let updated = item("Обновлено: —");
     let check_now = MenuItem::new("Проверить сейчас", true, None);
+    let open_window = MenuItem::new(
+        if api_ok {
+            "Открыть окно — графики и диагностика"
+        } else {
+            "Окно недоступно — см. лог"
+        },
+        api_ok,
+        None,
+    );
     let open_log = MenuItem::new("Открыть лог", true, None);
     let open_dir = MenuItem::new("Открыть папку (секреты, настройки)", true, None);
     let autostart = CheckMenuItem::new("Автозапуск", true, win::autostart_get().is_some(), None);
@@ -342,6 +464,7 @@ fn build_ui(settings: &Settings) -> Result<Ui, String> {
     add(&updated)?;
     add(&sep())?;
     add(&check_now)?;
+    add(&open_window)?;
     add(&open_log)?;
     add(&open_dir)?;
     add(&sep())?;
@@ -365,6 +488,7 @@ fn build_ui(settings: &Settings) -> Result<Ui, String> {
         stability,
         updated,
         check_now,
+        open_window,
         open_log,
         open_dir,
         autostart,

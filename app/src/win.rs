@@ -151,6 +151,14 @@ pub fn open(path: &Path) {
         .spawn();
 }
 
+/// Открывает адрес браузером по умолчанию.
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+}
+
 pub fn open_in_notepad(path: &Path) {
     let _ = std::process::Command::new("notepad").arg(path).spawn();
 }

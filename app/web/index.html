@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domini VPN</title>
+<style>
+/* Токены — по скиллу web-ui (.claude/skills/web-ui): палитра dataviz, светлая и тёмная тема */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --good-ink: #006300; --nodata: #e1e0d9;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --accent: #2a78d6; --accent-ink: #ffffff;
+  --off-band: rgba(208,59,59,0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --good-ink: #0ca30c; --nodata: #2c2c2a;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --accent: #3987e5; --off-band: rgba(208,59,59,0.14);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+  --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --good-ink: #0ca30c; --nodata: #2c2c2a;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --accent: #3987e5; --off-band: rgba(208,59,59,0.14);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--ink); }
+body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1180px; margin: 0 auto; padding: 16px 16px 48px; }
+header.top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+header.top h1 { font-size: 18px; margin: 0; font-weight: 650; }
+header.top .ver { color: var(--muted); font-size: 12px; }
+nav.tabs { display: flex; gap: 4px; margin-left: auto; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+nav.tabs button { border: 0; background: transparent; color: var(--ink-2); padding: 6px 14px; border-radius: 8px; font: inherit; cursor: pointer; }
+nav.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--ring); font-weight: 600; }
+.card { background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px var(--ring); padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 4px; font-weight: 650; }
+.card .sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+.row { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; }
+.hero { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+.score { min-width: 112px; height: 88px; border-radius: 14px; display: grid; place-items: center; font-size: 44px; font-weight: 700; color: #fff; letter-spacing: -1px; }
+.score.warning { color: #0b0b0b; }
+.score.nodata { background: var(--nodata); color: var(--ink-2); font-size: 22px; }
+.hero .what { flex: 1 1 260px; }
+.hero .what .title { font-size: 20px; font-weight: 650; }
+.hero .what .meta { color: var(--ink-2); }
+.btn { border: 0; border-radius: 9px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
+.btn.ghost { background: var(--surface-2); color: var(--ink); box-shadow: 0 0 0 1px var(--ring); font-weight: 500; }
+.btn[disabled] { opacity: .55; cursor: default; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { background: var(--surface-2); border-radius: 10px; padding: 12px; }
+.tile .k { color: var(--ink-2); font-size: 12px; }
+.tile .v { font-size: 24px; font-weight: 650; margin: 2px 0; }
+.tile .v small { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.st i { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 800; color: #fff; }
+.st i.good { background: var(--good); } .st i.warning { background: var(--warning); color: #0b0b0b; }
+.st i.critical { background: var(--critical); } .st i.nodata { background: var(--nodata); color: var(--ink-2); }
+.targets { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin-top: 12px; }
+.target { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
+.target .n { font-weight: 600; } .target .d { color: var(--ink-2); font-size: 12px; word-break: break-word; }
+.filters { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 9px; padding: 3px; }
+.seg button { border: 0; background: transparent; color: var(--ink-2); padding: 5px 12px; border-radius: 7px; font: inherit; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--ring); font-weight: 600; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; margin: 0 0 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend b.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.legend b.ln { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart .label { font-size: 12px; color: var(--ink-2); margin: 10px 0 2px; display: flex; justify-content: space-between; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--ring), 0 6px 20px rgba(0,0,0,.18); border-radius: 8px; padding: 8px 10px; font-size: 12px; min-width: 180px; display: none; z-index: 10; }
+.tip .t { color: var(--ink-2); margin-bottom: 4px; }
+.tip .r { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.tip .r b { font-variant-numeric: tabular-nums; }
+.tip .r span { color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.tip .key { width: 12px; height: 2px; display: inline-block; border-radius: 1px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.empty { color: var(--ink-2); padding: 12px 0; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+.diag { display: grid; gap: 12px; }
+.diag .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.diag ul { list-style: none; padding: 0; margin: 8px 0; }
+.diag li { display: grid; grid-template-columns: 22px 90px 1fr; gap: 6px; padding: 3px 0; align-items: start; }
+.diag li .sn { color: var(--ink-2); }
+.hint { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; overflow: auto; max-height: 70vh; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.kv dt { color: var(--ink-2); } .kv dd { margin: 0; }
+.banner { background: var(--surface-2); border-left: 4px solid var(--critical); padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { nav.tabs { margin-left: 0; width: 100%; } nav.tabs button { flex: 1; } .score { min-width: 88px; height: 72px; font-size: 36px; } }
+@media (forced-colors: active) { .score, .st i { forced-color-adjust: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>Domini VPN</h1>
+    <span class="ver" id="ver"></span>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="overview" aria-selected="true">Обзор</button>
+      <button role="tab" data-tab="conn" aria-selected="false">Подключение</button>
+      <button role="tab" data-tab="log" aria-selected="false">Лог</button>
+    </nav>
+  </header>
+  <div class="banner" id="offline">Приложение не отвечает — возможно, оно закрыто или перезапускается после обновления. Страница переподключится сама.</div>
+
+  <!-- ОБЗОР -->
+  <section id="tab-overview">
+    <div class="card">
+      <div class="hero">
+        <div class="score nodata" id="score">—</div>
+        <div class="what">
+          <div class="title" id="title">Первая проверка…</div>
+          <div class="meta" id="meta"></div>
+        </div>
+        <button class="btn" id="checkBtn">Проверить сейчас</button>
+      </div>
+      <div class="tiles" id="tiles"></div>
+      <div class="targets" id="targets"></div>
+    </div>
+
+    <div class="filters">
+      <div class="seg" role="group" aria-label="Период">
+        <button data-range="day" aria-pressed="true">24 часа</button>
+        <button data-range="week" aria-pressed="false">7 дней</button>
+      </div>
+      <span class="st" id="histInfo"></span>
+    </div>
+
+    <div class="card">
+      <h2>Где были проблемы</h2>
+      <p class="sub">Каждая полоса — своя причина: VPN выключен, долгая задержка, низкая скорость до офиса или слабый сам интернет. Наведите — будет время и значение.</p>
+      <div class="legend" id="laneLegend"></div>
+      <div class="chart" id="lanes"></div>
+    </div>
+
+    <div class="card">
+      <h2>Как менялось</h2>
+      <p class="sub">Розовые полосы — VPN не был включён. Пунктир — пороги «хорошо» и «плохо» из настроек.</p>
+      <div id="charts"></div>
+    </div>
+
+    <div class="card">
+      <h2>Инциденты</h2>
+      <p class="sub">Отрезки, когда было «плохо» (красное на полосах), — от свежих к старым. «Так себе» сюда не попадает.</p>
+      <div id="incidents"></div>
+    </div>
+  </section>
+
+  <!-- ПОДКЛЮЧЕНИЕ -->
+  <section id="tab-conn" hidden>
+    <div class="card">
+      <div class="hero">
+        <div class="what">
+          <div class="title">Диагностика подключения</div>
+          <div class="meta">По каждой цели: DNS, через какой адаптер идёт маршрут, TCP, HTTP, узнал ли сервер пользователя — и что сделать.</div>
+        </div>
+        <button class="btn" id="diagBtn">Запустить диагностику</button>
+      </div>
+      <p class="sub" id="diagInfo" style="margin-top:12px"></p>
+    </div>
+    <div class="diag" id="diagTargets"></div>
+    <div class="card" id="envCard" hidden>
+      <h2>Сеть машины</h2>
+      <p class="sub">Адаптеры, похожие на VPN, отмечены. Прокси системы и окружения влияют на путь до сервисов.</p>
+      <div id="adapters"></div>
+      <dl class="kv" id="proxies" style="margin-top:12px"></dl>
+    </div>
+    <div class="card">
+      <h2>Креды и настройки</h2>
+      <p class="sub">Секреты лежат в secrets.env на этой машине (в v0.3 — вход логином AD). Значения здесь не показываются — только «задано / пусто».</p>
+      <div id="secrets" class="targets"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn ghost" data-open="secrets">Открыть secrets.env</button>
+        <button class="btn ghost" data-open="dir">Открыть папку</button>
+        <label class="st" style="font-size:13px"><input type="checkbox" id="autostart"> Автозапуск при входе в Windows</label>
+      </div>
+      <dl class="kv" id="settingsKv" style="margin-top:16px"></dl>
+      <div class="row" style="margin-top:12px"><button class="btn ghost" id="updBtn">Проверить обновление</button></div>
+    </div>
+  </section>
+
+  <!-- ЛОГ -->
+  <section id="tab-log" hidden>
+    <div class="card">
+      <div class="filters">
+        <button class="btn ghost" data-open="log">Открыть в Блокноте</button>
+        <label class="st" style="font-size:13px"><input type="checkbox" id="logAuto" checked> обновлять каждые 5 с</label>
+      </div>
+      <pre class="log" id="log"></pre>
+    </div>
+  </section>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) n.append(k);
+  return n;
+};
+const SVG = "http://www.w3.org/2000/svg";
+const sv = (tag, attrs = {}) => { const n = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+async function api(path, opts = {}) {
+  const init = { ...opts, headers: { ...(opts.headers || {}) } };
+  if (init.method === "POST") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, init);
+  const ct = r.headers.get("content-type") || "";
+  return ct.includes("json") ? r.json() : r.text();
+}
+
+// ---------- форматирование ----------
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const dayLabel = (t) => { const d = new Date(t); return d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }); };
+const fullTime = (t) => { const d = new Date(t); return `${d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}, ${hhmm(t)}`; };
+const dur = (ms) => { const m = Math.round(ms / 60000); if (m < 1) return "< 1 мин"; if (m < 60) return `${m} мин`; const h = Math.floor(m / 60); return `${h} ч ${m % 60} мин`; };
+const num = (v, d = 0) => v == null ? "—" : Number(v).toLocaleString("ru-RU", { maximumFractionDigits: d, minimumFractionDigits: d });
+const ICON = { good: "✓", warning: "!", critical: "✕", nodata: "–" };
+const LABEL = { good: "норма", warning: "так себе", critical: "плохо", nodata: "нет данных" };
+const stBadge = (s, text) => el("span", { class: "st" }, el("i", { class: s, text: ICON[s], "aria-hidden": "true" }), text ?? LABEL[s]);
+
+let S = null;           // /api/state
+let H = null;           // /api/history
+let range = "day";
+let lastSnapAt = 0;
+
+// ---------- классификация (пороги — из настроек приложения) ----------
+function cls(kind, v) {
+  const th = S?.thresholds; if (!th || v == null) return "nodata";
+  if (kind === "lat") return v <= th.latency_good_ms ? "good" : v <= th.latency_bad_ms ? "warning" : "critical";
+  if (kind === "spd") return v >= th.speed_good_mbps ? "good" : v >= th.speed_bad_mbps ? "warning" : "critical";
+  if (kind === "inet") return v < th.internet_weak_mbps ? "critical" : v < th.internet_weak_mbps + 8 ? "warning" : "good";
+  if (kind === "stab") return v >= 0.98 ? "good" : v >= 0.9 ? "warning" : "critical";
+  if (kind === "score") return v >= th.score_green ? "good" : v >= th.score_yellow ? "warning" : "critical";
+  return "nodata";
+}
+const colorToStatus = { green: "good", yellow: "warning", red: "critical" };
+
+// ---------- состояние ----------
+function renderState() {
+  $("#ver").textContent = `v${S.version}` + (S.latest && S.latest !== S.version ? ` · последняя ${S.latest}` : "");
+  const sn = S.snapshot;
+  const scoreEl = $("#score");
+  const btn = $("#checkBtn");
+  btn.disabled = S.checking;
+  btn.textContent = S.checking ? "Идёт проверка…" : "Проверить сейчас";
+  if (!sn) { $("#title").textContent = S.checking ? "Идёт первая проверка…" : "Ещё не проверялось"; return; }
+  const st = colorToStatus[sn.color] || "nodata";
+  scoreEl.className = "score " + (sn.badge === "unknown" ? "nodata" : st);
+  scoreEl.style.background = sn.badge === "unknown" ? "" : `var(--${st})`;
+  if (sn.badge === "novpn") { scoreEl.textContent = "!"; $("#title").textContent = "VPN не включён"; }
+  else if (sn.badge === "weak") { scoreEl.textContent = sn.score != null ? pad(sn.score) : "—"; $("#title").textContent = "Слабый интернет — VPN тут ни при чём"; }
+  else { scoreEl.textContent = sn.score != null ? pad(sn.score) : "—"; $("#title").textContent = `Оценка VPN — ${({ good: "работать удобно", warning: "терпимо, но медленно", critical: "работать тяжело" })[st]}`; }
+  const nextSec = sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec;
+  $("#meta").textContent = `Проверено в ${hhmm(sn.at)} · следующая через ~${Math.round(nextSec / 60)} мин · ${S.computer}`;
+
+  const tiles = $("#tiles"); tiles.replaceChildren();
+  const tile = (k, v, unit, kind, raw) => tiles.append(el("div", { class: "tile" },
+    el("div", { class: "k", text: k }), el("div", { class: "v" }, v, unit ? el("small", { text: " " + unit }) : null), stBadge(cls(kind, raw))));
+  tile("Задержка до офиса", num(sn.latency), "мс", "lat", sn.latency);
+  tile("Скорость до офиса", num(sn.speed, 1), "Мбит/с", "spd", sn.speed);
+  const inet = sn.internet?.mbps;
+  tile("Интернет", num(inet, 1), "Мбит/с", "inet", inet);
+  tile("Стабильность", sn.stability == null ? "—" : num(sn.stability * 100), "%", "stab", sn.stability);
+
+  const tg = $("#targets"); tg.replaceChildren();
+  for (const r of [...sn.targets, ...(sn.internet ? [sn.internet] : [])]) {
+    const s = r.ok ? "good" : r.reachable ? "warning" : "critical";
+    const bits = [];
+    if (r.latency != null) bits.push(`${num(r.latency)} мс`);
+    if (r.mbps != null && r.ok) bits.push(`${num(r.mbps, 1)} Мбит/с`);
+    if (r.ip) bits.push(r.ip);
+    const d = el("div", { class: "d", text: bits.join(" · ") + (r.error ? " — " + r.error : r.note ? " — " + r.note : "") });
+    tg.append(el("div", { class: "target" }, el("span", { class: "st" }, el("i", { class: s, text: ICON[s] })), el("div", {}, el("div", { class: "n", text: r.name }), d)));
+  }
+}
+
+// ---------- история: подготовка ----------
+function prepare(records) {
+  // интернет мерится редко — тянем последнее значение вперёд, пока оно свежее
+  const keep = (S.intervals.internet_min * 1.5) * 60000;
+  let li = null, lt = 0;
+  return records.map((r) => {
+    if (r.inet != null) { li = r.inet; lt = r.t; }
+    const inet = li != null && r.t - lt <= keep ? li : null;
+    const tg = r.tg || {};
+    return {
+      t: r.t, off: r.b === "novpn", score: r.b === "novpn" ? null : r.s, lat: r.lat, spd: r.spd, inet, inetRaw: r.inet ?? null,
+      svn: tg.svn?.ok ? tg.svn.mbps : null, gitlab: tg.gitlab?.ok ? tg.gitlab.mbps : null,
+      vpn: r.b === "novpn" ? "critical" : r.b === "unknown" ? "nodata" : "good",
+      latS: r.b === "novpn" ? "nodata" : cls("lat", r.lat), spdS: r.b === "novpn" ? "nodata" : cls("spd", r.spd), inetS: cls("inet", inet),
+    };
+  });
+}
+const median = (a) => { const v = a.filter((x) => x != null).sort((x, y) => x - y); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+const worst = (a) => { const bad = a.filter((s) => s === "critical").length, warn = a.filter((s) => s === "warning").length, n = a.filter((s) => s !== "nodata").length; if (!n) return "nodata"; if (bad / n >= 0.2) return "critical"; if ((bad + warn) / n >= 0.2) return "warning"; return "good"; };
+
+// окна: линии за сутки — каждая проверка, полосы и инциденты — по 10 минут; за неделю всё — по часам
+const laneStep = () => range === "day" ? 600000 : 3600000;
+function bucketize(pts, from, to, step) {
+  if (!step) return pts;
+  const out = [];
+  for (let t = from - (from % step); t < to; t += step) {
+    const g = pts.filter((p) => p.t >= t && p.t < t + step); if (!g.length) continue;
+    out.push({ t: t + step / 2, step, off: g.filter((p) => p.off).length / g.length >= 0.5, score: median(g.map((p) => p.score)), lat: median(g.map((p) => p.lat)), spd: median(g.map((p) => p.spd)), inet: median(g.map((p) => p.inet)), inetRaw: median(g.map((p) => p.inetRaw)), svn: median(g.map((p) => p.svn)), gitlab: median(g.map((p) => p.gitlab)), vpn: worst(g.map((p) => p.vpn)), latS: worst(g.map((p) => p.latS)), spdS: worst(g.map((p) => p.spdS)), inetS: worst(g.map((p) => p.inetS)), n: g.length });
+  }
+  return out;
+}
+
+// ---------- общая шкала времени и подсказка ----------
+const tip = $("#tip");
+function showTip(e, title, rows) {
+  tip.replaceChildren(el("div", { class: "t", text: title }));
+  for (const [key, label, value] of rows) {
+    const k = key ? el("i", { class: "key", style: `background:${key}` }) : null;
+    tip.append(el("div", { class: "r" }, el("span", {}, k, label), el("b", { text: value })));
+  }
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = e.clientY - h - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+const PAD_L = 76, PAD_R = 12;
+function xScale(from, to, w) { return (t) => PAD_L + ((t - from) / (to - from)) * (w - PAD_L - PAD_R); }
+function timeTicks(from, to) {
+  const out = [];
+  if (range === "day") { const step = 3 * 3600000; let t = Math.ceil(from / step) * step; for (; t <= to; t += step) out.push([t, hhmm(t)]); }
+  else { const d = new Date(from); d.setHours(0, 0, 0, 0); for (let t = d.getTime() + 86400000; t <= to; t += 86400000) out.push([t, dayLabel(t)]); }
+  return out;
+}
+function nearest(pts, t) { let best = null, bd = Infinity; for (const p of pts) { const d = Math.abs(p.t - t); if (d < bd) { bd = d; best = p; } } return best; }
+const gapMs = () => range === "day" ? Math.max(3 * S.intervals.alert_sec * 1000, 25 * 60000) : 2.5 * 3600000;
+
+// синхронное перекрестье на всех графиках
+const crosshairs = [];
+function moveCrosshair(t, from, to) { for (const c of crosshairs) c(t, from, to); }
+
+// ---------- полосы проблем ----------
+const LANES = [["vpn", "VPN"], ["latS", "Задержка"], ["spdS", "Скорость"], ["inetS", "Интернет"]];
+function renderLanes(pts, from, to) {
+  const host = $("#lanes"); host.replaceChildren();
+  const lg = $("#laneLegend"); lg.replaceChildren();
+  for (const s of ["good", "warning", "critical", "nodata"]) lg.append(el("span", {}, el("b", { class: "sw", style: `background:var(--${s})` }), el("span", { class: "st" }, el("i", { class: s, text: ICON[s] })), LABEL[s]));
+  const w = host.clientWidth || 800, rowH = 22, gap = 8, h = LANES.length * (rowH + gap) + 18;
+  const x = xScale(from, to, w);
+  const svg = sv("svg", { viewBox: `0 0 ${w} ${h}`, height: h, role: "img", "aria-label": "Полосы проблем по времени" });
+  const gmax = gapMs();
+  LANES.forEach(([key, name], i) => {
+    const y = i * (rowH + gap);
+    const lbl = sv("text", { x: 0, y: y + rowH / 2 + 4 }); lbl.textContent = name; svg.append(lbl);
+    svg.append(sv("rect", { x: PAD_L, y, width: w - PAD_L - PAD_R, height: rowH, rx: 4, fill: css("--nodata"), opacity: 0.5 }));
+    for (let j = 0; j < pts.length; j++) {
+      const p = pts[j];
+      const x0 = x(p.t - p.step / 2), x1 = x(p.t + p.step / 2);
+      const s = p[key]; if (s === "nodata") continue;
+      svg.append(sv("rect", { x: x0, y, width: Math.max(1, x1 - x0 - 1), height: rowH, fill: css("--" + s) }));
+    }
+  });
+  for (const [t, l] of timeTicks(from, to)) { const tx = sv("text", { x: x(t), y: h - 2, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
+  const cross = sv("line", { y1: 0, y2: h - 16, stroke: css("--ink-2"), "stroke-width": 1, opacity: 0 });
+  svg.append(cross);
+  crosshairs.push((t) => { if (t == null) { cross.setAttribute("opacity", 0); return; } const xx = x(t); cross.setAttribute("x1", xx); cross.setAttribute("x2", xx); cross.setAttribute("opacity", 0.5); });
+  const hit = sv("rect", { x: PAD_L, y: 0, width: w - PAD_L - PAD_R, height: h - 16, fill: "transparent" });
+  hit.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect(); const t = from + ((e.clientX - r.left) * (w / r.width) - PAD_L) / (w - PAD_L - PAD_R) * (to - from);
+    const p = nearest(pts, t); if (!p) return; moveCrosshair(p.t, from, to);
+    showTip(e, `${fullTime(p.t - p.step / 2)}–${hhmm(p.t + p.step / 2)}`, LANES.map(([k, n]) => [null, n, LABEL[p[k]]]));
+  });
+  hit.addEventListener("pointerleave", () => { moveCrosshair(null); hideTip(); });
+  svg.append(hit);
+  host.append(svg);
+}
+
+// ---------- линейные графики (одна ось на график) ----------
+function lineChart(host, pts, from, to, cfg) {
+  const w = host.clientWidth || 800, h = 130, top = 8, bottom = 20;
+  const vals = cfg.series.flatMap((s) => pts.map((p) => p[s.key])).filter((v) => v != null);
+  const thr = (cfg.thresholds || []).map((t) => t.v);
+  let max = Math.max(cfg.min ?? 0, ...vals, ...thr) * 1.1; if (cfg.max) max = cfg.max; if (!isFinite(max) || max <= 0) max = 1;
+  const x = xScale(from, to, w), y = (v) => top + (1 - v / max) * (h - top - bottom);
+  const wrap = el("div", { class: "chart" });
+  const label = el("div", { class: "label" }, el("span", { text: cfg.title }));
+  if (cfg.series.length > 1) { const lg = el("span", { class: "legend", style: "margin:0" }); for (const s of cfg.series) lg.append(el("span", {}, el("b", { class: "ln", style: `background:${s.color}` }), s.name)); label.append(lg); }
+  wrap.append(label);
+  const svg = sv("svg", { viewBox: `0 0 ${w} ${h}`, height: h, role: "img", "aria-label": cfg.title });
+  // полосы «VPN не включён»
+  const gmax = gapMs();
+  for (let j = 0; j < pts.length; j++) if (pts[j].off) {
+    const nx = pts[j + 1]; const t1 = nx && nx.t - pts[j].t <= gmax ? nx.t : pts[j].t + (range === "day" ? 60000 : 3600000);
+    svg.append(sv("rect", { x: x(pts[j].t), y: top, width: Math.max(1, x(t1) - x(pts[j].t)), height: h - top - bottom, fill: css("--off-band") }));
+  }
+  // сетка и ось
+  for (const f of [0, 0.5, 1]) {
+    const v = max * f, yy = y(v);
+    svg.append(sv("line", { x1: PAD_L, x2: w - PAD_R, y1: yy, y2: yy, stroke: css(f === 0 ? "--axis" : "--grid"), "stroke-width": 1 }));
+    const tx = sv("text", { x: PAD_L - 6, y: yy + 4, "text-anchor": "end" }); tx.textContent = num(v, max < 10 ? 1 : 0); svg.append(tx);
+  }
+  for (const t of cfg.thresholds || []) {
+    const yy = y(t.v);
+    svg.append(sv("line", { x1: PAD_L, x2: w - PAD_R, y1: yy, y2: yy, stroke: css("--" + t.status), "stroke-width": 1, "stroke-dasharray": "4 4", opacity: 0.9 }));
+    const tx = sv("text", { x: w - PAD_R, y: yy - 3, "text-anchor": "end" }); tx.textContent = t.label; svg.append(tx);
+  }
+  for (const [t, l] of timeTicks(from, to)) { const tx = sv("text", { x: x(t), y: h - 4, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
+  // линии с разрывами на пропусках
+  for (const s of cfg.series) {
+    let d = "", prev = null;
+    for (const p of pts) {
+      const v = p[s.key];
+      if (v == null) { prev = null; continue; }
+      d += (prev && p.t - prev.t <= gmax ? "L" : "M") + x(p.t).toFixed(1) + " " + y(Math.min(v, max)).toFixed(1);
+      prev = p;
+    }
+    if (!s.noLine) svg.append(sv("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    if (s.dots) for (const p of pts) if (p[s.key] != null) svg.append(sv("circle", { cx: x(p.t), cy: y(Math.min(p[s.key], max)), r: 3, fill: s.color, stroke: css("--surface"), "stroke-width": 2 }));
+  }
+  const cross = sv("line", { y1: top, y2: h - bottom, stroke: css("--ink-2"), "stroke-width": 1, opacity: 0 });
+  svg.append(cross);
+  crosshairs.push((t) => { if (t == null) { cross.setAttribute("opacity", 0); return; } const xx = x(t); cross.setAttribute("x1", xx); cross.setAttribute("x2", xx); cross.setAttribute("opacity", 0.5); });
+  const hit = sv("rect", { x: PAD_L, y: 0, width: w - PAD_L - PAD_R, height: h, fill: "transparent" });
+  hit.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect(); const t = from + ((e.clientX - r.left) * (w / r.width) - PAD_L) / (w - PAD_L - PAD_R) * (to - from);
+    const p = nearest(pts, t); if (!p) return; moveCrosshair(p.t, from, to);
+    const rows = cfg.series.map((s) => [s.color, s.name, p[s.key] == null ? (p.off ? "VPN выкл." : "—") : `${num(p[s.key], cfg.digits ?? 0)} ${cfg.unit}`]);
+    showTip(e, p.step ? `${fullTime(p.t - p.step / 2)}–${hhmm(p.t + p.step / 2)} · медиана` : fullTime(p.t), rows);
+  });
+  hit.addEventListener("pointerleave", () => { moveCrosshair(null); hideTip(); });
+  svg.append(hit);
+  wrap.append(svg);
+  host.append(wrap);
+}
+
+function renderCharts(pts, from, to) {
+  const host = $("#charts"); host.replaceChildren();
+  const th = S.thresholds;
+  lineChart(host, pts, from, to, { title: "Оценка VPN", unit: "", max: 100, series: [{ key: "score", name: "Оценка", color: css("--s1") }],
+    thresholds: [{ v: th.score_green, status: "good", label: `зелёный от ${th.score_green}` }, { v: th.score_yellow, status: "critical", label: `красный ниже ${th.score_yellow}` }] });
+  lineChart(host, pts, from, to, { title: "Задержка до офиса, мс", unit: "мс", series: [{ key: "lat", name: "Задержка", color: css("--s1") }],
+    thresholds: [{ v: th.latency_good_ms, status: "good", label: `хорошо ≤ ${th.latency_good_ms}` }, { v: th.latency_bad_ms, status: "critical", label: `плохо > ${th.latency_bad_ms}` }] });
+  lineChart(host, pts, from, to, { title: "Скорость до офиса, Мбит/с", unit: "Мбит/с", digits: 1, series: [{ key: "svn", name: "SVN", color: css("--s1") }, { key: "gitlab", name: "GitLab", color: css("--s2") }],
+    thresholds: [{ v: th.speed_good_mbps, status: "good", label: `хорошо ≥ ${th.speed_good_mbps}` }, { v: th.speed_bad_mbps, status: "critical", label: `плохо < ${th.speed_bad_mbps}` }] });
+  lineChart(host, pts, from, to, { title: "Интернет без VPN, Мбит/с", unit: "Мбит/с", digits: 1, series: [{ key: "inetRaw", name: "Интернет", color: css("--s3"), dots: true, noLine: range === "day" }],
+    thresholds: [{ v: th.internet_weak_mbps, status: "critical", label: `слабый < ${th.internet_weak_mbps}` }] });
+}
+
+// ---------- инциденты ----------
+function incidents(pts, raw) {
+  const kinds = [["vpn", "VPN не включён", null, ""], ["latS", "Долгая задержка", "lat", "мс"], ["spdS", "Низкая скорость до офиса", "spd", "Мбит/с"], ["inetS", "Слабый интернет", "inet", "Мбит/с"]];
+  const out = [], gmax = gapMs();
+  for (const [key, name, vk, unit] of kinds) {
+    let cur = null;
+    const close = () => { if (cur) { out.push(cur); cur = null; } };
+    for (let j = 0; j < pts.length; j++) {
+      const p = pts[j], s = p[key];
+      const bad = s === "critical";
+      if (cur && p.t - cur.lastT > gmax) close();
+      if (bad) {
+        if (!cur) cur = { kind: name, start: p.t - p.step / 2, lastT: p.t, end: p.t, sev: s, worst: vk ? p[vk] : null, unit, vk, n: 0 };
+        cur.lastT = p.t; cur.end = p.t + p.step / 2; cur.n++;
+        if (vk && p[vk] != null) cur.worst = cur.worst == null ? p[vk] : (vk === "lat" ? Math.max(cur.worst, p[vk]) : Math.min(cur.worst, p[vk]));
+      } else if (s !== "nodata" && (!cur || p.t - cur.lastT > p.step)) close(); // одно спокойное окно между плохими — тот же инцидент
+    }
+    close();
+  }
+  for (const i of out) if (i.vk) {
+    const key = i.vk === "inet" ? "inetRaw" : i.vk;
+    const vs = raw.filter((p) => p.t >= i.start && p.t <= i.end && p[key] != null).map((p) => p[key]);
+    if (vs.length) i.worst = i.vk === "lat" ? Math.max(...vs) : Math.min(...vs);
+  }
+  return out.sort((a, b) => b.start - a.start);
+}
+function renderIncidents(pts, raw) {
+  const host = $("#incidents"); host.replaceChildren();
+  const list = incidents(pts, raw);
+  if (!list.length) { host.append(el("div", { class: "empty", text: "За этот период серьёзных проблем не было." })); return; }
+  const total = list.reduce((a, i) => a + (i.end - i.start), 0);
+  host.append(el("p", { class: "sub", text: `${list.length} инцидентов, всего ${dur(total)}.` }));
+  const tbl = el("table", {}, el("thead", {}, el("tr", {}, ...["Когда", "Длилось", "Что", "Худшее значение"].map((t) => el("th", { text: t })))));
+  const tb = el("tbody");
+  const shown = showAllInc ? list : list.slice(0, 15);
+  for (const i of shown) {
+    tb.append(el("tr", {},
+      el("td", { class: "num", text: fullTime(i.start) }),
+      el("td", { class: "num", text: dur(i.end - i.start) }),
+      el("td", {}, stBadge(i.sev, i.kind)),
+      el("td", { class: "num", text: i.worst == null ? "—" : `${num(i.worst, i.vk === "lat" ? 0 : 1)} ${i.unit}` })));
+  }
+  tbl.append(tb); host.append(tbl);
+  if (list.length > 15) {
+    const b = el("button", { class: "btn ghost", style: "margin-top:12px", text: showAllInc ? "Свернуть" : `Показать все (${list.length})` });
+    b.addEventListener("click", () => { showAllInc = !showAllInc; renderIncidents(pts, raw); });
+    host.append(b);
+  }
+}
+let showAllInc = false;
+
+function renderHistory() {
+  if (!H || !S) return;
+  crosshairs.length = 0;
+  const from = H.from, to = H.to;
+  const raw = prepare(H.records);
+  const lanes = bucketize(raw, from, to, laneStep());
+  const lines = range === "day" ? raw : lanes;
+  $("#histInfo").textContent = `${H.records.length} проверок` + (range === "week" ? " · по часам, медиана" : " · полосы — окна по 10 минут");
+  renderLanes(lanes, from, to);
+  renderCharts(lines, from, to);
+  renderIncidents(lanes, raw);
+}
+
+// ---------- диагностика ----------
+function renderDiag(d) {
+  const host = $("#diagTargets"); host.replaceChildren();
+  if (!d) return;
+  $("#diagInfo").textContent = `Последняя диагностика: ${fullTime(d.at_ms)}, заняла ${num(d.took_ms / 1000, 1)} с.`;
+  const order = { fail: 0, warn: 1, ok: 2 };
+  const toS = { ok: "good", warn: "warning", fail: "critical", skip: "nodata" };
+  for (const t of [...d.targets].sort((a, b) => order[a.verdict] - order[b.verdict])) {
+    const ul = el("ul");
+    for (const s of t.steps) ul.append(el("li", {}, el("span", { class: "st" }, el("i", { class: toS[s.status], text: ICON[toS[s.status]] })), el("span", { class: "sn", text: s.name }), el("span", { text: s.detail })));
+    host.append(el("div", { class: "card" },
+      el("div", { class: "head" }, el("h2", { text: t.name, style: "margin:0" }), stBadge(toS[t.verdict], ({ ok: "в порядке", warn: "есть замечания", fail: "не работает" })[t.verdict]), el("span", { class: "st", text: "вход: " + t.auth })),
+      el("div", { class: "mono", text: t.url, style: "margin-top:4px;color:var(--ink-2)" }), ul, el("div", { class: "hint", text: t.hint })));
+  }
+  $("#envCard").hidden = false;
+  const ad = $("#adapters"); ad.replaceChildren();
+  if (d.adapters.length) {
+    const tbl = el("table", {}, el("thead", {}, el("tr", {}, ...["Адаптер", "Описание", "IPv4", "Состояние"].map((x) => el("th", { text: x })))));
+    const tb = el("tbody");
+    for (const a of [...d.adapters].sort((x, y) => (y.up - x.up) || (y.vpn_like - x.vpn_like))) {
+      tb.append(el("tr", {}, el("td", {}, a.name, a.vpn_like ? el("span", { class: "st", style: "margin-left:6px" }, "· похож на VPN") : null), el("td", { text: a.description }), el("td", { class: "num", text: a.ipv4.join(", ") || "—" }), el("td", {}, stBadge(a.up ? "good" : "nodata", a.up ? "включён" : "выключен"))));
+    }
+    tbl.append(tb); ad.append(tbl);
+  } else ad.append(el("div", { class: "empty", text: "Список адаптеров недоступен." }));
+  const px = $("#proxies"); px.replaceChildren(el("dt", { text: "Прокси системы" }), el("dd", { text: d.system_proxy }), el("dt", { text: "Прокси окружения" }), el("dd", { class: "mono", text: d.env_proxy }));
+  const sc = $("#secrets"); sc.replaceChildren();
+  for (const [k, set] of d.secrets) sc.append(el("div", { class: "target" }, el("span", { class: "st" }, el("i", { class: set ? "good" : "nodata", text: set ? "✓" : "–" })), el("div", {}, el("div", { class: "n mono", text: k }), el("div", { class: "d", text: set ? "задано" : "пусто" }))));
+}
+function renderSettings() {
+  if (!S) return;
+  $("#autostart").checked = S.autostart;
+  const kv = $("#settingsKv"); kv.replaceChildren();
+  const th = S.thresholds, iv = S.intervals;
+  const add = (k, v) => kv.append(el("dt", { text: k }), el("dd", { text: v }));
+  add("Версия", `${S.version}` + (S.latest ? ` (последняя — ${S.latest})` : "") + (S.update_error ? ` · ошибка обновления: ${S.update_error}` : ""));
+  add("Папка", S.dir);
+  add("Проверки", `зелёный — раз в ${Math.round(iv.green_sec / 60)} мин, иначе — раз в ${Math.round(iv.alert_sec / 60)} мин; большой файл — раз в ${iv.full_min} мин; интернет — раз в ${iv.internet_min} мин`);
+  add("Задержка", `хорошо ≤ ${th.latency_good_ms} мс, плохо > ${th.latency_bad_ms} мс`);
+  add("Скорость", `хорошо ≥ ${th.speed_good_mbps} Мбит/с, плохо < ${th.speed_bad_mbps} Мбит/с`);
+  add("Оценка", `зелёный от ${th.score_green}, жёлтый от ${th.score_yellow}; стабильность — за ${th.stability_window_min} мин с момента включения VPN`);
+}
+
+// ---------- опрос ----------
+let offline = false;
+async function pollState() {
+  try {
+    S = await api("/api/state");
+    if (offline) { offline = false; $("#offline").style.display = "none"; }
+    renderState(); renderSettings();
+    const at = S.snapshot?.at || 0;
+    if (at !== lastSnapAt) { lastSnapAt = at; await loadHistory(); }
+  } catch { offline = true; $("#offline").style.display = "block"; }
+  setTimeout(pollState, S?.checking ? 1000 : 4000);
+}
+async function loadHistory() { try { H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
+
+let diagTimer = null;
+async function pollDiag() {
+  const r = await api("/api/diagnostics");
+  const b = $("#diagBtn"); b.disabled = r.running; b.textContent = r.running ? "Идёт диагностика…" : "Запустить диагностику";
+  if (r.running) { $("#diagInfo").textContent = "Идёт диагностика — до 30 секунд, если какая-то цель не отвечает."; diagTimer = setTimeout(pollDiag, 1000); }
+  else renderDiag(r.report);
+}
+async function loadLog() {
+  if ($("#tab-log").hidden) return;
+  const t = await api("/api/log?lines=400").catch(() => "");
+  const pre = $("#log"); const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  pre.textContent = t; if (atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+// ---------- события ----------
+document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("nav.tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  for (const id of ["overview", "conn", "log"]) $("#tab-" + id).hidden = id !== b.dataset.tab;
+  if (b.dataset.tab === "conn") pollDiag();
+  if (b.dataset.tab === "log") loadLog();
+  if (b.dataset.tab === "overview") renderHistory();
+  try { localStorage.setItem("tab", b.dataset.tab); } catch {}
+}));
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  range = b.dataset.range;
+  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  loadHistory();
+}));
+$("#checkBtn").addEventListener("click", async () => { $("#checkBtn").disabled = true; await api("/api/check", { method: "POST", body: "{}" }); setTimeout(pollState, 300); });
+$("#diagBtn").addEventListener("click", async () => { await api("/api/diagnostics", { method: "POST", body: "{}" }); clearTimeout(diagTimer); pollDiag(); });
+$("#updBtn").addEventListener("click", async () => { await api("/api/update", { method: "POST", body: "{}" }); $("#updBtn").textContent = "Проверяю…"; setTimeout(() => { $("#updBtn").textContent = "Проверить обновление"; }, 15000); });
+$("#autostart").addEventListener("change", async (e) => { await api("/api/autostart", { method: "POST", body: JSON.stringify({ on: e.target.checked }) }); });
+document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => api("/api/open", { method: "POST", body: JSON.stringify({ what: b.dataset.open }) })));
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderHistory, 150); });
+setInterval(() => { if ($("#logAuto").checked) loadLog(); }, 5000);
+try { const t = localStorage.getItem("tab"); if (t) document.querySelector(`nav.tabs button[data-tab="${t}"]`)?.click(); } catch {}
+pollState();
+</script>
+</body>
+</html>
