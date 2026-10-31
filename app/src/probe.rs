@@ -172,6 +172,9 @@ pub fn target_url(t: &Target, secrets: &Secrets, full: bool) -> Option<String> {
     }
 }
 
+/// Длительность потока полной пробы, с (R3.2: 10–20 с).
+pub const FULL_PROBE_SECS: u64 = 15;
+
 /// Проба цели. `full` — полная проба большим файлом (если у цели есть `full_url`).
 pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
     let url = match target_url(t, secrets, full) {
@@ -188,8 +191,13 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         Some(t.role),
         &url,
         &headers,
-        Duration::from_secs(t.timeout_sec),
-        None,
+        // полная проба (R3.2): качаем поток FULL_PROBE_SECS и обрываем — таймаут должен быть больше
+        if full {
+            Duration::from_secs(t.timeout_sec.max(FULL_PROBE_SECS + 20))
+        } else {
+            Duration::from_secs(t.timeout_sec)
+        },
+        full.then(|| Duration::from_secs(FULL_PROBE_SECS)),
         full,
     );
     if let Some(n) = note {
