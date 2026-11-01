@@ -99,12 +99,13 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 
 /* низ */
 /* низ: под разделителем — строка уведомлений фиксированной высоты (текст появляется, ничего не скачет), под ней — учётная запись и иконки */
-.bottom { margin-top: 12px; border-top: 1px solid var(--line); }
+.bottom { border-top: 1px solid var(--line); }
 .ft { display: flex; align-items: center; gap: 2px; padding: 2px 10px 8px 14px; }
 .user { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; background: none; border: 0; padding: 6px 8px; margin-left: -8px; border-radius: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user:hover { background: var(--bg-2); }
 .ft .sp { flex: 1; }
-.toast { font-size: 11.5px; line-height: 16px; height: 16px; color: var(--muted); padding: 4px 16px 0; box-sizing: content-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* строка уведомлений — над разделителем, место под неё есть всегда: текст появляется, ничего не сдвигается */
+.toast { font-size: 11.5px; line-height: 16px; height: 16px; color: var(--muted); padding: 8px 16px 4px; box-sizing: content-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* панель «Пауза» — вместо содержимого, как у Wi‑Fi */
 .pop { margin: 10px 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
@@ -134,7 +135,8 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 <div class="hd" id="hd"></div>
 <div id="root"></div>
 <div id="pop" class="pop" hidden></div>
-<div class="bottom"><div class="toast" id="toast" role="status" aria-live="polite"></div><div class="ft" id="ft"></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="bottom"><div class="ft" id="ft"></div></div>
 <script>
 // Отдельным скриптом и первым: ловит и ошибки разбора основного скрипта (их не поймать изнутри него).
 window.addEventListener("error", (e) => { try { window.ipc.postMessage("err:" + String(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`).slice(0, 300)); } catch {} });
@@ -184,6 +186,9 @@ const ICON = {
   history: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2",
   gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
   auto: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18",
+  vRoute: "M6 4v16M6 6h.01M6 12h.01M6 18h.01M10 6h8M10 12h6M10 18h8",
+  vDash: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  vStrip: "M4 7h16M4 12h16M4 17h16M8 5v4M12 10v4M16 15v4",
   sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4",
   moon: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z",
 };
@@ -332,7 +337,7 @@ function viewStrip() {
 }
 function notes() {
   const out = [], sn = S?.snapshot;
-  if (!S?.login && (sn?.targets || []).some((t) => t.note)) out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", h("button", { type: "button", text: "Войти", onclick: () => toApp("open:conn") })));
+  if (!S?.login && (sn?.targets || []).some((t) => t.note)) out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", h("button", { type: "button", text: "Войти", onclick: () => toApp("open:settings") })));
   if (sn?.lite) out.push(h("div", { class: "note", text: `${sn.lite[0].toUpperCase()}${sn.lite.slice(1)} — проверяю без скачивания` }));
   return out;
 }
@@ -358,7 +363,10 @@ function header() {
     tipBox(h("div", { class: "big", text: `Проверено в ${hms(sn.at)}` }), kv([["вид", sn.full ? "полная, со скачиванием" : sn.lite ? "без скачивания" : "лёгкая"], sn.took_ms ? ["заняла", `${num(sn.took_ms / 1000, 1)} с`] : null]), h("span", { class: "tm", text: "Нажмите — проверить сейчас" }))) : null;
   const ti = Math.max(0, THEMES.findIndex(([k]) => k === (S?.prefs?.theme || "")));
   const themeBtn = h("button", { class: "ib", type: "button", "aria-label": `Тема: ${THEMES[ti][1]}`, title: `Тема: ${THEMES[ti][1]} — нажмите, чтобы сменить`, onclick: async () => { const next = THEMES[(ti + 1) % THEMES.length][0]; S.prefs.theme = next; applyTheme(); render(); await api("/api/prefs", { method: "POST", body: JSON.stringify({ theme: next }) }); } }, icon(THEMES[ti][2]));
-  $("#hd").replaceChildren(...[h("b", { text: "Domini VPN" }), S?.city ? h("span", { text: `· ${S.city} ·` }) : h("span", { text: "·" }), ver, beta ? h("span", { class: "beta", text: "бета" }) : null, h("span", { class: "sp" }), when, themeBtn].filter(Boolean));
+  const VIEWS = [["route", "маршрут", "vRoute"], ["dash", "приборная панель", "vDash"], ["strip", "лента часа", "vStrip"]];
+  const vi = Math.max(0, VIEWS.findIndex(([k]) => k === view));
+  const viewBtn = h("button", { class: "ib", type: "button", "aria-label": `Вид меню: ${VIEWS[vi][1]}`, title: `Вид: ${VIEWS[vi][1]} — нажмите, чтобы сменить`, onclick: async () => { const next = VIEWS[(vi + 1) % VIEWS.length][0]; S.prefs.view = next; render(); await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: next }) }); } }, icon(VIEWS[vi][2]));
+  $("#hd").replaceChildren(...[h("b", { text: "Domini VPN" }), S?.city ? h("span", { text: `· ${S.city} ·` }) : h("span", { text: "·" }), ver, beta ? h("span", { class: "beta", text: "бета" }) : null, h("span", { class: "sp" }), when, viewBtn, themeBtn].filter(Boolean));
 }
 function pauseItems(m) {
   const set = async (body) => { await api("/api/pause", { method: "POST", body: JSON.stringify(body) }); closePop(); refresh(); };
@@ -368,7 +376,7 @@ function pauseItems(m) {
 function footer() {
   const r = R(), login = S?.login;
   const ust = !login ? "warn" : r ? r.st_user : "good";
-  const user = tip(h("button", { class: "user", type: "button", onclick: () => toApp("open:conn") }, h("span", { class: `dot d-${ust}` }), h("span", { text: login || "Войти" })), () =>
+  const user = tip(h("button", { class: "user", type: "button", onclick: () => toApp("open:settings") }, h("span", { class: `dot d-${ust}` }), h("span", { text: login || "Войти" })), () =>
     tipBox(h("div", { class: "big", text: login ? `Учётная запись AD: ${login}` : "Вход не выполнен" }),
       ...office().map((t) => { const bad = (r?.auth_failed || []).includes(t.name); return h("div", { class: "row" }, h("span", { class: `dot d-${bad ? "bad" : t.ok ? "good" : "idle"}` }), h("span", { text: `${t.name} — ${bad ? "вход не принят" : t.ok ? "вход принят" : "не отвечает"}` })); }),
       h("span", { class: "tm", text: "Нажмите — посмотреть расширенный статус" })));
@@ -378,7 +386,7 @@ function footer() {
   $("#ft").replaceChildren(user, h("span", { class: "sp" }),
     ib("refresh", S?.checking ? "Проверяю…" : "Проверить сейчас", false, checkNow), pauseBtn,
     ib("history", "История за сутки и неделю", false, () => toApp("open:history")),
-    ib("gear", "Настройки: вид меню, уведомления, обновления, вход", false, () => toApp("open:conn")));
+    ib("gear", "Настройки: вид меню, уведомления, обновления, вход", false, () => toApp("open:settings")));
 }
 
 // ---------- панель «Пауза» вместо содержимого ----------

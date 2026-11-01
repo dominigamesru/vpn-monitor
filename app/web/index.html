@@ -111,7 +111,7 @@ th { color: var(--muted); font-weight: 600; } td.num { white-space: nowrap; }
 .tablewrap { overflow-x: auto; }
 
 /* Настройки */
-.adgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 24px; }
+.adgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
 @media (max-width: 760px) { .adgrid { grid-template-columns: 1fr; } }
 .svcstate { display: grid; gap: 8px; align-content: start; border-left: 1px solid var(--line); padding-left: 20px; }
 @media (max-width: 760px) { .svcstate { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 14px; } }
@@ -157,12 +157,12 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   <header class="top">
     <h1><span class="mini idle" id="mini" tabindex="0">…</span> Domini VPN Monitor <span class="ver" id="ver"></span></h1>
     <nav class="tabs" aria-label="Разделы">
-      <a href="#now">Сейчас</a><a href="#history">История</a><a href="#conn">Настройки</a>
+      <a href="#now">Сейчас</a><a href="#history">История</a><a href="#settings">Настройки</a>
     </nav>
   </header>
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
   <div class="banner" id="newsBanner" hidden><div id="newsText"></div><button class="btn ghost" id="newsOk">Понятно</button></div>
-  <div class="banner" id="loginBanner" hidden style="--c: var(--warn)"><p>Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN.</p><a class="btn" href="#conn">Войти</a></div>
+  <div class="banner" id="loginBanner" hidden style="--c: var(--warn)"><p>Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN.</p><a class="btn" href="#settings">Войти</a></div>
 
   <!-- СЕЙЧАС -->
   <section data-tab="now">
@@ -205,7 +205,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   </section>
 
   <!-- ПОДКЛЮЧЕНИЕ -->
-  <section data-tab="conn" hidden>
+  <section data-tab="settings" hidden>
     <div class="card">
       <div class="adgrid">
         <div>
@@ -555,11 +555,12 @@ async function news() { if (!S || S.prefs.last_seen_version === S.version) retur
 $("#newsOk").addEventListener("click", async () => { $("#newsBanner").hidden = true; await api("/api/prefs", { method: "POST", body: JSON.stringify({ last_seen_version: S.version }) }); });
 
 // ---------- вкладки и опрос ----------
-const TABS = ["now", "history", "conn"];
-function showTab() { let t = location.hash.slice(1); if (t === "log") t = "conn"; if (!TABS.includes(t)) t = "now";
+const TABS = ["now", "history", "settings"];
+// #conn и #log — старые адреса (меню у иконки до 0.6.3, ссылки в доках) → «Настройки»
+function showTab() { let t = location.hash.slice(1); if (t === "log" || t === "conn") t = "settings"; if (!TABS.includes(t)) t = "now";
   document.querySelectorAll("section[data-tab]").forEach((s) => { s.hidden = s.dataset.tab !== t; });
   document.querySelectorAll("nav.tabs a").forEach((a) => a.setAttribute("aria-current", a.getAttribute("href") === `#${t}` ? "page" : "false"));
-  if (t === "history") loadHistory(); if (t === "conn") { pollDiag(); loadLog(); } }
+  if (t === "history") loadHistory(); if (t === "settings") { pollDiag(); loadLog(); } }
 addEventListener("hashchange", showTab);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { range = b.dataset.range; document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); loadHistory(); }));
 async function loadHistory() { try { H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
