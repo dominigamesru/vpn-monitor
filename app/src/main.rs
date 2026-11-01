@@ -13,6 +13,8 @@ mod api;
 #[cfg(windows)]
 mod app;
 #[cfg(windows)]
+mod flyout;
+#[cfg(windows)]
 mod install;
 #[cfg(windows)]
 mod win;

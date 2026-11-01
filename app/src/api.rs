@@ -16,6 +16,10 @@ use vpn_monitor::{VERSION, diag, error, info, log};
 
 const PAGE: &str = include_str!("../web/index.html");
 const HELP: &str = include_str!("../web/api-help.md");
+const FLYOUT: &str = include_str!("../web/flyout.html");
+const POPPER: &str = include_str!("../web/vendor/popper.min.js");
+const TIPPY: &str = include_str!("../web/vendor/tippy.min.js");
+const TIPPY_CSS: &str = include_str!("../web/vendor/tippy.css");
 const CHANGELOG: &str = include_str!("../CHANGELOG.md");
 pub const BASE_PORT: u16 = 5151;
 
@@ -130,6 +134,18 @@ fn handle(
     let resp = match (&method, path) {
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             Response::from_string(PAGE).with_header(ctype("text/html; charset=utf-8"))
+        }
+        (Method::Get, "/flyout") => {
+            Response::from_string(FLYOUT).with_header(ctype("text/html; charset=utf-8"))
+        }
+        (Method::Get, "/vendor/popper.min.js") => {
+            Response::from_string(POPPER).with_header(ctype("text/javascript; charset=utf-8"))
+        }
+        (Method::Get, "/vendor/tippy.min.js") => {
+            Response::from_string(TIPPY).with_header(ctype("text/javascript; charset=utf-8"))
+        }
+        (Method::Get, "/vendor/tippy.css") => {
+            Response::from_string(TIPPY_CSS).with_header(ctype("text/css; charset=utf-8"))
         }
         (Method::Get, "/api/help") => {
             Response::from_string(HELP.replace("{port}", &port.to_string()))
@@ -438,7 +454,9 @@ fn state(shared: &SharedRef) -> Value {
 fn history(shared: &SharedRef, range: &str) -> Value {
     let sh = lock(shared);
     let now = vpn_monitor::metrics::now_ms();
-    let from = if range == "week" {
+    let from = if range == "hour" {
+        now - 3_600_000
+    } else if range == "week" {
         local_day_start(now) - 7 * 86_400_000
     } else {
         now - 86_400_000

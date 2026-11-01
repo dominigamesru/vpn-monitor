@@ -25,6 +25,8 @@ enum UserEvent {
     UpdateError(String),
     RestartInto(PathBuf),
     Quit,
+    /// Сообщение страницы меню (`h:520`, `hide`, `history`, `quit`), v0.5.
+    FlyoutIpc(String),
 }
 
 pub enum Cmd {
@@ -181,11 +183,33 @@ pub fn run(replace: bool, first_run: bool) {
     let api_url = lock(&shared).api_url.clone();
 
     let mut ui: Option<Ui> = None;
-    event_loop.run(move |event, _, flow| {
+    let mut flyout: Option<crate::flyout::Flyout> = None;
+    let fly_proxy = proxy.clone();
+    event_loop.run(move |event, target, flow| {
         *flow = ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_secs(5));
         match event {
             Event::NewEvents(StartCause::Init) => match build_ui(&settings, api_url.is_some()) {
-                Ok(u) => ui = Some(u),
+                Ok(u) => {
+                    // меню у иконки на WebView2; не вышло — остаётся системное меню и левый клик = «Проверить»
+                    if let Some(url) = &api_url {
+                        match crate::flyout::Flyout::new(
+                            target,
+                            &format!("{url}flyout"),
+                            fly_proxy.clone(),
+                            UserEvent::FlyoutIpc,
+                        ) {
+                            Ok(f) => {
+                                info!("tray", "меню у иконки — WebView2");
+                                u.tray.set_show_menu_on_right_click(false);
+                                flyout = Some(f);
+                            }
+                            Err(e) => {
+                                warn!("tray", "меню на WebView2 не создано ({e}) — системное меню")
+                            }
+                        }
+                    }
+                    ui = Some(u);
+                }
                 Err(e) => {
                     error!("tray", "не создать иконку в трее: {e}");
                     *flow = ControlFlow::Exit;
@@ -194,6 +218,18 @@ pub fn run(replace: bool, first_run: bool) {
             Event::UserEvent(ev) => {
                 let Some(u) = ui.as_mut() else { return };
                 match ev {
+                    UserEvent::Tray(TrayIconEvent::Click {
+                        button,
+                        button_state: MouseButtonState::Up,
+                        rect,
+                        ..
+                    }) if flyout.is_some()
+                        && matches!(button, MouseButton::Left | MouseButton::Right) =>
+                    {
+                        if let Some(f) = flyout.as_mut() {
+                            f.toggle(rect);
+                        }
+                    }
                     UserEvent::Tray(TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -209,7 +245,7 @@ pub fn run(replace: bool, first_run: bool) {
                     UserEvent::Tray(TrayIconEvent::DoubleClick {
                         button: MouseButton::Left,
                         ..
-                    }) => {
+                    }) if flyout.is_none() => {
                         if let Some(url) = &api_url {
                             info!("tray", "двойной клик — открываю окно");
                             win::open_url(url);
@@ -233,6 +269,31 @@ pub fn run(replace: bool, first_run: bool) {
                             toggle_autostart(u);
                         } else if m.id == *u.quit.id() {
                             info!("tray", "выход по меню");
+                            *flow = ControlFlow::Exit;
+                        }
+                    }
+                    UserEvent::FlyoutIpc(msg) => {
+                        if let Some(h) = msg.strip_prefix("h:").and_then(|v| v.parse::<f64>().ok())
+                        {
+                            if let Some(f) = flyout.as_mut() {
+                                f.resize(h);
+                            }
+                        } else if msg == "hide" {
+                            if let Some(f) = flyout.as_mut() {
+                                f.hide();
+                            }
+                        } else if let Some(tab) = msg.strip_prefix("open:") {
+                            // окно в браузере на нужной вкладке: history, conn
+                            if let Some(f) = flyout.as_mut() {
+                                f.hide();
+                            }
+                            if let Some(url) = &api_url {
+                                let tab: String =
+                                    tab.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                                win::open_url(&format!("{url}#{tab}"));
+                            }
+                        } else if msg == "quit" {
+                            info!("tray", "выход из меню");
                             *flow = ControlFlow::Exit;
                         }
                     }
@@ -268,6 +329,15 @@ pub fn run(replace: bool, first_run: bool) {
                         info!("tray", "попросили закрыться (обновление или установка)");
                         *flow = ControlFlow::Exit;
                     }
+                }
+            }
+            Event::WindowEvent {
+                window_id,
+                event: tao::event::WindowEvent::Focused(false),
+                ..
+            } if flyout.as_ref().is_some_and(|f| f.id() == window_id) => {
+                if let Some(f) = flyout.as_mut() {
+                    f.hide();
                 }
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
