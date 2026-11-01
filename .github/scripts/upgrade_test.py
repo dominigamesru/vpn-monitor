@@ -88,7 +88,9 @@ def main() -> int:
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
     print(f"запускаю {old_exe.name} --tray")
-    subprocess.Popen([str(old_exe), "--tray"], cwd=install)
+    # новая версия наследует окружение и сразу откроет меню у иконки — проверить, что WebView2 его рисует
+    env = dict(os.environ, VPN_MONITOR_SHOW_FLYOUT="1")
+    subprocess.Popen([str(old_exe), "--tray"], cwd=install, env=env)
     log = install / "vpn-monitor.log"
     ok = False
     deadline = time.time() + args.timeout
@@ -108,13 +110,47 @@ def main() -> int:
         if ok:
             break
 
+    # Меню у иконки: страница в WebView2 должна загрузиться и заговорить (её скрипт шлёт первое сообщение).
+    # В браузере на моках это не проверить — v0.5.0 там работала, а у заказчика меню было пустым.
+    flyout_ok = False
+    if ok:
+        marker = f"VPN Monitor {new_ver}, режим трей"
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+            tail = text[text.rfind(marker):] if marker in text else ""
+            if "страница меню на связи" in tail and "страница меню нарисована" in tail:
+                flyout_ok = True
+                break
+            if "меню на WebView2 не создано" in tail:
+                break
+            time.sleep(2)
+
+    # снимок экрана с меню — артефакт CI (посмотреть глазами, как меню выглядит в настоящем WebView2)
+    if ok:
+        time.sleep(3)
+        shot = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", ".")) / "flyout-screen.png"
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
+            "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;"
+            "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+            "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+            "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);"
+            f"$bmp.Save('{shot}')"
+        )
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+        print(f"снимок экрана: {shot}" if shot.exists() else f"снимок не сделан: {r.stderr.strip()[:300]}")
+
     print("---- vpn-monitor.log ----")
     print(log.read_text(encoding="utf-8", errors="replace") if log.exists() else "(лога нет)")
     subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{old_ver}.exe"], capture_output=True)
     subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{new_ver}.exe"], capture_output=True)
     httpd.shutdown()
+    if ok and not flyout_ok:
+        print(f"::error::{new_ver}: страница меню у иконки в WebView2 не ответила за 60 с — см. лог выше")
+        return 1
     if ok:
-        print(f"OK: {old_ver} сам обновился до {new_ver}, новая версия отвечает по API")
+        print(f"OK: {old_ver} сам обновился до {new_ver}, новая версия отвечает по API, меню у иконки на связи")
         return 0
     print(f"::error::{old_ver} не обновился до {new_ver} за {args.timeout} с — см. лог выше")
     return 1

@@ -51,6 +51,14 @@ jobs:
       - name: Обновление «последний релиз → эта сборка»
         working-directory: .
         run: python .github/scripts/upgrade_test.py --exe app/target/release/vpn-monitor.exe
+      - name: Снимок меню у иконки (WebView2)
+        uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: flyout-screen-${{ github.sha }}
+          path: flyout-screen.png
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@v5
         with:
           name: vpn-monitor-${{ github.sha }}

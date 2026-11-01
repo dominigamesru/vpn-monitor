@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tao::dpi::{LogicalSize, PhysicalPosition};
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
-use tao::window::{Window, WindowBuilder, WindowId};
+use tao::window::{Window, WindowBuilder};
 use wry::{WebView, WebViewBuilder};
 
 pub const WIDTH: f64 = 372.0;
@@ -20,6 +20,9 @@ pub struct Flyout {
     /// Где иконка — чтобы после смены высоты окно осталось у неё, а не уехало за край экрана.
     icon: Option<tray_icon::Rect>,
     height: f64,
+    shown_at: Instant,
+    /// Были ли мы на переднем плане после показа: если Windows не отдала фокус, по чужому окну не прячем.
+    had_foreground: std::cell::Cell<bool>,
 }
 
 impl Flyout {
@@ -43,10 +46,23 @@ impl Flyout {
             .build(target)
             .map_err(|e| format!("окно меню: {e}"))?;
         round_corners(window.hwnd());
+        let wrap = std::rc::Rc::new(wrap);
+        let (load_proxy, load_wrap) = (proxy.clone(), wrap.clone());
         let webview = WebViewBuilder::new()
             .with_url(url)
             .with_ipc_handler(move |req| {
                 let _ = proxy.send_event(wrap(req.body().clone()));
+            })
+            // диагностика: грузится ли страница меню вообще (в логе заказчика от страницы — тишина)
+            .with_on_page_load_handler(move |ev, url| {
+                let what = match ev {
+                    wry::PageLoadEvent::Started => "начала грузиться",
+                    wry::PageLoadEvent::Finished => "загрузилась",
+                };
+                vpn_monitor::info!("flyout", "страница меню {what}: {url}");
+                if matches!(ev, wry::PageLoadEvent::Finished) {
+                    let _ = load_proxy.send_event(load_wrap("loaded".into()));
+                }
             })
             .build(&window)
             .map_err(|e| format!("WebView2: {e}"))?;
@@ -57,11 +73,44 @@ impl Flyout {
             hidden_at: Instant::now() - Duration::from_secs(10),
             icon: None,
             height: START_HEIGHT,
+            shown_at: Instant::now(),
+            had_foreground: std::cell::Cell::new(false),
         })
     }
 
-    pub fn id(&self) -> WindowId {
-        self.window.id()
+    /// Что на странице на самом деле — в лог (ответ приходит из WebView2, минуя IPC страницы).
+    pub fn probe(&self) {
+        const JS: &str = "(() => { try { const r = document.getElementById('root'); return [document.readyState, 'url=' + location.href, 'tippy=' + typeof window.tippy, 'ipc=' + typeof window.ipc, 'chrome.webview=' + typeof (window.chrome && window.chrome.webview), 'root=' + (r ? r.children.length : 'нет'), 'vis=' + document.visibilityState, 'h=' + document.body.getBoundingClientRect().height].join(' '); } catch (e) { return 'ошибка: ' + e; } })()";
+        let res = self.webview.evaluate_script_with_callback(JS, |r| {
+            vpn_monitor::info!("flyout", "состояние страницы меню: {r}");
+        });
+        if let Err(e) = res {
+            vpn_monitor::warn!("flyout", "не прочитать состояние страницы: {e}");
+        }
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    /// Ушли ли в другое окно. Фокус внутри WebView2 (его дочернее окно) — не уход: корень у него наш.
+    /// Первые полсекунды после показа не проверяем — клик по иконке ещё «держит» панель задач.
+    pub fn lost_to_other_window(&self) -> bool {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GA_ROOT, GetAncestor, GetForegroundWindow,
+        };
+        if !self.visible || self.shown_at.elapsed() < Duration::from_millis(500) {
+            return false;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() {
+            return false;
+        }
+        let ours = unsafe { GetAncestor(fg, GA_ROOT) } as isize == self.window.hwnd();
+        if ours {
+            self.had_foreground.set(true);
+        }
+        !ours && self.had_foreground.get()
     }
 
     /// Показать у иконки или спрятать. Клик по иконке сразу после того, как меню спряталось из-за потери
@@ -77,8 +126,25 @@ impl Flyout {
         self.icon = Some(icon);
         self.place(icon);
         self.window.set_visible(true);
+        // Окно создано скрытым: WebView2 сам может не ожить (старый кадр, клики не доходят) — включаем явно.
+        let _ = self.webview.set_visible(true);
         self.window.set_focus();
+        let _ = self.webview.focus();
         self.visible = true;
+        self.shown_at = Instant::now();
+        self.had_foreground.set(false);
+        let size = self.window.inner_size();
+        let bounds = self
+            .webview
+            .bounds()
+            .map(|b| format!("{:?}", b.size))
+            .unwrap_or_else(|e| e.to_string());
+        vpn_monitor::info!(
+            "flyout",
+            "меню открыто: окно {}×{}, WebView {bounds}",
+            size.width,
+            size.height
+        );
         let _ = self
             .webview
             .evaluate_script("window.vpnmon && window.vpnmon.shown()");
@@ -86,6 +152,7 @@ impl Flyout {
 
     pub fn hide(&mut self) {
         if self.visible {
+            let _ = self.webview.set_visible(false);
             self.window.set_visible(false);
             self.visible = false;
             self.hidden_at = Instant::now();
