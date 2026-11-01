@@ -278,6 +278,9 @@ pub fn run(replace: bool, first_run: bool) {
                             if let Some(f) = flyout.as_mut() {
                                 f.resize(h);
                             }
+                        } else if let Some(e) = msg.strip_prefix("err:") {
+                            let e: String = e.chars().take(300).collect();
+                            warn!("flyout", "ошибка на странице меню: {e}");
                         } else if msg == "hide" {
                             if let Some(f) = flyout.as_mut() {
                                 f.hide();

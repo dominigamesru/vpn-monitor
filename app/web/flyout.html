@@ -103,16 +103,23 @@ svg text { font-family: var(--font); }
 .menu .sep { height: 1px; background: var(--line); margin: 4px 6px; }
 .menu .lbl { padding: 6px 10px 2px; font-size: 11.5px; color: var(--muted); }
 .menu .res { padding: 4px 10px 8px; font-size: 12px; color: var(--muted); }
+#root[hidden] { display: none; }
+.pop { margin: 12px 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.pop[hidden] { display: none; }
+.pop .menu button:hover, .pop .menu button:focus-visible { background: var(--bg); }
+.err { display: grid; gap: 4px; padding: 4px 0 2px; }
+.err span { color: var(--muted); font-size: 12.5px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
 <div id="root"></div>
+<div id="pop" class="pop" hidden></div>
 <div class="foot">
   <button class="btn" id="check">Проверить</button>
-  <button class="ghost" id="pause">Пауза</button>
+  <button class="ghost" id="pause" aria-haspopup="menu" aria-expanded="false">Пауза</button>
   <button class="ghost" id="history">История</button>
-  <button class="ghost icon" id="more" aria-label="Ещё">⋯</button>
+  <button class="ghost icon" id="more" aria-label="Ещё" aria-haspopup="menu" aria-expanded="false">⋯</button>
   <span class="when" id="when"></span>
 </div>
 <script src="/vendor/popper.min.js"></script>
@@ -129,6 +136,14 @@ const h = (tag, attrs = {}, ...kids) => {
 const NS = "http://www.w3.org/2000/svg";
 const sv = (tag, attrs = {}) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
 const ipc = (msg) => { try { window.ipc.postMessage(msg); } catch {} };
+// Ошибки страницы — в лог приложения (иначе в WebView2 их не видно).
+const report = (msg) => ipc("err:" + String(msg).slice(0, 300));
+window.addEventListener("error", (e) => report(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+window.addEventListener("unhandledrejection", (e) => report(e.reason?.message || e.reason));
+// Подсказки — Tippy.js; не загрузился — меню работает без подсказок.
+const hasTippy = typeof window.tippy === "function";
+if (!hasTippy) report("Tippy.js не загрузился — подсказки выключены");
+const tippyOr = (el, o) => (hasTippy ? window.tippy(el, o) : null);
 const api = async (path, opts = {}) => {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
   if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
@@ -286,7 +301,7 @@ function viewPanel(v) {
 
 // ---------- подсказки ----------
 const tips = [];
-function tip(el, contentFn) { tips.push(tippy(el, { content: "", theme: "vpn", animation: "shift-away", delay: [150, 0], maxWidth: 280, appendTo: document.body, onShow(i) { i.setContent(contentFn()); } })); }
+function tip(el, contentFn) { const t = tippyOr(el, { content: "", theme: "vpn", animation: "shift-away", delay: [150, 0], maxWidth: 280, appendTo: document.body, onShow(i) { i.setContent(contentFn()); } }); if (t) tips.push(t); }
 function spark(key, fmt) {
   const pts = H.filter((r) => r[key] != null).slice(-30); if (pts.length < 2) return null;
   const vs = pts.map((r) => r[key]); const mx = Math.max(...vs) * 1.1 || 1;
@@ -318,19 +333,24 @@ function tipTarget(x) {
 
 // ---------- меню «Пауза» и «⋯» ----------
 function menuButton(text, fn, right) { const b = h("button", { type: "button" }, h("span", { text }), right ? h("span", { class: "mut", text: right }) : null); b.addEventListener("click", fn); return b; }
-const pauseMenu = tippy($("#pause"), { trigger: "click", interactive: true, theme: "menu", placement: "top-start", arrow: false, appendTo: document.body, animation: "shift-away",
-  onShow(i) {
-    const m = h("div", { class: "menu" });
-    const set = async (body) => { await api("/api/pause", { method: "POST", body: JSON.stringify(body) }); i.hide(); refresh(); };
-    if (S?.paused) m.append(menuButton("Продолжить проверки", () => set({ resume: true })));
-    else m.append(h("div", { class: "lbl", text: "Не проверять" }), menuButton("30 минут", () => set({ minutes: 30 })), menuButton("1 час", () => set({ minutes: 60 })), menuButton("До конца дня", () => set({ minutes: 0 })));
-    i.setContent(m);
-  } });
+let popFor = null;
+function closePop() { popFor = null; $("#pop").hidden = true; $("#root").hidden = false; $("#pop").replaceChildren(); for (const b of document.querySelectorAll(".foot [aria-expanded]")) b.setAttribute("aria-expanded", "false"); fit(); }
+function openPop(anchor, build) {
+  if (popFor === anchor) { closePop(); return; }
+  closePop(); popFor = anchor; anchor.setAttribute("aria-expanded", "true");
+  const m = h("div", { class: "menu" }); build(m); $("#pop").replaceChildren(m); $("#pop").hidden = false; $("#root").hidden = true; fit();
+  m.querySelector("button")?.focus();
+}
+function pauseItems(m) {
+  const set = async (body) => { await api("/api/pause", { method: "POST", body: JSON.stringify(body) }); closePop(); refresh(); };
+  if (S?.paused) m.append(menuButton("Продолжить проверки", () => set({ resume: true })));
+  else m.append(h("div", { class: "lbl", text: "Не проверять" }), menuButton("30 минут", () => set({ minutes: 30 })), menuButton("1 час", () => set({ minutes: 60 })), menuButton("До конца дня", () => set({ minutes: 0 })));
+}
+$("#pause").addEventListener("click", (e) => openPop(e.currentTarget, pauseItems));
 const VIEW_NAMES = { route: "Маршрут", gauge: "Прибор", strip: "Лента часа", panel: "Панель" };
-const moreMenu = tippy($("#more"), { trigger: "click", interactive: true, theme: "menu", placement: "top-end", arrow: false, appendTo: document.body, animation: "shift-away",
-  onShow(i) {
-    const m = h("div", { class: "menu" }, h("div", { class: "lbl", text: "Вид меню" }));
-    for (const [k, n] of Object.entries(VIEW_NAMES)) m.append(menuButton(n, async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: k }) }); i.hide(); refresh(); }, view === k ? "✓" : ""));
+function moreItems(m) {
+    m.append(h("div", { class: "lbl", text: "Вид меню" }));
+    for (const [k, n] of Object.entries(VIEW_NAMES)) m.append(menuButton(n, async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: k }) }); closePop(); refresh(); }, view === k ? "✓" : ""));
     const res = h("div", { class: "res" });
     m.append(h("div", { class: "sep" }), menuButton("Проверить обновления", async () => {
       res.textContent = "Проверяю…";
@@ -340,8 +360,8 @@ const moreMenu = tippy($("#more"), { trigger: "click", interactive: true, theme:
       else res.textContent = `У вас последняя версия ${r.current}${r.channel === "beta" ? " (бета)" : ""}`;
     }), res);
     m.append(menuButton("Подключение и вход", () => ipc("open:conn")), h("div", { class: "sep" }), menuButton("Выйти из VPN Monitor", () => ipc("quit")));
-    i.setContent(m);
-  } });
+}
+$("#more").addEventListener("click", (e) => openPop(e.currentTarget, moreItems));
 
 // ---------- отрисовка ----------
 function render() {
@@ -353,23 +373,29 @@ function render() {
   const btn = $("#check"); btn.disabled = !!S?.checking; btn.textContent = S?.checking ? "Проверяю…" : "Проверить";
   $("#pause").textContent = S?.paused ? "Продолжить" : "Пауза";
   $("#when").textContent = S?.snapshot ? hhmm(S.snapshot.at) : "";
-  requestAnimationFrame(() => ipc(`h:${Math.ceil(document.documentElement.scrollHeight)}`));
+  fit();
 }
-let timer = null;
+// Высота окна = высота содержимого (body без высоты), а не scrollHeight: тот не меньше окна, и окно только росло.
+let lastH = 0;
+function fit() { requestAnimationFrame(() => { const v = Math.ceil(document.body.getBoundingClientRect().height); if (Math.abs(v - lastH) >= 2) { lastH = v; ipc(`h:${v}`); } }); }
+let timer = null, fails = 0;
 async function refresh() {
   clearTimeout(timer);
   try {
     S = await api("/api/state");
     H = (await api("/api/history?range=hour")).records || [];
-    render();
-  } catch {}
+    render(); fails = 0;
+  } catch (e) {
+    fails += 1; report(`данные: ${e.message || e}`);
+    if (fails >= 2 || !S) { $("#root").replaceChildren(h("div", { class: "err" }, h("b", { text: "Нет ответа от VPN Monitor" }), h("span", { text: "Пробую снова каждые 5 секунд. Если не проходит — перезапустите приложение." }))); fit(); }
+  }
   timer = setTimeout(refresh, S?.checking ? 1000 : 5000);
 }
 $("#check").addEventListener("click", async () => { await api("/api/check", { method: "POST", body: "{}" }); setTimeout(refresh, 300); });
 $("#history").addEventListener("click", () => ipc("open:history"));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") ipc("hide"); });
-tippy($("#when"), { content: "Время последней проверки", theme: "vpn", delay: [300, 0] });
-window.vpnmon = { shown: refresh };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (popFor) closePop(); else ipc("hide"); } });
+tippyOr($("#when"), { content: "Время последней проверки", theme: "vpn", delay: [300, 0] });
+window.vpnmon = { shown: () => { closePop(); lastH = 0; refresh(); } };
 refresh();
 </script>
 </body>
