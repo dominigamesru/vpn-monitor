@@ -90,6 +90,8 @@ pub struct Route {
     pub st_inet: St,
     /// VPN: по задержке; если VPN режет скорость при нормальной задержке — по скорости SVN.
     pub st_vpn: St,
+    /// Только задержка VPN (для строк «Задержка VPN»: при виноватом по скорости VPN `st_vpn` — цвет скорости), v0.6.1.
+    pub st_vpn_lat: St,
     pub st_svn: St,
     pub st_office: St,
     pub services: Vec<Service>,
@@ -246,10 +248,15 @@ pub fn evaluate(i: &Input, th: &Thresholds) -> Route {
     let score = (i.vpn_up).then(|| {
         let v = vpn.value.unwrap_or(0.0);
         let s = svn.value.unwrap_or(th.svn_good_mbps);
+        // каждое звено — один раз: медленный SVN уже красит и VPN, и офис, но в оценку идёт только как SVN
+        // (0.6.0 считала его трижды — SVN 1,6 Мбит/с при нормальной задержке давал оценку 1)
         let raw = 99.0
-            - (rank(st_inet) * 18.0 + rank(st_vpn) * 20.0 + rank(st_office) * 20.0)
-            - ((v - th.vpn_good_ms * 0.66) / 20.0).max(0.0)
-            - ((th.svn_good_mbps - s) * 2.5).max(0.0);
+            - rank(st_inet) * 18.0
+            - rank(st_vpn_lat) * 20.0
+            - rank(st_svn) * 20.0
+            - rank(st_svc) * 15.0
+            - ((v - th.vpn_good_ms * 0.66) / 20.0).clamp(0.0, 15.0)
+            - ((th.svn_good_mbps - s) * 1.5).clamp(0.0, 12.0);
         raw.clamp(1.0, 99.0).round() as u32
     });
     let st_user = match auth_failed.len() {
@@ -266,6 +273,7 @@ pub fn evaluate(i: &Input, th: &Thresholds) -> Route {
         st_inet_lat,
         st_inet,
         st_vpn,
+        st_vpn_lat,
         st_svn,
         st_office,
         services,
@@ -387,6 +395,11 @@ mod tests {
         assert_eq!(r.services[2].st, St::Bad, "у SVN не зелёная точка");
         assert_eq!(r.services[0].st, St::Good);
         assert_eq!(r.because_office, Some("из‑за VPN"));
+        let n = r.score.unwrap();
+        assert!(
+            (35..=60).contains(&n),
+            "медленный SVN — красный, но не «1»: {n}"
+        );
     }
 
     #[test]

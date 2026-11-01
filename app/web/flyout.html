@@ -98,12 +98,13 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--faint); margin: 0 92px 0 70px; }
 
 /* низ */
-.ft { display: flex; align-items: center; gap: 2px; padding: 8px 10px 8px 14px; margin-top: 12px; border-top: 1px solid var(--line); }
+/* низ: под разделителем — строка уведомлений фиксированной высоты (текст появляется, ничего не скачет), под ней — учётная запись и иконки */
+.bottom { margin-top: 12px; border-top: 1px solid var(--line); }
+.ft { display: flex; align-items: center; gap: 2px; padding: 2px 10px 8px 14px; }
 .user { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; background: none; border: 0; padding: 6px 8px; margin-left: -8px; border-radius: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user:hover { background: var(--bg-2); }
 .ft .sp { flex: 1; }
-.toast { font-size: 12px; color: var(--muted); padding: 6px 16px 0; }
-.toast:empty { display: none; }
+.toast { font-size: 11.5px; line-height: 16px; height: 16px; color: var(--muted); padding: 4px 16px 0; box-sizing: content-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* панель «Пауза» — вместо содержимого, как у Wi‑Fi */
 .pop { margin: 10px 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
@@ -133,8 +134,7 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 <div class="hd" id="hd"></div>
 <div id="root"></div>
 <div id="pop" class="pop" hidden></div>
-<div class="toast" id="toast"></div>
-<div class="ft" id="ft"></div>
+<div class="bottom"><div class="toast" id="toast" role="status" aria-live="polite"></div><div class="ft" id="ft"></div></div>
 <script>
 // Отдельным скриптом и первым: ловит и ошибки разбора основного скрипта (их не поймать изнутри него).
 window.addEventListener("error", (e) => { try { window.ipc.postMessage("err:" + String(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`).slice(0, 300)); } catch {} });
@@ -311,7 +311,7 @@ function viewDash() {
   const svn = r?.svn.value, vpn = r?.vpn.value;
   return [verdictBlock(), ...notes(), h("div", { class: "tiles" },
     tile("Скорость SVN", P(r?.st_svn), svn == null ? "—" : num(svn, 1), "Мбит/с", gauge(svn, Math.max(16, th.svn_good_mbps * 2), th.svn_good_mbps, P(r?.st_svn)), r?.because_office ? `${r.because_office} · норма от ${num(th.svn_good_mbps)}` : `норма от ${num(th.svn_good_mbps)}`, tipSvn),
-    tile("Задержка VPN", P(r?.st_vpn), vpn == null ? "нет" : vpn >= 1000 ? num(vpn / 1000, 1) : num(vpn), vpn == null ? "" : vpn >= 1000 ? "с" : "мс", gauge(vpn == null ? 0 : Math.min(vpn, th.vpn_bad_ms * 1.15), th.vpn_bad_ms * 1.15, th.vpn_good_ms, P(r?.st_vpn)), vpn == null ? "не подключён" : r?.because_vpn ? `${r.because_vpn} · норма до ${ms(th.vpn_good_ms)}` : `норма до ${ms(th.vpn_good_ms)}`, tipVpn),
+    tile("Задержка VPN", P(r?.st_vpn_lat ?? r?.st_vpn), vpn == null ? "нет" : vpn >= 1000 ? num(vpn / 1000, 1) : num(vpn), vpn == null ? "" : vpn >= 1000 ? "с" : "мс", gauge(vpn == null ? 0 : Math.min(vpn, th.vpn_bad_ms * 1.15), th.vpn_bad_ms * 1.15, th.vpn_good_ms, P(r?.st_vpn_lat ?? r?.st_vpn)), vpn == null ? "не подключён" : r?.because_vpn ? `${r.because_vpn} · норма до ${ms(th.vpn_good_ms)}` : `норма до ${ms(th.vpn_good_ms)}`, tipVpn),
     tile("Интернет", P(r?.st_inet), r?.inet.value == null ? "—" : num(r.inet.value, r.inet.value < 10 ? 1 : 0), "Мбит/с", null, `задержка ${ms(r?.inet_ms.value)}${r && r.st_inet_lat !== "good" ? " — медленно" : ""}`, tipInet),
     h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${P(r?.st_office)}` }), "Сервисы"), h("div", { class: "svc" }, ...office().map(svcChip), ...worldT().map(worldChip)))
   )];
@@ -340,7 +340,7 @@ function notes() {
 // ---------- шапка и низ ----------
 const THEMES = [["", "как в системе", "auto"], ["light", "светлая", "sun"], ["dark", "тёмная", "moon"]];
 function applyTheme() { const t = S?.prefs?.theme || ""; if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); }
-function toast(text, keep) { const t = $("#toast"); t.textContent = text; fit(); clearTimeout(toast.t); if (!keep) toast.t = setTimeout(() => { t.textContent = ""; fit(); }, 3500); }
+function toast(text, keep) { const t = $("#toast"); t.textContent = text; clearTimeout(toast.t); if (!keep) toast.t = setTimeout(() => { t.textContent = ""; }, 3500); }
 async function checkUpdates() {
   toast("Проверяю обновления…", true);
   try { const r = await api("/api/update", { method: "POST", body: "{}" });
