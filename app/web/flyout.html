@@ -201,6 +201,7 @@ const ICON = {
   close: "M6 6l12 12M18 6L6 18",
   play: "M8 5l11 7-11 7z",
   history: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2",
+  help: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
   gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
   auto: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18",
   vRoute: "M6 4v16M6 6h.01M6 12h.01M6 18h.01M10 6h8M10 12h6M10 18h8",
@@ -406,6 +407,7 @@ function footer() {
   const pauseBtn = ib(S?.paused ? "play" : "pause", pauseLabel, !!S?.paused, (e) => S?.paused ? api("/api/pause", { method: "POST", body: JSON.stringify({ resume: true }) }).then(refresh) : openPop(e.currentTarget, pauseItems));
   $("#ft").replaceChildren(user, h("span", { class: "sp" }),
     (() => { const b = ib("refresh", S?.checking ? "Проверяю…" : "Проверить сейчас", false, checkNow); if (S?.checking) { b.classList.add("busy"); b.disabled = true; } return b; })(), pauseBtn,
+    ib("help", "Поддержка в Jira: отправить запрос со сводкой, диагностикой и логом", false, () => toApp("open:settings/diagnostics")),
     ib("history", "История за сутки и неделю", false, () => toApp("open:history")),
     ib("gear", "Настройки: вид меню, уведомления, обновления, вход", false, () => toApp("open:settings")));
 }

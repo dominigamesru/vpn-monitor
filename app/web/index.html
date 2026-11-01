@@ -67,6 +67,22 @@ nav.tabs a[aria-current="page"] { background: var(--surface); color: var(--ink);
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
 .card h2 { font-size: 15.5px; margin: 0 0 2px; font-weight: 650; }
+dialog#supDlg { border: 0; border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+dialog#supDlg::backdrop { background: rgba(13,19,27,.45); }
+.supform { display: grid; gap: 6px; padding: 20px; }
+.supform h2 { margin: 0; }
+.supform label, .supform legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.supform input, .supform textarea, .supform select { font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+.supform textarea { font-family: Consolas, monospace; font-size: 12.5px; resize: vertical; }
+.supform fieldset { border: 0; padding: 0; margin: 0; }
+.supform fieldset label { display: flex; gap: 8px; align-items: center; color: var(--ink); margin: 4px 0; }
+.supform fieldset input { width: auto; }
+#supErr { color: var(--bad); min-height: 1em; margin: 4px 0; }
+ul.tickets { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 2px; }
+ul.tickets li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+ul.tickets a { color: var(--accent); font-weight: 600; }
+ul.tickets li span { color: var(--muted); font-variant-numeric: tabular-nums; }
+ul.tickets li .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; max-width: 70ch; }
 .good { --c: var(--good); --cb: var(--good-bg); } .warn { --c: var(--warn); --cb: var(--warn-bg); }
 .bad { --c: var(--bad); --cb: var(--bad-bg); } .idle { --c: var(--idle); --cb: var(--idle-bg); }
@@ -265,11 +281,19 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
       </div>
     </div>
     <div class="card">
-      <div class="row" style="justify-content:space-between">
+      <div class="row" style="justify-content:space-between" id="diagnostics">
         <div><h2>Диагностика</h2><p class="sub" style="margin:0" id="diagInfo">Проверка каждого сервиса по шагам: сеть, VPN, вход.</p></div>
-        <div class="row"><button class="btn ghost" id="copyBtn">Скопировать сводку для поддержки</button><a class="btn ghost" id="supportLink" target="_blank" rel="noopener" href="https://jira.corp.dominigames.com/servicedesk/customer/portal/1/create/23">Создать запрос в поддержку</a><button class="btn" id="diagBtn">Проверить подключение</button></div>
+        <div class="row"><button class="btn ghost" id="copyBtn">Скопировать сводку для поддержки</button><button class="btn" id="diagBtn">Проверить подключение</button></div>
       </div>
       <div class="diag" id="diag" style="margin-top:12px"></div>
+    </div>
+    <div class="card" id="support">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>Запрос в поддержку</h2><p class="sub" style="margin:0" id="supInfo">Запрос уходит в Jira Service Desk от вашего имени; сводка, диагностика и лог приложатся сами.</p></div>
+        <button class="btn" id="supportBtn" type="button">Отправить запрос в Jira</button>
+      </div>
+      <p class="st" id="supResult" role="status" style="margin:10px 0 0"></p>
+      <ul class="tickets" id="tickets"></ul>
     </div>
     <div class="card">
       <details id="logBox"><summary><b>Лог</b> <span class="st">последние 300 строк</span></summary>
@@ -334,6 +358,21 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     </div>
   </section>
 </main>
+<dialog id="supDlg" aria-labelledby="supTitle">
+  <form method="dialog" id="supForm" class="supform">
+    <h2 id="supTitle">Запрос в Jira</h2>
+    <p class="sub" id="supWho"></p>
+    <label for="supSummary">Тема</label>
+    <input id="supSummary" maxlength="250" required>
+    <label for="supDesc">Описание</label>
+    <textarea id="supDesc" rows="10"></textarea>
+    <label for="supPriority">Приоритет</label>
+    <select id="supPriority"><option value="Low">Низкий</option><option value="Medium">Средний</option><option value="High">Высокий</option></select>
+    <fieldset><legend>Приложить</legend><div id="supFiles"></div></fieldset>
+    <p class="st" id="supErr" role="alert"></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" id="supCancel">Отмена</button><button class="btn" type="submit" id="supSend">Отправить запрос</button></div>
+  </form>
+</dialog>
 <script src="/vendor/popper.min.js"></script>
 <script src="/vendor/tippy.min.js"></script>
 <script>
@@ -638,7 +677,32 @@ async function pollDiag() { const r = await api("/api/diagnostics"); const b = $
   net.append(el("li", {}, el("span", { class: "n", text: "прокси" }), el("span", { text: d.system_proxy })));
   host.append(el("details", {}, el("summary", {}, badge("idle", "Сеть этого компьютера"), el("span", { class: "h", text: `${d.adapters.filter((x) => x.up).length} подключений` })), net)); }
 $("#diagBtn").addEventListener("click", async () => { await api("/api/diagnostics", { method: "POST", body: "{}" }); pollDiag(); });
-$("#supportLink").addEventListener("click", async () => { try { await navigator.clipboard.writeText(await api("/api/summary")); $("#supportLink").textContent = "Сводка скопирована — вставьте в описание"; setTimeout(() => ($("#supportLink").textContent = "Создать запрос в поддержку"), 6000); } catch {} });
+// ---------- запрос в поддержку (ADR 0013) ----------
+let supDraft = null;
+const kb = (n) => n < 1024 ? `${n} Б` : `${num(n / 1024, n < 10240 ? 1 : 0)} КБ`;
+async function loadTickets() { try { const r = await api("/api/tickets"); const host = $("#tickets"); host.replaceChildren();
+  for (const t of r.tickets || []) { const a = el("a", { href: /^https:\/\//.test(t.url) ? t.url : "#", target: "_blank", rel: "noopener", text: t.key }); host.append(el("li", {}, a, el("span", { class: "t", text: t.summary }), el("span", { text: t.created_ms ? new Date(t.created_ms).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "" }))); } } catch {} }
+$("#supportBtn").addEventListener("click", async () => {
+  const b = $("#supportBtn"); b.disabled = true;
+  try { supDraft = await api("/api/support"); } catch { supDraft = null; } b.disabled = false;
+  if (!supDraft?.available) { // без входа или не портал Jira — как раньше: сводка в буфер и форма портала
+    try { await navigator.clipboard.writeText(await api("/api/summary")); } catch {}
+    // после await браузер может не дать открыть окно сам — даём ссылку
+    const link = supDraft?.portal_url && /^https:\/\//.test(supDraft.portal_url) ? el("a", { href: supDraft.portal_url, target: "_blank", rel: "noopener", text: "Открыть форму портала" }) : null;
+    $("#supResult").replaceChildren(`Отправить запрос из приложения нельзя: ${supDraft?.reason || "приложение не ответило"}. Сводка скопирована — вставьте её в форму. `, ...[link].filter(Boolean)); return; }
+  $("#supWho").textContent = `От вашего имени (${supDraft.login}) в Jira Service Desk. После создания заявка откроется в браузере.`;
+  $("#supSummary").value = supDraft.summary; $("#supDesc").value = supDraft.description; $("#supPriority").value = supDraft.priority || "Low"; $("#supErr").textContent = "";
+  $("#supFiles").replaceChildren(...supDraft.files.map((f, i) => el("label", {}, el("input", { type: "checkbox", id: `supF${i}`, value: f.name, checked: "" }), `${f.name} · ${kb(f.bytes)}`)));
+  $("#supSend").disabled = false; $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal(); $("#supSummary").focus(); });
+$("#supCancel").addEventListener("click", () => $("#supDlg").close());
+$("#supForm").addEventListener("submit", async (e) => { e.preventDefault(); const send = $("#supSend"); send.disabled = true; send.classList.add("busy"); send.textContent = "Отправляю…"; $("#supErr").textContent = "";
+  const attach = [...$("#supFiles").querySelectorAll("input:checked")].map((x) => x.value);
+  let r; try { r = await api("/api/support", { method: "POST", body: JSON.stringify({ summary: $("#supSummary").value, description: $("#supDesc").value, priority: $("#supPriority").value, attach }) }); } catch { r = { error: "Приложение не ответило — попробуйте ещё раз." }; }
+  send.classList.remove("busy"); send.disabled = false; send.textContent = "Отправить запрос";
+  if (r.error) { $("#supErr").textContent = r.error; return; }
+  $("#supDlg").close(); const c = r.created;
+  $("#supResult").textContent = `Запрос ${c.key} отправлен и открыт в браузере.` + (c.attach_failed?.length ? ` Не приложились: ${c.attach_failed.join(", ")} — добавьте их в заявке вручную.` : "");
+  loadTickets(); });
 $("#copyBtn").addEventListener("click", async () => { const t = await api("/api/summary"); try { await navigator.clipboard.writeText(t); $("#copyBtn").textContent = "Скопировано"; } catch { $("#copyBtn").textContent = "Не удалось скопировать"; } setTimeout(() => { $("#copyBtn").textContent = "Скопировать сводку для поддержки"; }, 2500); });
 $("#updBtn").addEventListener("click", async () => { const res = $("#updRes"); res.textContent = "Проверяю…"; const r = await api("/api/update", { method: "POST", body: "{}" });
   if (r.error) res.textContent = "Не удалось проверить — нет связи с GitHub"; else if (r.available) { res.replaceChildren(`Доступна ${r.latest}. `); const b = el("button", { class: "btn", type: "button", text: "Установить" }); b.addEventListener("click", () => { api("/api/update", { method: "POST", body: JSON.stringify({ install: true }) }); res.textContent = "Ставлю — окно переподключится само"; }); res.append(b); } else res.textContent = `У вас последняя версия ${r.current}`; });
@@ -681,10 +745,12 @@ $("#newsOk").addEventListener("click", async () => { $("#newsBanner").hidden = t
 // ---------- вкладки и опрос ----------
 const TABS = ["now", "history", "settings", "agent", "release-notes"];
 // #conn и #log — старые адреса (меню у иконки до 0.6.3, ссылки в доках) → «Настройки»
-function showTab() { let t = location.hash.slice(1); if (t === "log" || t === "conn") t = "settings"; if (!TABS.includes(t)) t = "now";
+function showTab() { let [t, part] = location.hash.slice(1).split("/"); if (t === "log" || t === "conn") t = "settings"; if (!TABS.includes(t)) t = "now";
   document.querySelectorAll("section[data-tab]").forEach((s) => { s.hidden = s.dataset.tab !== t; });
   document.querySelectorAll("nav.tabs a").forEach((a) => a.setAttribute("aria-current", a.getAttribute("href") === `#${t}` ? "page" : "false"));
-  if (t === "history") loadHistory(); if (t === "settings") { pollDiag(); loadLog(); } if (t === "agent") renderAgent(); if (t === "release-notes") renderNotes(); }
+  if (t === "history") loadHistory(); if (t === "settings") { pollDiag(); loadLog(); loadTickets(); } if (t === "agent") renderAgent(); if (t === "release-notes") renderNotes();
+  // #settings/diagnostics — из меню у иконки «Поддержка в Jira»: диагностика и запрос в поддержку
+  if (part) { const target = document.getElementById(part === "diagnostics" ? "diagnostics" : part); if (target) setTimeout(() => target.scrollIntoView({ block: "start" }), 50); } }
 addEventListener("hashchange", showTab);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { range = b.dataset.range; document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); loadHistory(); }));
 async function loadHistory() { try { H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
@@ -695,7 +761,6 @@ async function poll(once) { clearTimeout(pt);
     // фавикон = иконка в трее с текущим статусом
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
     renderHeader();
-    if (S.support_url && /^https:\/\//.test(S.support_url)) $("#supportLink").href = S.support_url;
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
     renderNow(); renderConn(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }
