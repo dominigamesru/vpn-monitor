@@ -305,6 +305,12 @@ fn handle(
             {
                 sh.prefs.theme = t.into();
             }
+            if let Some(t) = v["window_theme"]
+                .as_str()
+                .filter(|x| vpn_monitor::prefs::WINDOW_THEMES.contains(x))
+            {
+                sh.prefs.window_theme = Some(t.into());
+            }
             if let Some(ch) = v["channel"]
                 .as_str()
                 .filter(|x| vpn_monitor::prefs::CHANNELS.contains(x))

@@ -9,6 +9,8 @@ Rust, один exe без рантаймов ([ADR 0001](adr/0001-rust.md)). Т�
   «AI-агент» (`#agent`) — команда для Claude Code и настройки для Claude Desktop с адресом этого компьютера.
 - **Заметки релизов** — из `app/CHANGELOG.md` (формат — скилл `release`): страница `#release-notes` (клик по версии в
   шапке окна), баннер «Что нового» (только пункты для сотрудников), текст релиза на GitHub (технически — под спойлером).
+- **Тема окна — своя:** иконка в шапке окна, `user.json` → `window_theme` (`auto` / `light` / `dark`); без поля — как
+  `theme` меню у иконки.
 
 ## v0.7
 - **Удалённые настройки** ([ADR 0011](adr/0011-remote-settings-office-json.md), `src/office.rs`): `office.json` в

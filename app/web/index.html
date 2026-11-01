@@ -55,6 +55,12 @@ pre.code { background: var(--surface-2); border: 1px solid var(--line); border-r
 .rel details ul { margin-top: 6px; font-size: 13px; }
 .mini { min-width: 30px; height: 26px; padding: 0 6px; border-radius: 8px; display: inline-grid; place-items: center; font-size: 13.5px; font-weight: 700; background: var(--cb); color: var(--c); cursor: default; }
 .hop .tag { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 4px; margin-left: 6px; background: var(--cb); color: var(--c); }
+.ib { width: 36px; height: 36px; border-radius: 10px; border: 0; background: var(--surface-2); color: var(--muted); display: grid; place-items: center; flex: none; cursor: pointer; }
+.ib:hover { color: var(--ink); }
+.ib:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ib svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+header.top .ib { margin-left: -8px; }
+@media (max-width: 640px) { header.top { gap: 10px; } header.top h1 { flex: 1; } header.top .ib { order: 1; margin-left: 0; } nav.tabs { order: 2; width: 100%; } nav.tabs a { flex: 1 1 auto; text-align: center; padding: 6px 4px; white-space: nowrap; font-size: 13.5px; } }
 nav.tabs { display: flex; gap: 2px; margin-left: auto; background: var(--surface-2); border-radius: 10px; padding: 3px; }
 nav.tabs a { text-decoration: none; color: var(--muted); padding: 6px 16px; border-radius: 8px; font-weight: 500; }
 nav.tabs a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); font-weight: 600; }
@@ -174,6 +180,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     <nav class="tabs" aria-label="Разделы">
       <a href="#now">Сейчас</a><a href="#history">История</a><a href="#settings">Настройки</a><a href="#agent">AI-агент</a>
     </nav>
+    <button class="ib" id="themeBtn" type="button" aria-label="Тема окна"></button>
   </header>
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
   <div class="banner" id="newsBanner" hidden><div id="newsText"></div><button class="btn ghost" id="newsOk">Понятно</button></div>
@@ -331,6 +338,16 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v); } for (const k of kids) if (k != null) n.append(typeof k === "string" ? document.createTextNode(k) : k); return n; };
 const NS = "http://www.w3.org/2000/svg";
+// Тема окна — своя, отдельно от меню у иконки (user.json → window_theme; нет поля — как у меню)
+const THEMES = [["auto", "как в системе", "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18"], ["light", "светлая", "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"], ["dark", "тёмная", "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"]];
+function winTheme() { const w = S?.prefs?.window_theme; if (w) return w; const t = S?.prefs?.theme || ""; return t || "auto"; }
+function applyTheme() { const t = winTheme(); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme");
+  const b = document.getElementById("themeBtn"); if (!b) return; const i = Math.max(0, THEMES.findIndex(([k]) => k === t));
+  if (b.dataset.t === t) return; b.dataset.t = t; b.title = `Тема окна: ${THEMES[i][1]} — нажмите, чтобы сменить (меню у иконки — своя)`; b.setAttribute("aria-label", `Тема окна: ${THEMES[i][1]}`);
+  const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("aria-hidden", "true"); const pa = document.createElementNS(NS, "path"); pa.setAttribute("d", THEMES[i][2]); s.append(pa); b.replaceChildren(s); }
+document.getElementById("themeBtn").addEventListener("click", async () => { if (!S) return; const i = THEMES.findIndex(([k]) => k === winTheme()); const next = THEMES[(i + 1) % THEMES.length][0];
+  S.prefs = { ...(S.prefs || {}), window_theme: next }; applyTheme();
+  try { await api("/api/prefs", { method: "POST", body: JSON.stringify({ window_theme: next }) }); } catch {} });
 const sv = (tag, attrs = {}) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 async function api(path, opts = {}) { const init = { ...opts, headers: { ...(opts.headers || {}) } }; if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; } const r = await fetch(path, init); return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text(); }
@@ -629,7 +646,7 @@ $("#unBtn").addEventListener("click", () => { $("#unYes").hidden = false; $("#un
 $("#unYes").addEventListener("click", async () => { await api("/api/uninstall", { method: "POST", body: "{}" }); document.body.replaceChildren(el("main", {}, el("div", { class: "card" }, el("h2", { text: "VPN Monitor удалён с этого компьютера" }), el("p", { class: "sub", text: "Окно можно закрыть." })))); });
 
 // ---------- что нового ----------
-async function news() { if (!S || S.prefs.last_seen_version === S.version) return; const md = await api("/api/changes"); const sec = (md.split(/^## /m).find((s) => s.startsWith(S.version)) || "").split(/^### /m)[0].split("\n").slice(1).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).replace(/\*\*/g, ""));
+async function news() { if (!S || S.prefs.last_seen_version === S.version) return; const md = await api("/api/changes"); const sec = (md.split(/^## /m).find((s) => s.startsWith(S.version)) || "").split(/^### /m)[0].split("\n").slice(1).reduce((a, l) => { if (l.startsWith("- ")) a.push(l.slice(2)); else if (/^\s+\S/.test(l) && a.length) a[a.length - 1] += " " + l.trim(); return a; }, []).map((l) => l.replace(/\*\*/g, ""));
   if (!sec.length) return; $("#newsText").replaceChildren(el("b", { text: `Обновлено до ${S.version}` }), el("ul", { class: "news" }, ...sec.slice(0, 3).map((l) => el("li", { text: l })))); $("#newsBanner").hidden = false; }
 // ---------- AI-АГЕНТ ----------
 function renderAgent() {
@@ -669,7 +686,7 @@ async function loadHistory() { try { H = await api(`/api/history?range=${range}`
 let pt = null, off = false;
 async function poll(once) { clearTimeout(pt);
   try { S = await api("/api/state"); if (off) { off = false; $("#offlineBanner").hidden = true; }
-    { const t = S.prefs?.theme || ""; if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); }
+    applyTheme();
     // фавикон = иконка в трее с текущим статусом
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
     renderHeader();
