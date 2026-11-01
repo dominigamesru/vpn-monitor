@@ -144,6 +144,7 @@ window.addEventListener("unhandledrejection", (e) => report(e.reason?.message ||
 const hasTippy = typeof window.tippy === "function";
 if (!hasTippy) report("Tippy.js не загрузился — подсказки выключены");
 const tippyOr = (el, o) => (hasTippy ? window.tippy(el, o) : null);
+ipc("ready"); // сразу, без requestAnimationFrame: в скрытом окне он не срабатывает
 const api = async (path, opts = {}) => {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
   if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }

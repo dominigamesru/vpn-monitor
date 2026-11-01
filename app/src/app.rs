@@ -207,9 +207,17 @@ pub fn run(replace: bool, first_run: bool) {
                             fly_proxy.clone(),
                             UserEvent::FlyoutIpc,
                         ) {
-                            Ok(f) => {
+                            Ok(mut f) => {
                                 info!("tray", "меню у иконки — WebView2");
                                 u.tray.set_show_menu_on_right_click(false);
+                                // для проверки в CI: открыть меню сразу, без клика по иконке
+                                if std::env::var_os("VPN_MONITOR_SHOW_FLYOUT").is_some() {
+                                    info!("flyout", "VPN_MONITOR_SHOW_FLYOUT — открываю меню");
+                                    f.toggle(tray_icon::Rect {
+                                        position: tao::dpi::PhysicalPosition::new(1200.0, 1040.0),
+                                        size: tao::dpi::PhysicalSize::new(24, 24),
+                                    });
+                                }
                                 flyout = Some(f);
                             }
                             Err(e) => {
@@ -289,6 +297,10 @@ pub fn run(replace: bool, first_run: bool) {
                         });
                         if let Some(h) = msg.strip_prefix("h:").and_then(|v| v.parse::<f64>().ok())
                         {
+                            static DRAWN: std::sync::Once = std::sync::Once::new();
+                            DRAWN.call_once(|| {
+                                info!("flyout", "страница меню нарисована: высота {h}");
+                            });
                             if let Some(f) = flyout.as_mut() {
                                 f.resize(h);
                             }

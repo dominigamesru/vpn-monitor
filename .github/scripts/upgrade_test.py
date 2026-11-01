@@ -88,7 +88,9 @@ def main() -> int:
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
     print(f"запускаю {old_exe.name} --tray")
-    subprocess.Popen([str(old_exe), "--tray"], cwd=install)
+    # новая версия наследует окружение и сразу откроет меню у иконки — проверить, что WebView2 его рисует
+    env = dict(os.environ, VPN_MONITOR_SHOW_FLYOUT="1")
+    subprocess.Popen([str(old_exe), "--tray"], cwd=install, env=env)
     log = install / "vpn-monitor.log"
     ok = False
     deadline = time.time() + args.timeout
@@ -117,12 +119,27 @@ def main() -> int:
         while time.time() < deadline:
             text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
             tail = text[text.rfind(marker):] if marker in text else ""
-            if "страница меню на связи" in tail:
+            if "страница меню на связи" in tail and "страница меню нарисована" in tail:
                 flyout_ok = True
                 break
             if "меню на WebView2 не создано" in tail:
                 break
             time.sleep(2)
+
+    # снимок экрана с меню — артефакт CI (посмотреть глазами, как меню выглядит в настоящем WebView2)
+    if ok:
+        time.sleep(3)
+        shot = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", ".")) / "flyout-screen.png"
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
+            "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;"
+            "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+            "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+            "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);"
+            f"$bmp.Save('{shot}')"
+        )
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+        print(f"снимок экрана: {shot}" if shot.exists() else f"снимок не сделан: {r.stderr.strip()[:300]}")
 
     print("---- vpn-monitor.log ----")
     print(log.read_text(encoding="utf-8", errors="replace") if log.exists() else "(лога нет)")
