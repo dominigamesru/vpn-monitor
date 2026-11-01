@@ -242,7 +242,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div><h2>Диагностика</h2><p class="sub" style="margin:0" id="diagInfo">Проверка каждого сервиса по шагам: сеть, VPN, вход.</p></div>
-        <div class="row"><button class="btn ghost" id="copyBtn">Скопировать сводку для поддержки</button><button class="btn" id="diagBtn">Проверить подключение</button></div>
+        <div class="row"><button class="btn ghost" id="copyBtn">Скопировать сводку для поддержки</button><a class="btn ghost" id="supportLink" target="_blank" rel="noopener" href="https://jira.corp.dominigames.com/servicedesk/customer/portal/1/create/23">Создать запрос в поддержку</a><button class="btn" id="diagBtn">Проверить подключение</button></div>
       </div>
       <div class="diag" id="diag" style="margin-top:12px"></div>
     </div>
@@ -570,6 +570,7 @@ async function poll(once) { clearTimeout(pt);
     // фавикон = иконка в трее с текущим статусом
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
     renderHeader();
+    if (S.support_url && /^https:\/\//.test(S.support_url)) $("#supportLink").href = S.support_url;
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
     renderNow(); renderConn(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }

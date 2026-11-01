@@ -429,28 +429,28 @@ fn start_diag(shared: &SharedRef) -> bool {
 /// Один абзац для чата с поддержкой: состояние, клиент и профиль, канал, туннель, с какого времени, версия.
 fn summary(shared: &SharedRef) -> String {
     let sh = lock(shared);
+    let mut out = vec![format!(
+        "Domini VPN Monitor {VERSION} — сводка для поддержки"
+    )];
+    let login = vpn_monitor::creds::load_ad().map(|c| c.login);
+    out.push(format!(
+        "Пользователь: {} (AD); Windows: {}@{}; {}",
+        login.as_deref().unwrap_or("вход AD не выполнен"),
+        std::env::var("USERNAME").unwrap_or_default(),
+        std::env::var("COMPUTERNAME").unwrap_or_default(),
+        win::os_version()
+    ));
     let Some(sn) = &sh.snapshot else {
-        return format!("VPN Monitor {VERSION}: проверок ещё не было.");
+        out.push("Проверок ещё не было.".into());
+        return out.join("\n");
     };
     let v = &sn.verdict;
-    let state = match v.badge {
-        vpn_monitor::score::Badge::NoVpn => "VPN в офис выключен".to_string(),
-        vpn_monitor::score::Badge::NoInternet => "нет интернета".to_string(),
-        vpn_monitor::score::Badge::Captive => "Wi‑Fi требует входа".to_string(),
-        _ => format!(
-            "оценка VPN {} ({})",
-            v.score.map(|x| x.to_string()).unwrap_or("—".into()),
-            v.color.ru()
-        ),
-    };
-    let client = sn
-        .client
-        .as_ref()
-        .map(|c| c.key())
-        .unwrap_or_else(|| "клиент не определён".into());
-    let f1 = |x: Option<f64>, u: &str| {
-        x.map(|v| format!("{v:.0} {u}"))
-            .unwrap_or_else(|| "—".into())
+    let client = sn.client.as_ref().map(|c| c.name.as_str()).unwrap_or("VPN");
+    let state = match (&v.badge, &sn.route) {
+        (vpn_monitor::score::Badge::NoInternet, _) => "нет интернета".to_string(),
+        (vpn_monitor::score::Badge::Captive, _) => "Wi‑Fi требует входа".to_string(),
+        (_, Some(r)) => vpn_monitor::route::headline(r, client),
+        _ => v.explain.clone(),
     };
     let since = sh
         .store
@@ -468,33 +468,131 @@ fn summary(shared: &SharedRef) -> String {
         .last()
         .map(|r| log::hhmm(UNIX_EPOCH + std::time::Duration::from_millis(r.t as u64)))
         .unwrap_or_default();
-    let down: Vec<&str> = sn
-        .targets
-        .iter()
-        .filter(|t| !t.ok)
-        .map(|t| t.name.as_str())
-        .collect();
-    format!(
-        "VPN Monitor {VERSION}, {}: {state} с {since}. Клиент: {client}. Интернет: {} Мбит/с, задержка до интернета {}. \
-         Надбавка VPN: {}, доля канала: {}. Не отвечают: {}. Проверено в {}.",
-        std::env::var("COMPUTERNAME").unwrap_or_default(),
-        sn.internet
-            .as_ref()
-            .and_then(|i| i.mbps)
-            .map(|m| format!("{m:.1}"))
-            .unwrap_or("—".into()),
-        f1(sn.internet_latency_ms, "мс"),
-        f1(sn.overhead_ms, "мс"),
-        sn.share
-            .map(|s| format!("{:.0}%", s * 100.0))
-            .unwrap_or("—".into()),
-        if down.is_empty() {
-            "ничего".into()
+    out.push(format!(
+        "Состояние: {state}; оценка {} ({}){}; проверено в {}{}",
+        v.score.map(|x| x.to_string()).unwrap_or("—".into()),
+        v.color.ru(),
+        if since.is_empty() {
+            String::new()
         } else {
-            down.join(", ")
+            format!(", так с {since}")
         },
         log::hhmm(sn.at),
-    )
+        if sh.prefs.paused(vpn_monitor::metrics::now_ms()) {
+            "; проверки на паузе"
+        } else {
+            ""
+        }
+    ));
+    if let Some(r) = &sn.route {
+        out.push(format!("Каналы: {}", vpn_monitor::route::numbers(r)));
+        if let Some(ms) = r.inet_ms.value {
+            out.push(format!("Задержка до интернета: {ms:.0} мс"));
+        }
+    }
+    out.push("Сервисы офиса:".into());
+    for t in sn
+        .targets
+        .iter()
+        .filter(|t| !matches!(t.role, Some(vpn_monitor::settings::Role::World)))
+    {
+        let state = if t.ok {
+            "подключён".to_string()
+        } else if t.fail == Some(vpn_monitor::probe::Fail::Auth) {
+            "вход не принят".to_string()
+        } else {
+            format!(
+                "не подключён ({})",
+                t.error.as_deref().unwrap_or("не отвечает")
+            )
+        };
+        let mut parts = vec![state];
+        if let Some(l) = t.latency_ms.filter(|_| t.reachable) {
+            parts.push(format!("{l:.0} мс"));
+        }
+        if let Some(m) = t.mbps.filter(|_| t.ok) {
+            parts.push(format!("{m:.1} Мбит/с"));
+        }
+        parts.push(format!("вход: {}", t.auth_used));
+        if let Some(a) = &t.adapter {
+            parts.push(format!(
+                "через {a}{}",
+                if t.via_vpn == Some(false) {
+                    " (без VPN)"
+                } else {
+                    ""
+                }
+            ));
+        }
+        out.push(format!("  {} — {}", t.name, parts.join(", ")));
+    }
+    let world: Vec<String> = sn
+        .targets
+        .iter()
+        .filter(|t| matches!(t.role, Some(vpn_monitor::settings::Role::World)))
+        .map(|t| {
+            format!(
+                "{} — {}{}",
+                t.name,
+                if t.ok {
+                    "открывается"
+                } else {
+                    "не открывается"
+                },
+                match t.via_vpn {
+                    Some(true) => " через VPN",
+                    Some(false) => " напрямую",
+                    None => "",
+                }
+            )
+        })
+        .collect();
+    if !world.is_empty() {
+        out.push(format!("Мир: {}", world.join("; ")));
+    }
+    out.push(format!(
+        "VPN рабочий: {}",
+        sn.client
+            .as_ref()
+            .map(|c| format!("{}, адаптер {}", c.key(), c.adapter))
+            .unwrap_or_else(|| "туннель не найден".into())
+    ));
+    let inst = vpn_monitor::vpn::installed(&sh.settings.vpn_clients);
+    out.push(format!(
+        "Установлены: {}",
+        if inst.is_empty() {
+            "известных клиентов VPN не найдено".to_string()
+        } else {
+            inst.iter()
+                .map(|c| {
+                    format!(
+                        "{} ({}{})",
+                        c.name,
+                        if c.running {
+                            "запущен"
+                        } else {
+                            "не запущен"
+                        },
+                        c.profile
+                            .as_ref()
+                            .map(|p| format!(", профиль {p}"))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        }
+    ));
+    out.push(format!(
+        "Город: {}; канал обновлений: {}",
+        sh.city.as_deref().unwrap_or("не определён"),
+        if sh.prefs.channel == "beta" {
+            "бета"
+        } else {
+            "стабильный"
+        }
+    ));
+    out.join("\n")
 }
 
 /// Кто вошёл — без пароля и токенов.
@@ -590,6 +688,7 @@ fn state(shared: &SharedRef) -> Value {
         "paused": sh.prefs.paused(vpn_monitor::metrics::now_ms()),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
         "city": sh.city,
+        "support_url": s.support_url,
         "services": services,
         // когда поставлена эта версия: время файла exe (скачан при обновлении)
         "updated_ms": std::env::current_exe().ok()

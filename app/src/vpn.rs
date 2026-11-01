@@ -93,6 +93,55 @@ pub fn processes() -> Vec<String> {
     platform::processes()
 }
 
+/// Клиент VPN на этой машине — для сводки поддержке.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Installed {
+    pub name: String,
+    pub running: bool,
+    /// Профиль — то же безопасное название, что в меню (без ключей и ссылок).
+    pub profile: Option<String>,
+}
+
+/// Какие клиенты из `vpn_clients` установлены (по папкам программы и настроек) и запущены (по процессам).
+pub fn installed(rules: &[VpnClientRule]) -> Vec<Installed> {
+    let procs: Vec<String> = processes().iter().map(|p| p.to_lowercase()).collect();
+    rules
+        .iter()
+        .filter_map(|r| {
+            let lower = r.name.to_lowercase();
+            let places: &[(&str, &str)] = if lower.contains("happ") {
+                &[("LOCALAPPDATA", "Happ"), ("ProgramFiles", "Happ")]
+            } else if lower.contains("connect") {
+                &[
+                    ("APPDATA", "OpenVPN Connect"),
+                    ("ProgramFiles", "OpenVPN Connect"),
+                ]
+            } else if lower.contains("openvpn") {
+                &[
+                    ("ProgramFiles", "OpenVPN"),
+                    ("USERPROFILE", "OpenVPN\\config"),
+                ]
+            } else if lower.contains("wireguard") {
+                &[("ProgramFiles", "WireGuard")]
+            } else {
+                &[]
+            };
+            let running = r
+                .processes
+                .iter()
+                .any(|p| procs.contains(&p.to_lowercase()));
+            let present = places
+                .iter()
+                .any(|(var, rest)| env_path(var, rest).is_some_and(|p| p.exists()));
+            (present || running).then(|| Installed {
+                name: r.name.clone(),
+                running,
+                profile: profile(&r.name),
+            })
+        })
+        .collect()
+}
+
 fn env_path(var: &str, rest: &str) -> Option<PathBuf> {
     std::env::var(var).ok().map(|v| PathBuf::from(v).join(rest))
 }
