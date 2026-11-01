@@ -52,6 +52,10 @@ pub struct ProbeResult {
     pub via_vpn: Option<bool>,
     /// Замер прерван: качалось медленнее минимальной скорости (`min_probe_kbps`); `mbps` — сколько успело.
     pub slow_abort: bool,
+    /// v0.7: `svn info` — PROPFIND Depth 0 к тому же адресу (так `svn info` спрашивает сервер): отвечает ли SVN как
+    /// SVN и за сколько, отдельно от скорости скачивания.
+    pub svn_info_ms: Option<f64>,
+    pub svn_info_ok: Option<bool>,
 }
 
 /// Минимальная скорость пробы, КБ/с (задаёт проверка из настроек; биты f64).
@@ -92,6 +96,8 @@ impl ProbeResult {
             adapter_desc: None,
             via_vpn: None,
             slow_abort: false,
+            svn_info_ms: None,
+            svn_info_ok: None,
         }
     }
 
@@ -141,6 +147,15 @@ impl ProbeResult {
         }
         if let Some(m) = self.mbps {
             s += &format!(" скорость={m:.2}Мбит/с");
+        }
+        if let Some(ok) = self.svn_info_ok {
+            s += &format!(
+                " svn info={}{}",
+                if ok { "ok" } else { "нет ответа SVN" },
+                self.svn_info_ms
+                    .map(|m| format!(" за {m:.0}мс"))
+                    .unwrap_or_default()
+            );
         }
         if let Some(f) = self.fail {
             s += &format!(" ошибка={f:?}: {}", self.error.as_deref().unwrap_or(""));
@@ -290,6 +305,11 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         full,
     );
     r.auth_used = a.label.clone();
+    if t.kind() == AuthKind::Svn && r.reachable && !full {
+        let (ok, ms) = svn_info(&url, &headers, Duration::from_secs(t.timeout_sec));
+        r.svn_info_ok = Some(ok);
+        r.svn_info_ms = ms;
+    }
     if t.role == Role::World && r.reachable {
         // мировой сервис: важно «доступен ли», а не скорость; Cloudflare-проверка для ботов — значит, доступен;
         // отказ 403/451 или страница «недоступно в регионе» — закрыт для страны
@@ -339,6 +359,30 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         r.error = Some("Confluence вернул страницу входа — проверьте CONFLUENCE_TOKEN".into());
     }
     r.into()
+}
+
+/// `svn info` по HTTP: PROPFIND Depth 0 с тем же входом. Ответ 207 Multi-Status — SVN отвечает как SVN.
+fn svn_info(url: &str, headers: &[(String, String)], timeout: Duration) -> (bool, Option<f64>) {
+    const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/><getlastmodified/></prop></propfind>"#;
+    let mut b = ureq::http::Request::builder()
+        .method("PROPFIND")
+        .uri(url)
+        .header("Depth", "0")
+        .header("Content-Type", "text/xml; charset=utf-8");
+    for (k, v) in headers {
+        b = b.header(k.as_str(), v.as_str());
+    }
+    let Ok(req) = b.body(BODY) else {
+        return (false, None);
+    };
+    let t = Instant::now();
+    match crate::net::agent(timeout).run(req) {
+        Ok(resp) => {
+            let st = resp.status().as_u16();
+            (st == 207, Some(ms(t.elapsed())))
+        }
+        Err(_) => (false, None),
+    }
 }
 
 /// Проба интернета: качаем до `max_seconds`, потом обрываем.

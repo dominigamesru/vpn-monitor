@@ -50,6 +50,11 @@ pub struct Shared {
     pub prefs: vpn_monitor::prefs::Prefs,
     /// Город, где нас видит интернет (по внешнему адресу), v0.6; обновляется раз в 6 часов.
     pub city: Option<String>,
+    /// Удалённые настройки (v0.7): номер версии настроек (растёт при каждом применении office.json), какие ключи
+    /// пришли из office.json и когда применены.
+    pub settings_rev: u64,
+    pub office_keys: Option<Vec<String>>,
+    pub office_at: Option<i64>,
     pub city_at: Option<std::time::Instant>,
 }
 
@@ -85,8 +90,27 @@ pub fn run(replace: bool, first_run: bool) {
     let embedded = Settings::embedded();
     let dir = embedded.install_dir();
     log::init(&dir.join("vpn-monitor.log"), false);
-    let (settings, src) = Settings::load(&dir);
+    let (base_settings, src) = Settings::load(&dir);
     crate::log_start("трей", &dir, &src);
+    // удалённые настройки (v0.7): последняя скачанная копия office.json — сразу, до сети
+    let (settings, office_keys) = match std::fs::read_to_string(dir.join(vpn_monitor::office::FILE))
+    {
+        Ok(text) => match vpn_monitor::office::apply(&base_settings, &text) {
+            Ok((s, keys)) => {
+                info!(
+                    "office",
+                    "удалённые настройки из копии: {}",
+                    keys.join(", ")
+                );
+                (s, Some(keys))
+            }
+            Err(e) => {
+                warn!("office", "копия удалённых настроек не применена: {e}");
+                (base_settings.clone(), None)
+            }
+        },
+        Err(_) => (base_settings.clone(), None),
+    };
 
     let instance = if replace {
         win::replace_running(Duration::from_secs(15))
@@ -182,6 +206,9 @@ pub fn run(replace: bool, first_run: bool) {
         diag: None,
         diag_running: false,
         prefs: vpn_monitor::prefs::Prefs::load(&dir),
+        settings_rev: 0,
+        office_keys,
+        office_at: None,
     }));
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
@@ -209,6 +236,7 @@ pub fn run(replace: bool, first_run: bool) {
         proxy.clone(),
         shared.clone(),
     );
+    spawn_office(base_settings, dir.clone(), shared.clone());
     spawn_updater(
         settings.clone(),
         dir.clone(),
@@ -444,6 +472,7 @@ fn spawn_checker(
             settings.check_interval_alert_sec,
         );
         let mut m = Monitor::new(settings, secrets);
+        let mut rev = 0u64;
         let mut notifier = vpn_monitor::notify::Notifier::default();
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
         let mut manual = false;
@@ -453,6 +482,14 @@ fn spawn_checker(
                 Ok(Cmd::CheckNow) => manual = true,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            // удалённые настройки поменялись — проверка берёт новые (пороги, цели) без перезапуска
+            {
+                let sh = lock(&shared);
+                if sh.settings_rev != rev {
+                    rev = sh.settings_rev;
+                    m.settings = sh.settings.clone();
+                }
             }
             // пауза: проверки по расписанию не идут (по кнопке «Проверить» — идут)
             let now_ms = vpn_monitor::metrics::now_ms();
@@ -579,6 +616,58 @@ fn observation(s: &Snapshot) -> vpn_monitor::notify::Observation {
         slow: s.verdict.color == Color::Yellow,
         client: s.client.as_ref().map(|c| c.name.clone()),
     }
+}
+
+/// Удалённые настройки (v0.7): раз в 5 минут — office.json из релиза `latest`; поменялся — наложить на свои
+/// настройки, сохранить копию, отдать проверке и окну. Файла нет — свои настройки.
+fn spawn_office(base: Settings, dir: PathBuf, shared: SharedRef) {
+    std::thread::spawn(move || {
+        let path = dir.join(vpn_monitor::office::FILE);
+        let mut last: Option<String> = std::fs::read_to_string(&path).ok();
+        let mut last_err = String::new();
+        std::thread::sleep(Duration::from_secs(20));
+        loop {
+            match vpn_monitor::office::fetch(&base.release_base_url) {
+                Ok(text) if text == last => {}
+                Ok(Some(text)) => match vpn_monitor::office::apply(&base, &text) {
+                    Ok((s, keys)) => {
+                        info!(
+                            "office",
+                            "применены удалённые настройки: {}",
+                            keys.join(", ")
+                        );
+                        let _ = std::fs::write(&path, &text);
+                        let mut sh = lock(&shared);
+                        sh.settings = s;
+                        sh.settings_rev += 1;
+                        sh.office_keys = Some(keys);
+                        sh.office_at = Some(vpn_monitor::metrics::now_ms());
+                        last = Some(text);
+                    }
+                    Err(e) => warn!("office", "удалённые настройки не применены: {e}"),
+                },
+                Ok(None) => {
+                    if last.is_some() {
+                        info!("office", "удалённых настроек больше нет — возвращаю свои");
+                        let _ = std::fs::remove_file(&path);
+                        let mut sh = lock(&shared);
+                        sh.settings = base.clone();
+                        sh.settings_rev += 1;
+                        sh.office_keys = None;
+                        sh.office_at = Some(vpn_monitor::metrics::now_ms());
+                        last = None;
+                    }
+                }
+                // без сети это раз в 5 минут — пишем, только когда ошибка поменялась
+                Err(e) if e != last_err => {
+                    warn!("office", "не проверить удалённые настройки: {e}");
+                    last_err = e;
+                }
+                Err(_) => {}
+            }
+            std::thread::sleep(vpn_monitor::office::PERIOD);
+        }
+    });
 }
 
 fn spawn_updater(

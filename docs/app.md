@@ -3,6 +3,16 @@
 Rust, один exe без рантаймов ([ADR 0001](adr/0001-rust.md)). Требования — [requirements.md](requirements.md), поставка —
 [ADR 0004](adr/0004-delivery-github-releases.md).
 
+## v0.7
+- **Удалённые настройки** ([ADR 0011](adr/0011-remote-settings-office-json.md), `src/office.rs`): `office.json` в
+  релизе `latest` (workflow `office` при изменении `app/config/office.json`), раз в 5 минут, наложение поверх своих
+  настроек, применение без перезапуска (`settings_rev` в общем состоянии — проверка берёт новые настройки).
+- **Своя норма** — `snapshot.baseline` (медианы за неделю по клиенту и профилю) рядом с порогами в меню и окне.
+- **`svn info`** — PROPFIND Depth 0 к адресу SVN с тем же входом (только лёгкая проба); `svn_info_ok`,
+  `svn_info_ms` в API, логе и сводке.
+- **Советы** (`src/advice.rs`) — `snapshot.advice` в API, в меню (первый), окне (все) и сводке.
+- **Итог недели** — в «Истории» при 7 днях: сколько раз и сколько всего было плохо, обычные цифры, худший час.
+
 ## v0.6
 Прототип — [docs/prototypes/flyout-v06.html](prototypes/flyout-v06.html), все экраны — [docs/screens.html](screens.html).
 - **Маршрут** (`src/route.rs`): звенья интернет → VPN → офис, статус каждого — по медиане трёх последних проверок

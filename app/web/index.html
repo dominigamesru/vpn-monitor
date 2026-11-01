@@ -90,6 +90,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .nr .track em { position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--ink); opacity: .55; }
 .nr .cmp { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; }
 .lineinfo { color: var(--muted); font-size: 12.5px; margin-top: 14px; display: grid; gap: 4px; }
+.lineinfo .advice { color: var(--ink); background: var(--surface-2); border-radius: 8px; padding: 7px 10px; }
 
 /* История */
 .filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
@@ -357,12 +358,13 @@ function renderNow() {
   const row = (name, st, val, frac, mark, cmp) => { const tr = el("div", { class: "track" }, el("i", { style: `width:${Math.max(3, Math.min(1, frac) * 100)}%` })); if (mark != null) tr.append(el("em", { style: `left:calc(${Math.min(1, mark) * 100}% - 1px)` })); norms.append(el("div", { class: `nr ${st}` }, badge(st, name), el("span", { class: "val", text: val }), tr, el("span", { class: "cmp", text: cmp }))); };
   if (r) {
     const sMax = th.svn_good_mbps * 2, vMax = th.vpn_bad_ms * 1.15;
-    row("Скорость SVN", P(r.st_svn), mbps(r.svn.value), (r.svn.value ?? 0) / sMax, th.svn_good_mbps / sMax, r.svn.value == null ? "Не мерили — проверка без скачивания или VPN выключен" : `Норма — от ${mbps(th.svn_good_mbps)}; ${raw(r.svn, (x) => num(x, 1))}${r.inet.value ? `; до SVN доходит ${num((r.svn.value / r.inet.value) * 100)}% интернета` : ""}`);
-    row("Задержка VPN", P(r.st_vpn_lat ?? r.st_vpn), msf(r.vpn.value), Math.min(r.vpn.value ?? 0, vMax) / vMax, th.vpn_good_ms / vMax, r.vpn.value == null ? "VPN не подключён" : `Норма — до ${msf(th.vpn_good_ms)}; ${raw(r.vpn, msf)}`);
+    row("Скорость SVN", P(r.st_svn), mbps(r.svn.value), (r.svn.value ?? 0) / sMax, th.svn_good_mbps / sMax, r.svn.value == null ? "Не мерили — проверка без скачивания или VPN выключен" : `Норма — от ${mbps(th.svn_good_mbps)}${sn.baseline?.speed_mbps != null ? `, обычно у вас ${mbps(sn.baseline.speed_mbps)}` : ""}; ${raw(r.svn, (x) => num(x, 1))}${r.inet.value ? `; до SVN доходит ${num((r.svn.value / r.inet.value) * 100)}% интернета` : ""}`);
+    row("Задержка VPN", P(r.st_vpn_lat ?? r.st_vpn), msf(r.vpn.value), Math.min(r.vpn.value ?? 0, vMax) / vMax, th.vpn_good_ms / vMax, r.vpn.value == null ? "VPN не подключён" : `Норма — до ${msf(th.vpn_good_ms)}${sn.baseline?.latency_ms != null ? `, обычно у вас ${msf(sn.baseline.latency_ms)}` : ""}; ${raw(r.vpn, msf)}`);
     row("Интернет", P(r.st_inet), mbps(r.inet.value), (r.inet.value ?? 0) / Math.max(th.inet_good_mbps * 4, r.inet.value ?? 0), th.inet_good_mbps / Math.max(th.inet_good_mbps * 4, r.inet.value ?? 0), `Нужно от ${mbps(th.inet_good_mbps)}; задержка ${msf(r.inet_ms.value)} (медленно — больше ${msf(th.inet_lat_warn_ms)})`);
   } else norms.append(el("div", { class: "empty", text: "Сравнивать пока не с чем." }));
   const li = $("#lineinfo"); li.replaceChildren();
   if (sn.lite) li.append(el("span", { text: `${cap(sn.lite)} — проверяю без скачивания` }));
+  for (const a of S?.paused ? [] : sn.advice || []) li.append(el("span", { class: "advice", text: `Совет: ${a}` }));
 }
 function tipTarget(x) {
   const st = x.ok ? "good" : x.reachable ? "warn" : "bad";
@@ -485,6 +487,17 @@ function renderHistory() {
   $("#histInfo").textContent = `${H.records.length} проверок` + (range === "day" ? " · полосы — по 10 минут" : " · по часам");
   renderLanes(lanes, H.from, H.to); renderCharts(lines, H.from, H.to);
   const list = incidents(lanes, raw), host = $("#incidents"); host.replaceChildren();
+  // итог недели (v0.7): сколько раз было плохо, сколько всего, обычные цифры и худший час — видно, система это или случай
+  if (range === "week") {
+    const total = list.reduce((a, i) => a + (i.end - i.start), 0);
+    const hours = {}; for (const i of list) { const hh = new Date(i.start).getHours(); hours[hh] = (hours[hh] || 0) + (i.end - i.start); }
+    const worstH = Object.entries(hours).sort((a, b) => b[1] - a[1])[0];
+    const mLat = median(raw.map((p) => p.lat)), mSpd = median(raw.map((p) => p.spd));
+    const parts = [list.length ? `за неделю плохо было ${list.length} ${list.length % 10 === 1 && list.length % 100 !== 11 ? "раз" : list.length % 10 >= 2 && list.length % 10 <= 4 && (list.length % 100 < 10 || list.length % 100 >= 20) ? "раза" : "раз"}, всего ${dur(total)}` : "за неделю всё было в норме",
+      mLat != null ? `обычная задержка VPN ${num(mLat)} мс` : null, mSpd != null ? `SVN ${num(mSpd, 1)} Мбит/с` : null,
+      worstH && list.length > 1 ? `чаще всего около ${String(worstH[0]).padStart(2, "0")}:00` : null].filter(Boolean);
+    $("#histInfo").textContent = `${H.records.length} проверок · по часам — ${parts.join("; ")}`;
+  }
   if (!list.length) { host.append(el("div", { class: "empty", text: "За этот период всё было в норме." })); return; }
   const tb = el("tbody"); for (const i of list.slice(0, 30)) tb.append(el("tr", {}, el("td", { class: "num", text: when(i.start) }), el("td", { class: "num", text: dur(i.end - i.start) }), el("td", {}, badge("bad", i.name)), el("td", { class: "num", text: i.worst })));
   host.append(el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, el("tr", {}, ...["Когда", "Сколько длилось", "Что", "Худшее"].map((t) => el("th", { text: t })))), tb)));
@@ -516,7 +529,9 @@ function renderConn() {
   $("#notifyOpts").replaceChildren(...nopts.map(([k, n]) => { const c = el("input", { type: "checkbox", id: `n-${k}` }); c.checked = !!S.prefs.notify[k]; c.addEventListener("change", () => api("/api/prefs", { method: "POST", body: JSON.stringify({ notify: { [k]: c.checked } }) })); return el("label", { class: "opt", for: `n-${k}` }, el("div", { text: n }), c); }));
   $("#notifyOpts").append(el("small", { class: "st", text: "Не чаще 4 уведомлений в час; во время паузы — никаких." }));
   $("#autostart").checked = S.autostart;
-  $("#updSub").textContent = `Версия ${S.version}${S.prefs.channel === "beta" ? ", канал «Бета»" : ""}. Новые версии ставятся сами.`;
+  const OK = { thresholds: "пороги", targets: "сервисы", support_url: "адрес поддержки", internet: "проверка интернета", vpn_clients: "клиенты VPN" };
+  const off = S.office?.keys?.length ? ` Удалённые настройки офиса: ${S.office.keys.map((k) => OK[k] || k).join(", ")}${S.office.at_ms ? ` — применены в ${hhmm(S.office.at_ms)}` : ""}.` : "";
+  $("#updSub").textContent = `Версия ${S.version}${S.prefs.channel === "beta" ? ", канал «Бета»" : ""}. Новые версии ставятся сами.${off}`;
 }
 const RES = { ok: ["good", "вход принят"], denied: ["bad", "не принят"], unreachable: ["warn", "не ответил"] };
 $("#loginForm").addEventListener("submit", async (e) => { e.preventDefault(); const btn = $("#loginBtn"), box = $("#loginChecks"); btn.disabled = true; btn.textContent = "Проверяю…"; box.replaceChildren();
@@ -538,6 +553,7 @@ async function pollDiag() { const r = await api("/api/diagnostics"); const b = $
   net.append(el("li", {}, el("span", { class: "n", text: "прокси" }), el("span", { text: d.system_proxy })));
   host.append(el("details", {}, el("summary", {}, badge("idle", "Сеть этого компьютера"), el("span", { class: "h", text: `${d.adapters.filter((x) => x.up).length} подключений` })), net)); }
 $("#diagBtn").addEventListener("click", async () => { await api("/api/diagnostics", { method: "POST", body: "{}" }); pollDiag(); });
+$("#supportLink").addEventListener("click", async () => { try { await navigator.clipboard.writeText(await api("/api/summary")); $("#supportLink").textContent = "Сводка скопирована — вставьте в описание"; setTimeout(() => ($("#supportLink").textContent = "Создать запрос в поддержку"), 6000); } catch {} });
 $("#copyBtn").addEventListener("click", async () => { const t = await api("/api/summary"); try { await navigator.clipboard.writeText(t); $("#copyBtn").textContent = "Скопировано"; } catch { $("#copyBtn").textContent = "Не удалось скопировать"; } setTimeout(() => { $("#copyBtn").textContent = "Скопировать сводку для поддержки"; }, 2500); });
 $("#updBtn").addEventListener("click", async () => { const res = $("#updRes"); res.textContent = "Проверяю…"; const r = await api("/api/update", { method: "POST", body: "{}" });
   if (r.error) res.textContent = "Не удалось проверить — нет связи с GitHub"; else if (r.available) { res.replaceChildren(`Доступна ${r.latest}. `); const b = el("button", { class: "btn", type: "button", text: "Установить" }); b.addEventListener("click", () => { api("/api/update", { method: "POST", body: JSON.stringify({ install: true }) }); res.textContent = "Ставлю — окно переподключится само"; }); res.append(b); } else res.textContent = `У вас последняя версия ${r.current}`; });
