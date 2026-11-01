@@ -92,6 +92,10 @@ ul.tickets .d { color: var(--muted); font-variant-numeric: tabular-nums; font-si
 .pill { justify-self: start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
 .pill.warn { color: var(--warn); } .pill.accent { color: var(--accent); } .pill.good { color: var(--good); }
 @media (max-width: 560px) { ul.tickets li { grid-template-columns: auto minmax(0,1fr); } ul.tickets .d { grid-column: 2; } }
+.btn.sm { padding: 4px 10px; font-size: 12.5px; }
+.tklink { color: var(--accent); font-weight: 600; }
+.st.sent { color: var(--accent); } .st.sent i { background: none; color: var(--accent); }
+a.tmark { cursor: pointer; } a.tmark:hover line { stroke-width: 2.2; } svg a.tmark text { fill: var(--accent); font-weight: 600; text-decoration: underline; }
 .newslink { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 13px; }
 ul.tickets li .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; max-width: 70ch; }
@@ -251,7 +255,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     </div>
     <div class="card">
       <h2>Когда было плохо</h2>
-      <p class="sub">Отрезки, когда что-то было «плохо», — от свежих к старым.</p>
+      <p class="sub">Отрезки, когда что-то было «плохо», и ваши запросы в Jira — от свежих к старым. Про отрезок можно сразу отправить запрос.</p>
       <div id="incidents"></div>
     </div>
   </section>
@@ -540,7 +544,9 @@ function bucket(pts, from, to, step) {
 }
 const PAD_L = 84, PAD_R = 10;
 const xs = (from, to, w) => (t) => PAD_L + (t - from) / (to - from) * (w - PAD_L - PAD_R);
-function ticks(from, to) { const out = []; if (range === "day") { const s = 3 * 3600000; for (let t = Math.ceil(from / s) * s; t <= to; t += s) out.push([t, hhmm(t)]); } else { const d = new Date(from); d.setHours(0, 0, 0, 0); for (let t = d.getTime() + 86400000; t <= to; t += 86400000) out.push([t, dayLabel(t)]); } return out; }
+function ticks(from, to, w) { const out = []; if (range === "day") { const s = 3 * 3600000; for (let t = Math.ceil(from / s) * s; t <= to; t += s) out.push([t, hhmm(t)]); } else { const d = new Date(from); d.setHours(0, 0, 0, 0); for (let t = d.getTime() + 86400000; t <= to; t += 86400000) out.push([t, dayLabel(t)]); }
+  // узкий экран: подписи не налезают — оставляем каждую k-ю (не меньше ~64 px на подпись)
+  if (w) { const k = Math.max(1, Math.ceil(out.length * 64 / w)); return out.filter((_, i) => i % k === 0); } return out; }
 const near = (pts, t) => pts.reduce((b, p) => !b || Math.abs(p.t - t) < Math.abs(b.t - t) ? p : b, null);
 const crosses = [];
 function cross(t) { crosses.forEach((c) => c(t)); }
@@ -558,7 +564,7 @@ function renderLanes(pts, from, to) {
     svg.append(sv("rect", { x: PAD_L, y, width: w - PAD_L - PAD_R, height: row, rx: 4, fill: css("--idle-bg") }));
     for (const p of pts) { if (p[k] === "idle") continue; const x0 = x(p.t - p.step / 2), x1 = x(p.t + p.step / 2); svg.append(sv("rect", { x: x0, y, width: Math.max(1, x1 - x0 - 1), height: row, fill: css("--" + p[k]) })); }
   });
-  for (const [t, l] of ticks(from, to)) { const tx = sv("text", { x: x(t), y: h - 2, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
+  for (const [t, l] of ticks(from, to, w)) { const tx = sv("text", { x: x(t), y: h - 2, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
   const cl = sv("line", { y1: 0, y2: h - 16, stroke: css("--ink"), "stroke-width": 1, opacity: 0 }); svg.append(cl);
   crosses.push((t) => { if (t == null) return cl.setAttribute("opacity", 0); const xx = x(t); cl.setAttribute("x1", xx); cl.setAttribute("x2", xx); cl.setAttribute("opacity", .35); });
   const hit = sv("rect", { x: PAD_L, y: 0, width: w - PAD_L - PAD_R, height: h - 16, fill: "transparent" });
@@ -579,13 +585,14 @@ function lineChart(host, pts, from, to, cfg) {
   if (cfg.norm != null) { const n0 = cfg.norm * (cfg.normLow ?? 0.85), n1 = cfg.norm * (cfg.normHigh ?? 1.15); svg.append(sv("rect", { x: PAD_L, y: y(n1), width: w - PAD_L - PAD_R, height: Math.max(2, y(n0) - y(n1)), fill: css("--norm-band") })); const t = sv("text", { x: w - PAD_R, y: y(n1) - 3, "text-anchor": "end" }); t.textContent = `норма ${cfg.fmt(cfg.norm)}`; svg.append(t); }
   for (const p of pts) if (p.off) svg.append(sv("rect", { x: x(p.t - (p.step || 60000) / 2), y: top, width: Math.max(1, x(p.t + (p.step || 60000) / 2) - x(p.t - (p.step || 60000) / 2)), height: h - top - bottom, fill: css("--off-band") }));
   for (const f of [0, 0.5, 1]) { const v = max * f, yy = y(v); svg.append(sv("line", { x1: PAD_L, x2: w - PAD_R, y1: yy, y2: yy, stroke: css(f ? "--line" : "--axis") })); const t = sv("text", { x: PAD_L - 8, y: yy + 4, "text-anchor": "end" }); t.textContent = cfg.fmt(v); svg.append(t); }
-  for (const [t, l] of ticks(from, to)) { const tx = sv("text", { x: x(t), y: h - 4, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
+  for (const [t, l] of ticks(from, to, w)) { const tx = sv("text", { x: x(t), y: h - 4, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
   // отметки «здесь вы отправили запрос в поддержку» (v0.8) — пунктир с номером заявки
+  const marks = []; // поверх области наведения — иначе номер не нажать
   for (const tk of TICKETS) { if (!tk.created_ms || tk.created_ms < from || tk.created_ms > to) continue; const xx = x(tk.created_ms);
-    const g = sv("g", { class: "tmark" }); const ttl = sv("title"); ttl.textContent = `Запрос ${tk.key} отправлен ${when(tk.created_ms)}`; g.append(ttl);
+    const g = sv("a", { class: "tmark", href: /^https:\/\//.test(tk.url) ? tk.url : "#", target: "_blank", rel: "noopener" }); const ttl = sv("title"); ttl.textContent = `Запрос ${tk.key} отправлен ${when(tk.created_ms)} — открыть в Jira`; g.append(ttl);
     g.append(sv("line", { x1: xx, x2: xx, y1: top, y2: h - bottom, stroke: css("--accent"), "stroke-dasharray": "3 3", "stroke-width": 1.2 }));
     if (cfg.marks) { const t = sv("text", { x: xx + 4, y: top + 10, fill: css("--accent") }); t.textContent = tk.key; g.append(t); }
-    svg.append(g); }
+    marks.push(g); }
   const gap = range === "day" ? 25 * 60000 : 2.5 * 3600000;
   for (const s of cfg.series) {
     let d = "", prev = null;
@@ -601,7 +608,7 @@ function lineChart(host, pts, from, to, cfg) {
       ...cfg.series.map((s) => el("div", { class: "r" }, el("span", { class: "k" }, el("i", { style: `background:${s.color}` }), s.name), el("b", { text: p[s.key] == null ? (p.off ? "VPN выкл." : "—") : cfg.fmt(p[s.key]) }))),
       cfg.norm != null ? el("span", { class: "mut", text: `норма ${cfg.fmt(cfg.norm)}` }) : null)); });
   hit.addEventListener("pointerleave", () => { cross(null); hideTip(); });
-  svg.append(hit); wrap.append(svg); host.append(wrap);
+  svg.append(hit, ...marks); wrap.append(svg); host.append(wrap);
 }
 function renderCharts(pts, from, to) {
   const host = $("#charts"); host.replaceChildren(); const b = S?.snapshot?.baseline || {};
@@ -623,6 +630,14 @@ function incidents(lanes, raw) {
     else i.worst = "—"; }
   return out.sort((a, b) => b.start - a.start);
 }
+// «Когда было плохо» → запрос в Jira про этот отрезок; уже отправляли (запрос во время или до 2 ч после) — ссылка на него
+function incidentAction(i) {
+  const t = TICKETS.find((k) => k.created_ms >= i.start && k.created_ms <= i.end + 2 * 3600000);
+  if (t) return el("a", { class: "tklink", href: /^https:\/\//.test(t.url) ? t.url : "#", target: "_blank", rel: "noopener", text: t.key, title: `Запрос ${t.key} отправлен ${when(t.created_ms)}` });
+  const b = el("button", { class: "btn ghost sm", type: "button", text: "Запрос в Jira" });
+  b.addEventListener("click", () => openSupport({ summary: `VPN Monitor: ${i.name} — ${when(i.start)}–${hhmm(i.end)}`,
+    intro: `Было плохо: ${i.name}, ${when(i.start)}–${hhmm(i.end)} (${dur(i.end - i.start)}), худшее — ${i.worst}.` }));
+  return b; }
 function renderHistory() {
   if (!H || !S) return; crosses.length = 0;
   const raw = prepare(H.records), step = range === "day" ? 600000 : 3600000;
@@ -641,9 +656,18 @@ function renderHistory() {
       worstH && list.length > 1 ? `чаще всего около ${String(worstH[0]).padStart(2, "0")}:00` : null].filter(Boolean);
     $("#histInfo").textContent = `${H.records.length} проверок · по часам — ${parts.join("; ")}`;
   }
-  if (!list.length) { host.append(el("div", { class: "empty", text: "За этот период всё было в норме." })); return; }
-  const tb = el("tbody"); for (const i of list.slice(0, 30)) tb.append(el("tr", {}, el("td", { class: "num", text: when(i.start) }), el("td", { class: "num", text: dur(i.end - i.start) }), el("td", {}, badge("bad", i.name)), el("td", { class: "num", text: i.worst })));
-  host.append(el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, el("tr", {}, ...["Когда", "Сколько длилось", "Что", "Худшее"].map((t) => el("th", { text: t })))), tb)));
+  // запросы в поддержку за период — строками вперемешку с отрезками «плохо», по времени (v0.8.1)
+  const sent = TICKETS.filter((t) => t.created_ms >= H.from && t.created_ms <= H.to);
+  if (!list.length && !sent.length) { host.append(el("div", { class: "empty", text: "За этот период всё было в норме." })); return; }
+  const rows = [...list.slice(0, 30).map((i) => ({ t: i.start, i })), ...sent.map((k) => ({ t: k.created_ms, k }))].sort((a, b) => b.t - a.t);
+  const tb = el("tbody"); for (const r of rows) {
+    if (r.i) { const i = r.i; tb.append(el("tr", {}, el("td", { class: "num", text: when(i.start) }), el("td", { class: "num", text: dur(i.end - i.start) }), el("td", {}, badge("bad", i.name)), el("td", { class: "num", text: i.worst }), el("td", {}, incidentAction(i)))); continue; }
+    const k = r.k, [cls, word] = ST_CAT[k.status_category] || ["idle", "статус неизвестен"];
+    tb.append(el("tr", { class: "tkrow" }, el("td", { class: "num", text: when(k.created_ms) }), el("td", { class: "num", text: "—" }),
+      el("td", {}, el("span", { class: "st sent" }, el("i", { text: "↗", "aria-hidden": "true" }), `Отправлен запрос в Jira: ${k.summary.replace(/^VPN Monitor: /, "")}`)),
+      el("td", {}, el("span", { class: `pill ${cls}`, text: k.status || word })),
+      el("td", {}, el("a", { class: "tklink", href: /^https:\/\//.test(k.url) ? k.url : "#", target: "_blank", rel: "noopener", text: k.key })))); }
+  host.append(el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, el("tr", {}, ...["Когда", "Сколько длилось", "Что", "Худшее", "Поддержка"].map((t) => el("th", { text: t })))), tb)));
 }
 
 // ---------- ПОДКЛЮЧЕНИЕ ----------
@@ -692,7 +716,7 @@ async function pollDiag() { const r = await api("/api/diagnostics"); const b = $
     const ul = el("ul"); for (const s of t.steps) ul.append(el("li", {}, el("span", { class: "n", text: s.name }), el("span", { text: s.detail })));
     host.append(el("details", {}, el("summary", {}, badge(DSTEP[t.verdict], t.name), el("span", { class: "h", text: t.hint })), ul));
   }
-  const net = el("ul"); for (const a of d.adapters.filter((x) => x.up)) net.append(el("li", {}, el("span", { class: "n", text: a.vpn_like ? "туннель" : "сеть" }), el("span", { text: `${a.name} — ${a.description}${a.ipv4.length ? " · " + a.ipv4.join(", ") : ""}` })));
+  const net = el("ul"); for (const a of d.adapters.filter((x) => x.up)) net.append(el("li", {}, el("span", { class: "n", text: a.vpn_like ? `VPN · ${a.kind || "туннель"}` : (a.kind || "сеть") }), el("span", { text: `${a.name} — ${a.description}${a.ipv4.length ? " · " + a.ipv4.join(", ") : ""}` })));
   net.append(el("li", {}, el("span", { class: "n", text: "прокси" }), el("span", { text: d.system_proxy })));
   host.append(el("details", {}, el("summary", {}, badge("idle", "Сеть этого компьютера"), el("span", { class: "h", text: `${d.adapters.filter((x) => x.up).length} подключений` })), net)); }
 $("#diagBtn").addEventListener("click", async () => { await api("/api/diagnostics", { method: "POST", body: "{}" }); pollDiag(); });
@@ -715,20 +739,23 @@ async function loadTickets() { try { const r = await api("/api/tickets"); render
 async function refreshTickets() { const b = $("#ticketsRefresh"); b.disabled = true; b.classList.add("busy");
   try { const r = await api("/api/tickets", { method: "POST", body: "{}" }); renderTickets(r.tickets, r.error); } catch { $("#ticketsErr").textContent = "Приложение не ответило."; $("#ticketsErr").hidden = false; }
   b.disabled = false; b.classList.remove("busy"); }
-$("#supportBtn").addEventListener("click", async () => {
+$("#supportBtn").addEventListener("click", () => openSupport());
+// pre — из «Истории» (v0.8.1): {summary, intro} — тема про конкретный отрезок «было плохо», а в начале описания — когда и что
+async function openSupport(pre) {
   const b = $("#supportBtn"); b.disabled = true;
   try { supDraft = await api("/api/support"); } catch { supDraft = null; } b.disabled = false;
   if (!supDraft?.available) { // без входа или не портал Jira — как раньше: сводка в буфер и форма портала
     try { await navigator.clipboard.writeText(await api("/api/summary")); } catch {}
     // после await браузер может не дать открыть окно сам — даём ссылку
     const link = supDraft?.portal_url && /^https:\/\//.test(supDraft.portal_url) ? el("a", { href: supDraft.portal_url, target: "_blank", rel: "noopener", text: "Открыть форму портала" }) : null;
+    if (pre) location.hash = "#settings/diagnostics";
     $("#supResult").replaceChildren(`Отправить запрос из приложения нельзя: ${supDraft?.reason || "приложение не ответило"}. Сводка скопирована — вставьте её в форму. `, ...[link].filter(Boolean)); return; }
   $("#supWho").textContent = `От вашего имени (${supDraft.login}) в Jira Service Desk. После создания заявка откроется в браузере.`;
-  $("#supSummary").value = supDraft.summary; $("#supDesc").value = supDraft.description; $("#supPriority").value = supDraft.priority || "Low"; $("#supErr").textContent = "";
+  $("#supSummary").value = pre?.summary || supDraft.summary; $("#supDesc").value = pre?.intro ? `${pre.intro}\n\n${supDraft.description}` : supDraft.description; $("#supPriority").value = supDraft.priority || "Low"; $("#supErr").textContent = "";
   // каждый файл — флажок и «посмотреть»: что уйдёт в поддержку, видно до отправки
   $("#supFiles").replaceChildren(...supDraft.files.map((f, i) => el("div", { class: "file" }, el("label", {}, el("input", { type: "checkbox", id: `supF${i}`, value: f.name, checked: "" }), `${f.name} · ${kb(f.bytes)}`),
     f.preview ? el("details", {}, el("summary", { text: f.name.endsWith(".log") ? "посмотреть последние строки" : "посмотреть начало" }), el("pre", { text: f.preview })) : null)));
-  $("#supSend").disabled = false; $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal(); $("#supSummary").focus(); });
+  $("#supSend").disabled = false; $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal(); $("#supSummary").focus(); }
 $("#supCancel").addEventListener("click", () => $("#supDlg").close());
 $("#ticketsRefresh").addEventListener("click", refreshTickets);
 $("#supForm").addEventListener("submit", async (e) => { e.preventDefault(); const send = $("#supSend"); send.disabled = true; send.classList.add("busy"); send.textContent = "Отправляю…"; $("#supErr").textContent = "";
