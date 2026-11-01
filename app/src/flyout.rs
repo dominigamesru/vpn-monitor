@@ -17,6 +17,9 @@ pub struct Flyout {
     webview: WebView,
     visible: bool,
     hidden_at: Instant,
+    /// Где иконка — чтобы после смены высоты окно осталось у неё, а не уехало за край экрана.
+    icon: Option<tray_icon::Rect>,
+    height: f64,
 }
 
 impl Flyout {
@@ -52,6 +55,8 @@ impl Flyout {
             webview,
             visible: false,
             hidden_at: Instant::now() - Duration::from_secs(10),
+            icon: None,
+            height: START_HEIGHT,
         })
     }
 
@@ -69,6 +74,7 @@ impl Flyout {
         if self.hidden_at.elapsed() < Duration::from_millis(350) {
             return;
         }
+        self.icon = Some(icon);
         self.place(icon);
         self.window.set_visible(true);
         self.window.set_focus();
@@ -87,9 +93,17 @@ impl Flyout {
     }
 
     /// Высота — по содержимому страницы (присылает сама страница), в логических пикселях.
+    /// Повтор той же высоты не трогает окно (без петли «окно → страница → окно»).
     pub fn resize(&mut self, height: f64) {
-        let h = height.clamp(200.0, 760.0);
+        let h = height.clamp(160.0, 760.0).round();
+        if (h - self.height).abs() < 2.0 {
+            return;
+        }
+        self.height = h;
         self.window.set_inner_size(LogicalSize::new(WIDTH, h));
+        if let Some(icon) = self.icon {
+            self.place(icon);
+        }
     }
 
     /// Над иконкой, если панель задач снизу; под ней — если сверху; не вылезая за край экрана.
