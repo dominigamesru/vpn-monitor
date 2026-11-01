@@ -106,6 +106,19 @@ STATES = [
 ]
 
 
+ADVICE = {
+    "slowsvn": ["Не помогло переподключение — выберите другой сервер VPN или создайте запрос в поддержку (вкладка «Настройки»)."],
+    "slownet": ["Причина — интернет: подойдите ближе к роутеру, смените сеть или подождите."],
+    "auth": ["Confluence, Jira не принимает вход — возможно, сменился пароль AD. Войдите заново в «Настройках»."],
+    "captive": ["Откройте браузер и войдите на странице Wi‑Fi (отель, кафе) — до этого VPN не подключится."],
+}
+
+
+def cargo_version():
+    import re
+    return re.search(r'^version = "([^"]+)"', (common.ROOT / "app" / "Cargo.toml").read_text(encoding="utf-8"), re.M).group(1)
+
+
 def history(now, hours, step_min):
     recs, n = [], int(hours * 60 / step_min)
     for i in range(n):
@@ -125,8 +138,10 @@ def state_json(key, now, view="route"):
     snap = {"at": now - 60000, "color": st["color"], "badge": st["badge"], "score": st["score"],
             "client": {"name": "OpenVPN Connect", "profile": "vpn.dominigames.com [DG_Rykov_Sergey_main]", "adapter": "OpenVPN"},
             "targets": st["targets"], "route": st["route"], "full": True, "took_ms": 17800, "waking": False, "lite": None,
-            "explain": "", "internet_latency": 40}
-    return {"version": "0.6.0", "latest": "0.6.0", "checking": False, "thresholds": TH, "snapshot": snap,
+            "explain": "", "internet_latency": 40, "advice": ADVICE.get(key, []),
+            "baseline": {"latency_ms": 205, "speed_mbps": 12.6, "samples": 900, "client": "OpenVPN Connect / vpn.dominigames.com [DG_Rykov_Sergey_main]"}}
+    ver = cargo_version()
+    return {"version": ver, "latest": ver, "checking": False, "thresholds": TH, "snapshot": snap,
             "login": "rykov_sergey", "city": "Москва", "updated_ms": now - 5 * 3600000, "autostart": True,
             "intervals": {"green_sec": 180, "alert_sec": 60, "full_min": 30, "internet_min": 15, "update_min": 30},
             "prefs": {"view": view, "channel": "latest", "pause_until_ms": now + 47 * 60000 if paused else None,

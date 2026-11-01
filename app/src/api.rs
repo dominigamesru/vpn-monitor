@@ -513,6 +513,19 @@ fn summary(shared: &SharedRef) -> String {
         if let Some(m) = t.mbps.filter(|_| t.ok) {
             parts.push(format!("{m:.1} Мбит/с"));
         }
+        if let Some(ok) = t.svn_info_ok {
+            parts.push(format!(
+                "svn info: {}{}",
+                if ok {
+                    "отвечает"
+                } else {
+                    "не отвечает как SVN"
+                },
+                t.svn_info_ms
+                    .map(|m| format!(" за {m:.0} мс"))
+                    .unwrap_or_default()
+            ));
+        }
         parts.push(format!("вход: {}", t.auth_used));
         if let Some(a) = &t.adapter {
             parts.push(format!(
@@ -583,6 +596,15 @@ fn summary(shared: &SharedRef) -> String {
                 .join("; ")
         }
     ));
+    let adv = vpn_monitor::advice::advice(
+        sn.route.as_ref(),
+        &sn.targets,
+        client,
+        matches!(v.badge, vpn_monitor::score::Badge::Captive),
+    );
+    if !adv.is_empty() {
+        out.push(format!("Советы приложения: {}", adv.join(" ")));
+    }
     out.push(format!(
         "Город: {}; канал обновлений: {}",
         sh.city.as_deref().unwrap_or("не определён"),
@@ -620,6 +642,7 @@ fn probe_json(r: &ProbeResult) -> Value {
         "ip": r.resolved, "latency": r.latency_ms, "mbps": r.mbps, "http": r.http_status,
         "fail": r.fail.map(|f| format!("{f:?}")), "error": r.error, "note": r.note, "auth": r.auth_used,
         "adapter": r.adapter, "via_vpn": r.via_vpn,
+        "svn_info_ok": r.svn_info_ok, "svn_info_ms": r.svn_info_ms,
     })
 }
 
@@ -647,6 +670,9 @@ fn state(shared: &SharedRef) -> Value {
             "waking": sn.waking, "lite": sn.lite,
             "internet_latency": sn.internet_latency_ms, "overhead": sn.overhead_ms, "share": sn.share,
             "route": sn.route, "full": sn.full, "took_ms": sn.took_ms,
+            "advice": vpn_monitor::advice::advice(sn.route.as_ref(), &sn.targets,
+                sn.client.as_ref().map(|c| c.name.as_str()).unwrap_or("клиент VPN"),
+                matches!(v.badge, vpn_monitor::score::Badge::Captive)),
             "targets": sn.targets.iter().map(probe_json).collect::<Vec<_>>(),
             "internet": sn.internet.as_ref().map(probe_json),
         })
@@ -689,6 +715,7 @@ fn state(shared: &SharedRef) -> Value {
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
         "city": sh.city,
         "support_url": s.support_url,
+        "office": {"keys": sh.office_keys, "at_ms": sh.office_at},
         "services": services,
         // когда поставлена эта версия: время файла exe (скачан при обновлении)
         "updated_ms": std::env::current_exe().ok()

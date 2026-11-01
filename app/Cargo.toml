@@ -1,6 +1,6 @@
 [package]
 name = "vpn-monitor"
-version = "0.6.3"
+version = "0.7.0"
 edition = "2024"
 description = "Domini VPN Monitor — приложение в трее"
 publish = false

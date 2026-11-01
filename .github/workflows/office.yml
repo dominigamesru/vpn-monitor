@@ -1,0 +1,31 @@
+# Удалённые настройки без релиза (v0.7, docs/specs/roadmap-0.7.md): app/config/office.json → релиз `latest`.
+# Установленные копии проверяют его раз в 5 минут и накладывают поверх своих настроек. Файл удалили — ассет удаляется,
+# копии возвращаются к своим настройкам.
+name: office
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/config/office.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Проверить office.json
+        if: hashFiles('app/config/office.json') != ''
+        run: python3 -c "import json,sys; d=json.load(open('app/config/office.json', encoding='utf-8')); assert isinstance(d, dict), 'ждали объект JSON'; print('ключи:', ', '.join(d))"
+      - name: office.json → релиз latest
+        if: hashFiles('app/config/office.json') != ''
+        run: gh release upload latest app/config/office.json --clobber
+      - name: Файла нет — убрать из релиза latest
+        if: hashFiles('app/config/office.json') == ''
+        run: gh release delete-asset latest office.json --yes || true
