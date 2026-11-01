@@ -21,6 +21,10 @@ pub struct Snapshot {
     pub internet_fresh: bool,
     /// Клиент и профиль VPN, через который идут цели светофора (v0.4).
     pub client: Option<crate::vpn::Client>,
+    /// v0.5: канал и туннель — задержка до интернета, надбавка VPN (медиана), доля канала (медиана).
+    pub internet_latency_ms: Option<f64>,
+    pub overhead_ms: Option<f64>,
+    pub share: Option<f64>,
     pub verdict: Verdict,
 }
 
@@ -39,8 +43,12 @@ pub struct Monitor {
     /// выброс не ронял светофор.
     latencies: VecDeque<f64>,
     speeds: VecDeque<f64>,
+    overheads: VecDeque<f64>,
+    shares: VecDeque<f64>,
     /// Своя норма (медианы за неделю) — задаёт трей перед проверкой из файлов метрик (v0.4).
     pub baseline: Option<crate::score::Baseline>,
+    /// Клиент и профиль VPN прошлой проверки — по нему трей выбирает норму (v0.5).
+    pub last_client: Option<String>,
 }
 
 /// Сколько последних проверок сглаживает оценку.
@@ -81,7 +89,10 @@ impl Monitor {
             check_no: 0,
             latencies: VecDeque::new(),
             speeds: VecDeque::new(),
+            overheads: VecDeque::new(),
+            shares: VecDeque::new(),
             baseline: None,
+            last_client: None,
         }
     }
 
@@ -135,7 +146,7 @@ impl Monitor {
                 .flat_map(|h| h.join().unwrap_or_default())
                 .collect();
             let internet = inet.and_then(|h| h.join().ok());
-            let online_hint = conn.join().unwrap_or(true);
+            let online_hint = conn.join().unwrap_or(Some(0.0));
             (results, internet, online_hint)
         });
 
@@ -183,7 +194,9 @@ impl Monitor {
             .filter(|r| r.role == Some(Role::Light))
             .collect();
         // нет интернета: не отвечают ни проверочные адреса, ни одна цель — VPN не оцениваем и в историю не пишем
-        let online = online_hint || results.iter().any(|r| r.reachable) || internet_reachable;
+        let internet_latency = online_hint;
+        let online =
+            online_hint.is_some() || results.iter().any(|r| r.reachable) || internet_reachable;
         if !online {
             warn!(
                 "check",
@@ -206,8 +219,11 @@ impl Monitor {
                 // VPN не включён — прошлые замеры относятся к другому подключению
                 self.latencies.clear();
                 self.speeds.clear();
+                self.overheads.clear();
+                self.shares.clear();
             }
         }
+        let mut office_speed: Option<f64> = None;
         if let Some(sp) = results
             .iter()
             // «Без ВПН» — это скорость интернета, а не VPN: в оценку VPN не идёт; прерванный медленный замер —
@@ -221,6 +237,7 @@ impl Monitor {
             .filter_map(|r| r.mbps)
             .reduce(f64::max)
         {
+            office_speed = Some(sp);
             push_capped(&mut self.speeds, sp, SMOOTH_CHECKS);
         }
         for r in &results {
@@ -258,9 +275,36 @@ impl Monitor {
             })
             .collect();
         let speeds: Vec<f64> = median(&self.speeds).into_iter().collect();
-        let baseline = self.baseline;
+        let baseline = self.baseline.clone();
         let inet_mbps = self.last_internet.as_ref().and_then(|r| r.mbps);
-        let verdict = score::evaluate(
+        // туннель (v0.5): надбавка VPN = задержка до офиса − задержка до интернета; доля канала = скорость до офиса /
+        // скорость канала, если замер канала свежий
+        if online {
+            let office_lat = light
+                .iter()
+                .filter(|r| r.reachable)
+                .filter_map(|r| r.latency_ms)
+                .reduce(f64::max);
+            if let (Some(o), Some(i)) = (office_lat, internet_latency) {
+                push_capped(&mut self.overheads, (o - i).max(0.0), SMOOTH_CHECKS);
+            }
+            let fresh = Duration::from_secs(self.settings.thresholds.share_fresh_min * 60);
+            let channel = self
+                .last_internet
+                .as_ref()
+                .filter(|r| r.at.elapsed().unwrap_or_default() <= fresh)
+                .and_then(|r| r.mbps)
+                .filter(|m| *m > 0.0);
+            if let (Some(sp), Some(ch)) = (office_speed, channel) {
+                push_capped(&mut self.shares, (sp / ch).min(1.5), SMOOTH_CHECKS);
+            }
+        }
+        self.last_client = client.as_ref().map(crate::vpn::Client::key);
+        let tunnel = score::Tunnel {
+            overhead_ms: median(&self.overheads),
+            share: median(&self.shares),
+        };
+        let verdict = score::evaluate_tunnel(
             &light,
             &speeds,
             inet_mbps,
@@ -270,6 +314,7 @@ impl Monitor {
             now,
             baseline,
             online,
+            tunnel,
         );
         self.weak_internet = matches!(verdict.badge, score::Badge::WeakInternet(_));
         info!(
@@ -290,31 +335,34 @@ impl Monitor {
             internet: self.last_internet.clone(),
             internet_fresh,
             client,
+            internet_latency_ms: internet_latency,
+            overhead_ms: tunnel.overhead_ms,
+            share: tunnel.share,
             verdict,
         }
     }
 }
 
-/// Есть ли интернет вообще: TCP до любого проверочного адреса за 3 с (без скачивания).
-fn connectivity(hosts: &[String]) -> bool {
+/// Есть ли интернет и какая до него задержка: лучшее время TCP до проверочных адресов, `None` — ни один не ответил.
+fn connectivity(hosts: &[String]) -> Option<f64> {
     if hosts.is_empty() {
-        return true;
+        return Some(0.0);
     }
     std::thread::scope(|sc| {
         let hs: Vec<_> = hosts
             .iter()
             .map(|h| {
                 sc.spawn(move || {
-                    h.to_socket_addrs()
-                        .ok()
-                        .and_then(|mut a| a.next())
-                        .is_some_and(|a| {
-                            TcpStream::connect_timeout(&a, Duration::from_secs(3)).is_ok()
-                        })
+                    let a = h.to_socket_addrs().ok()?.next()?;
+                    let t = Instant::now();
+                    TcpStream::connect_timeout(&a, Duration::from_secs(3)).ok()?;
+                    Some(t.elapsed().as_secs_f64() * 1000.0)
                 })
             })
             .collect();
-        hs.into_iter().any(|h| h.join().unwrap_or(false))
+        hs.into_iter()
+            .filter_map(|h| h.join().ok().flatten())
+            .reduce(f64::min)
     })
 }
 

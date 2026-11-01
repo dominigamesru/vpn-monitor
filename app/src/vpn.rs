@@ -33,6 +33,16 @@ fn matches_any(text: &str, patterns: &[String]) -> bool {
         .any(|p| !p.is_empty() && t.contains(&p.to_lowercase()))
 }
 
+impl Client {
+    /// Ключ нормы и подпись: «Happ / Lisbon» или «Happ».
+    pub fn key(&self) -> String {
+        match &self.profile {
+            Some(p) => format!("{} / {p}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
 /// Маршрут до адреса: адаптер и «через VPN ли».
 pub fn route(ip: &IpAddr, rules: &[VpnClientRule], ignore: &[String]) -> Option<Route> {
     let (name, description, vpn_like) = platform::route(ip)?;

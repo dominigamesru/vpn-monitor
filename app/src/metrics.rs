@@ -54,6 +54,13 @@ pub struct Record {
     /// Клиент VPN (и профиль), v0.4.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vpn: Option<String>,
+    /// v0.5: задержка до интернета, мс; надбавка VPN, мс; доля канала, 0..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ilat: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ovh: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,10 +139,10 @@ impl Record {
             },
             stab: v.stability.map(round2),
             tg,
-            vpn: s.client.as_ref().map(|c| match &c.profile {
-                Some(p) => format!("{} / {p}", c.name),
-                None => c.name.clone(),
-            }),
+            vpn: s.client.as_ref().map(crate::vpn::Client::key),
+            ilat: s.internet_latency_ms.map(round1),
+            ovh: s.overhead_ms.map(round1),
+            share: s.share.map(round2),
         }
     }
 }
@@ -220,13 +227,32 @@ impl Store {
 
     /// Своя норма (v0.4): медианы задержки и скорости за `baseline_days` по проверкам, когда VPN работал. Пока
     /// проверок меньше `baseline_min_samples` — нормы нет, оценка идёт по абсолютным порогам.
-    pub fn baseline(&self, th: &crate::settings::Thresholds) -> Option<crate::score::Baseline> {
+    /// Норма своя для каждого клиента и профиля VPN (`client` — «Happ / Lisbon»); пока по нему мало проверок —
+    /// общая.
+    pub fn baseline(
+        &self,
+        th: &crate::settings::Thresholds,
+        client: Option<&str>,
+    ) -> Option<crate::score::Baseline> {
         let from = now_ms() - th.baseline_days as i64 * 86_400_000;
-        let ok: Vec<&Record> = self
+        let all: Vec<&Record> = self
             .records
             .iter()
             .filter(|r| r.t >= from && r.b == "score")
             .collect();
+        let mine: Vec<&Record> = client
+            .map(|c| {
+                all.iter()
+                    .copied()
+                    .filter(|r| r.vpn.as_deref() == Some(c))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (ok, used_client) = if mine.len() >= th.baseline_min_samples {
+            (mine, client.map(str::to_string))
+        } else {
+            (all, None)
+        };
         let med = |mut v: Vec<f64>| -> Option<f64> {
             if v.len() < th.baseline_min_samples {
                 return None;
@@ -236,11 +262,18 @@ impl Store {
         };
         let lat = med(ok.iter().filter_map(|r| r.lat).collect());
         let spd = med(ok.iter().filter_map(|r| r.spd).collect());
-        (lat.is_some() || spd.is_some()).then_some(crate::score::Baseline {
-            latency_ms: lat,
-            speed_mbps: spd,
-            samples: ok.len(),
-        })
+        let ovh = med(ok.iter().filter_map(|r| r.ovh).collect());
+        let share = med(ok.iter().filter_map(|r| r.share).collect());
+        (lat.is_some() || spd.is_some() || ovh.is_some() || share.is_some()).then_some(
+            crate::score::Baseline {
+                latency_ms: lat,
+                speed_mbps: spd,
+                samples: ok.len(),
+                overhead_ms: ovh,
+                share,
+                client: used_client,
+            },
+        )
     }
 
     /// Записи с момента `from_ms`.
@@ -269,6 +302,9 @@ mod tests {
             stab: None,
             tg: BTreeMap::new(),
             vpn: None,
+            ilat: None,
+            ovh: None,
+            share: None,
         }
     }
 
@@ -289,11 +325,11 @@ mod tests {
         for i in 0..10 {
             st.records.push(rec(now - i * 60_000));
         }
-        assert!(st.baseline(&th).is_none(), "10 проверок — мало");
+        assert!(st.baseline(&th, None).is_none(), "10 проверок — мало");
         for i in 10..100 {
             st.records.push(rec(now - i * 60_000));
         }
-        let b = st.baseline(&th).unwrap();
+        let b = st.baseline(&th, None).unwrap();
         assert_eq!(b.latency_ms, Some(180.0));
         assert_eq!(b.speed_mbps, Some(3.0));
         std::fs::remove_dir_all(&dir).ok();

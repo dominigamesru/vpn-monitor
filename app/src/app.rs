@@ -296,7 +296,9 @@ fn spawn_checker(
             {
                 let mut sh = lock(&shared);
                 sh.checking = true;
-                m.baseline = sh.store.baseline(&sh.settings.thresholds);
+                m.baseline = sh
+                    .store
+                    .baseline(&sh.settings.thresholds, m.last_client.as_deref());
             }
             let snap = m.run_check(manual);
             manual = false;
