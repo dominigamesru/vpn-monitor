@@ -199,3 +199,41 @@ pub fn os_version() -> String {
     }
     format!("{product} {} (сборка {build})", get("DisplayVersion"))
 }
+
+/// AppUserModelID для уведомлений Windows (без него непакетное приложение не может их показывать).
+pub const AUMID: &str = "DominiGames.VPNMonitor";
+
+/// Регистрирует приложение для уведомлений: имя «Domini VPN» и значок (так делает Windows App SDK для
+/// непакетных приложений — ключ в HKCU\Software\Classes\AppUserModelId).
+pub fn register_notifications(dir: &Path) -> Result<(), String> {
+    let icon = dir.join("notify-icon.ico");
+    let px = vpn_monitor::icon::render(
+        vpn_monitor::score::Badge::Unknown,
+        vpn_monitor::score::Color::Gray,
+        false,
+    );
+    let img = ico::IconImage::from_rgba_data(vpn_monitor::icon::SIZE, vpn_monitor::icon::SIZE, px);
+    let mut dir_ico = ico::IconDir::new(ico::ResourceType::Icon);
+    dir_ico.add_entry(ico::IconDirEntry::encode(&img).map_err(|e| e.to_string())?);
+    let f = std::fs::File::create(&icon).map_err(|e| format!("{}: {e}", icon.display()))?;
+    dir_ico.write(f).map_err(|e| e.to_string())?;
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    let (key, _) = hkcu
+        .create_subkey(format!("Software\\Classes\\AppUserModelId\\{AUMID}"))
+        .map_err(|e| format!("уведомления: {e}"))?;
+    key.set_value("DisplayName", &"Domini VPN")
+        .map_err(|e| format!("уведомления: {e}"))?;
+    key.set_value("IconUri", &icon.display().to_string())
+        .map_err(|e| format!("уведомления: {e}"))?;
+    Ok(())
+}
+
+/// Показывает уведомление Windows.
+pub fn toast(title: &str, body: &str) -> Result<(), String> {
+    tauri_winrt_notification::Toast::new(AUMID)
+        .title(title)
+        .text1(body)
+        .duration(tauri_winrt_notification::Duration::Short)
+        .show()
+        .map_err(|e| format!("уведомление: {e:?}"))
+}

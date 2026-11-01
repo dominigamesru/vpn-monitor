@@ -144,6 +144,12 @@ pub enum Role {
     Light,
     /// Цель для метрик скорости.
     Speed,
+    /// Сервис в мире (ChatGPT, Claude, Luma): доступен ли и через VPN ли (v0.5). В `settings.json` — только в
+    /// `role_kind`: старые версии значение `world` в `role` не поймут.
+    World,
+    /// Значение из будущих версий.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,7 +182,11 @@ pub struct GitlabOauth {
 pub struct Target {
     pub id: String,
     pub name: String,
+    /// Роль, понятная и старым версиям (`light` / `speed`).
     pub role: Role,
+    /// Роль для версий v0.5+; если задана — главнее `role` (подставляется при чтении настроек).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_kind: Option<Role>,
     pub url: String,
     /// Имя переменной (env или secrets.env), которая переопределяет `url`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -227,7 +237,13 @@ pub struct ExeInfo {
 
 impl Settings {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let s: Settings = serde_json::from_str(text).map_err(|e| format!("settings.json: {e}"))?;
+        let mut s: Settings =
+            serde_json::from_str(text).map_err(|e| format!("settings.json: {e}"))?;
+        for t in &mut s.targets {
+            if let Some(r) = t.role_kind {
+                t.role = r;
+            }
+        }
         s.validate()?;
         Ok(s)
     }

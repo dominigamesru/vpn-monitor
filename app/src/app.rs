@@ -123,6 +123,9 @@ pub fn run(replace: bool, first_run: bool) {
         period: String::new(),
     };
     let store = Store::open(&dir, meta);
+    if let Err(e) = win::register_notifications(&dir) {
+        warn!("notify", "уведомления не зарегистрированы: {e}");
+    }
     info!(
         "metrics",
         "история: {} проверок из metrics_7d.json",
@@ -297,6 +300,7 @@ fn spawn_checker(
             settings.check_interval_alert_sec,
         );
         let mut m = Monitor::new(settings, secrets);
+        let mut notifier = vpn_monitor::notify::Notifier::default();
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
         let mut manual = false;
         let mut last_check = std::time::SystemTime::now();
@@ -356,6 +360,22 @@ fn spawn_checker(
             } else {
                 alert
             });
+            // уведомления: только о подтверждённой смене состояния и с лимитами (notify.rs)
+            let (prefs, paused) = {
+                let sh = lock(&shared);
+                (
+                    sh.prefs.notify.clone(),
+                    sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+                )
+            };
+            if !paused {
+                for n in notifier.observe(&observation(&snap), &prefs, std::time::Instant::now()) {
+                    info!("notify", "{}: {}", n.title, n.body);
+                    if let Err(e) = win::toast(&n.title, &n.body) {
+                        warn!("notify", "{e}");
+                    }
+                }
+            }
             if proxy
                 .send_event(UserEvent::Snapshot(Box::new(snap)))
                 .is_err()
@@ -365,6 +385,41 @@ fn spawn_checker(
             while rx.try_recv().is_ok() {} // клики, пришедшие во время проверки, не копим
         }
     });
+}
+
+/// Что видно в проверке — для решения об уведомлениях. Нет интернета, Wi‑Fi со входом, после сна — «неизвестно».
+fn observation(s: &Snapshot) -> vpn_monitor::notify::Observation {
+    use vpn_monitor::probe::Fail;
+    let unknown = s.waking
+        || matches!(
+            s.verdict.badge,
+            Badge::NoInternet | Badge::Captive | Badge::Unknown
+        );
+    let light: Vec<&ProbeResult> = s
+        .targets
+        .iter()
+        .filter(|r| r.role == Some(Role::Light))
+        .collect();
+    let world: Vec<&ProbeResult> = s
+        .targets
+        .iter()
+        .filter(|r| r.role == Some(Role::World))
+        .collect();
+    vpn_monitor::notify::Observation {
+        office_up: (!unknown && !light.is_empty()).then(|| light.iter().any(|r| r.reachable)),
+        world_up: (!unknown && !world.is_empty()).then(|| world.iter().any(|r| r.ok)),
+        world_down_names: world
+            .iter()
+            .filter(|r| !r.ok)
+            .map(|r| r.name.clone())
+            .collect(),
+        auth_failed: !unknown
+            && s.targets
+                .iter()
+                .any(|r| r.fail == Some(Fail::Auth) && r.auth_used.contains("AD")),
+        slow: s.verdict.color == Color::Yellow,
+        client: s.client.as_ref().map(|c| c.name.clone()),
+    }
 }
 
 fn spawn_updater(

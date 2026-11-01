@@ -282,10 +282,33 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
         } else {
             Duration::from_secs(t.timeout_sec)
         },
-        full.then(|| Duration::from_secs(FULL_PROBE_SECS)),
+        if t.role == Role::World {
+            Some(Duration::from_millis(800))
+        } else {
+            full.then(|| Duration::from_secs(FULL_PROBE_SECS))
+        },
         full,
     );
     r.auth_used = a.label.clone();
+    if t.role == Role::World && r.reachable {
+        // мировой сервис: важно «доступен ли», а не скорость; Cloudflare-проверка для ботов — значит, доступен;
+        // отказ 403/451 или страница «недоступно в регионе» — закрыт для страны
+        let region = r.final_uri.contains("unavailable") || r.final_uri.contains("unsupported");
+        let st = r.http_status.unwrap_or(0);
+        if (st < 400 && !region) || (st == 403 && r.cf_challenge) {
+            r.ok = true;
+            r.fail = None;
+            r.error = None;
+        } else {
+            r.ok = false;
+            r.fail = Some(Fail::Http);
+            r.error = Some(if region || st == 451 || st == 403 {
+                format!("закрыт для вашей страны (HTTP {st}) — нужен VPN в мир")
+            } else {
+                format!("отвечает ошибкой HTTP {st}")
+            });
+        }
+    }
     if r.fail == Some(Fail::Auth) && t.kind() == AuthKind::Jira && note.is_some() {
         r.error =
             Some("Jira требует входа: войдите логином AD в окне (вкладка «Подключение»)".into());
@@ -337,6 +360,9 @@ pub fn probe_internet(i: &Internet) -> ProbeResult {
 struct Raw {
     r: ProbeResult,
     looks_like_login: bool,
+    /// Куда в итоге привели редиректы и стоит ли проверка Cloudflare (для мировых сервисов).
+    final_uri: String,
+    cf_challenge: bool,
 }
 impl std::ops::Deref for Raw {
     type Target = ProbeResult;
@@ -372,6 +398,8 @@ fn probe_url(
             return Raw {
                 r: ProbeResult::new(id, name, role, url, full).failed(Fail::Config, e),
                 looks_like_login: false,
+                final_uri: String::new(),
+                cf_challenge: false,
             };
         }
     };
@@ -385,6 +413,8 @@ fn probe_url(
             return Raw {
                 r: r.failed(Fail::Dns, format!("DNS: {e}")),
                 looks_like_login: false,
+                final_uri: String::new(),
+                cf_challenge: false,
             };
         }
     };
@@ -398,6 +428,8 @@ fn probe_url(
         return Raw {
             r: r.failed(Fail::Dns, "DNS: нет адресов"),
             looks_like_login: false,
+            final_uri: String::new(),
+            cf_challenge: false,
         };
     };
     r.resolved = Some(addr.ip().to_string());
@@ -423,6 +455,8 @@ fn probe_url(
             return Raw {
                 r: r.failed(fail, format!("TCP {addr}: {e}{hint}")),
                 looks_like_login: false,
+                final_uri: String::new(),
+                cf_challenge: false,
             };
         }
     }
@@ -445,6 +479,8 @@ fn probe_url(
             return Raw {
                 r: r.failed(fail, format!("HTTP: {e}")),
                 looks_like_login: false,
+                final_uri: String::new(),
+                cf_challenge: false,
             };
         }
     };
@@ -453,6 +489,11 @@ fn probe_url(
     r.reachable = true;
     let final_uri = ureq::ResponseExt::get_uri(&resp).to_string();
     let looks_like_login = final_uri.contains("login.action") || final_uri.contains("/login");
+    let cf_challenge = resp
+        .headers()
+        .get("cf-mitigated")
+        .and_then(|v| v.to_str().ok())
+        == Some("challenge");
 
     // бюджет на скачивание: размер / минимальная скорость (1 МБ при 50 КБ/с — 20 с), не меньше 3 с
     let kbps = min_probe_kbps();
@@ -502,6 +543,8 @@ fn probe_url(
         return Raw {
             r,
             looks_like_login,
+            final_uri,
+            cf_challenge,
         };
     }
 
@@ -525,6 +568,8 @@ fn probe_url(
     Raw {
         r,
         looks_like_login,
+        final_uri,
+        cf_challenge,
     }
 }
 

@@ -137,7 +137,9 @@ impl Monitor {
             let handles: Vec<_> = s
                 .targets
                 .iter()
-                .filter(|t| t.enabled && (lite.is_none() || t.role == Role::Light))
+                .filter(|t| {
+                    t.enabled && (lite.is_none() || matches!(t.role, Role::Light | Role::World))
+                })
                 .map(|t| {
                     let secrets = &secrets;
                     sc.spawn(move || {
