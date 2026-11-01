@@ -13,6 +13,7 @@ pub mod net;
 pub mod notify;
 pub mod prefs;
 pub mod probe;
+pub mod route;
 pub mod score;
 pub mod secrets;
 pub mod settings;

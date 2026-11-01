@@ -27,7 +27,15 @@
     "overhead_bad_ms": 400,
     "share_good": 0.6,
     "share_bad": 0.1,
-    "share_fresh_min": 20
+    "share_fresh_min": 20,
+    "svn_good_mbps": 8,
+    "svn_bad_mbps": 2,
+    "inet_good_mbps": 8,
+    "inet_bad_mbps": 2,
+    "inet_lat_warn_ms": 1000,
+    "inet_lat_bad_ms": 3000,
+    "vpn_good_ms": 300,
+    "vpn_bad_ms": 700
   },
   "targets": [
     {

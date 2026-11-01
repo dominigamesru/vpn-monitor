@@ -10,7 +10,9 @@
 | [`architecture.html`](architecture.html) | схема компонентов и одного цикла работы (открыть в браузере) |
 | `adr/NNNN-slug.md` | решения: трудно отменить, удивительно без контекста, был реальный выбор (скилл `domain-modeling`) |
 | [`ux/scenarios.md`](ux/scenarios.md) | сценарии, состояния, меню, уведомления, голос — источник правды для интерфейса |
-| `specs/` | спеки до реализации: что, зачем, формат, тесты, вопросы заказчику ([токены в `tokens.json`](specs/tokens-obfuscated.md)) |
+| `specs/` | спеки до реализации: что, зачем, формат, тесты, вопросы заказчику ([токены в `tokens.json`](specs/tokens-obfuscated.md), [AI-агент и MCP](specs/ai-agent-mcp.md)) |
+| [`screens.html`](screens.html) | галерея экранов: настоящие страницы во всех состояниях (`python scripts/screens.py`) |
+| `prototypes/` | HTML-прототипы с вариантами — до кода крупной доработки интерфейса |
 | [`app.md`](app.md) | приложение в трее: что умеет, как тестировать, лог, релиз |
 | [`scripts-guide.md`](scripts-guide.md) | как писать скрипты |
 | [`net_speed.md`](net_speed.md) | первый прототип замера канала до GitLab/SVN |

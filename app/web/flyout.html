@@ -4,124 +4,137 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Domini VPN</title>
+<link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/vendor/tippy.css">
 <style>
-/* Меню у иконки: панель Windows 11. Шрифт — системный Segoe UI Variable (меню — часть системы, а не сайт). */
+/* Меню у иконки v0.6 (прототип — docs/prototypes/flyout-v06.html): шапка, вид (маршрут / приборная панель / лента),
+   низ — учётная запись и иконки. Тема — своя кнопка в шапке (user.json → theme), по умолчанию как в системе. */
 :root {
-  --bg: #ffffff; --bg-2: #f3f5f8; --ink: #15202e; --muted: #5a6b80; --line: #e2e7ee; --accent: #2f5bea; --accent-ink: #ffffff;
+  --bg: #ffffff; --bg-2: #f3f5f8; --ink: #15202e; --muted: #5a6b80; --faint: #8b9bb0; --line: #e2e7ee;
+  --accent: #2f5bea; --accent-ink: #ffffff;
   --good: #1f9d55; --warn: #c98a00; --bad: #d6453d; --idle: #8b9bb0;
   --good-bg: #e6f5ec; --warn-bg: #fbf1d9; --bad-bg: #fbe7e5; --idle-bg: #edf0f4;
   --tip-bg: #15202e; --tip-ink: #f3f6fa; --tip-muted: #a9b6c7;
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
-@media (prefers-color-scheme: dark) { :root {
-  --bg: #1b2430; --bg-2: #232e3b; --ink: #e8eef5; --muted: #93a3b7; --line: #2c3948; --accent: #6f93ff; --accent-ink: #0d131b;
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #1b2430; --bg-2: #232e3b; --ink: #e8eef5; --muted: #93a3b7; --faint: #6f8096; --line: #2c3948;
+  --accent: #6f93ff; --accent-ink: #0d131b;
   --good: #3cc274; --warn: #e8b23a; --bad: #f0675e; --idle: #7d8ca0;
   --good-bg: #163323; --warn-bg: #3a2e10; --bad-bg: #3d1b19; --idle-bg: #263140;
   --tip-bg: #0d131b; --tip-ink: #e8eef5; --tip-muted: #8d9db2; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #1b2430; --bg-2: #232e3b; --ink: #e8eef5; --muted: #93a3b7; --faint: #6f8096; --line: #2c3948;
+  --accent: #6f93ff; --accent-ink: #0d131b;
+  --good: #3cc274; --warn: #e8b23a; --bad: #f0675e; --idle: #7d8ca0;
+  --good-bg: #163323; --warn-bg: #3a2e10; --bad-bg: #3d1b19; --idle-bg: #263140;
+  --tip-bg: #0d131b; --tip-ink: #e8eef5; --tip-muted: #8d9db2; color-scheme: dark }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font); font-feature-settings: "tnum" 1; overflow: hidden; user-select: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.good { --c: var(--good); --cb: var(--good-bg); } .warn { --c: var(--warn); --cb: var(--warn-bg); }
-.bad { --c: var(--bad); --cb: var(--bad-bg); } .idle { --c: var(--idle); --cb: var(--idle-bg); }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; display: inline-block; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.d-good { background: var(--good); } .d-warn { background: var(--warn); } .d-bad { background: var(--bad); } .d-idle { background: var(--idle); }
+.bg-good { background: var(--good-bg); color: var(--good); } .bg-warn { background: var(--warn-bg); color: var(--warn); }
+.bg-bad { background: var(--bad-bg); color: var(--bad); } .bg-idle { background: var(--idle-bg); color: var(--idle); }
+.c-good { color: var(--good); } .c-warn { color: var(--warn); } .c-bad { color: var(--bad); } .c-idle { color: var(--idle); }
+.mut { color: var(--muted); }
 
-#root { padding: 16px 16px 0; display: grid; gap: 14px; }
-.head { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; }
-.index { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; font-size: 22px; font-weight: 700; background: var(--cb); color: var(--c); }
-.head b { display: block; font-size: 16px; line-height: 1.25; font-weight: 650; text-wrap: balance; }
-.head span { color: var(--muted); font-size: 13px; }
+/* шапка */
+.hd { display: flex; align-items: center; gap: 6px; padding: 10px 10px 0 16px; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.hd b { color: var(--ink); font-size: 13.5px; font-weight: 600; }
+.hd .lnk { cursor: pointer; border-bottom: 1px dotted var(--faint); }
+.hd .beta { font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+.hd .sp { flex: 1; }
+.ib { width: 30px; height: 30px; border-radius: 8px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; flex: none; }
+.ib:hover { background: var(--bg-2); color: var(--ink); }
+.ib.on { color: var(--accent); }
+.ib svg { width: 18px; height: 18px; }
+
+#root { padding: 10px 16px 0; display: grid; gap: 12px; }
+#root[hidden] { display: none; }
+.verdict { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; }
+.idx { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; font-size: 19px; font-weight: 700; }
+.verdict h3 { margin: 0; font-size: 15.5px; line-height: 1.25; font-weight: 650; text-wrap: balance; }
+.verdict .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .note { font-size: 12.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
 .note button { border: 0; background: none; color: var(--accent); padding: 0; font-weight: 600; }
+.svc { display: flex; flex-wrap: wrap; gap: 4px; }
+.svc > span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--bg-2); }
+.svc small { color: var(--muted); font-size: 10.5px; }
 
 /* маршрут */
 .route { display: grid; }
-.hop { display: grid; grid-template-columns: 20px 1fr auto; gap: 10px; align-items: center; min-height: 40px; position: relative; padding: 2px 0; }
-.hop::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 2px; background: var(--line); }
-.hop:first-child::before { top: 50%; } .hop:last-child::before { bottom: 50%; }
-.hop .node { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--c); background: var(--bg); justify-self: center; z-index: 1; }
-.hop.fault .node { background: var(--c); }
-.hop .t b { font-size: 13.5px; font-weight: 600; }
-.hop .t div { color: var(--muted); font-size: 12px; }
-.hop .v { text-align: right; font-size: 13px; font-weight: 600; }
-.hop .v small { display: block; color: var(--muted); font-weight: 400; font-size: 11.5px; }
-.chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
-.chip { display: inline-flex; gap: 5px; align-items: center; font-size: 11.5px; padding: 1px 7px; border-radius: 6px; background: var(--cb); }
-.chip i { font-style: normal; color: var(--muted); font-size: 10.5px; }
+.hop { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; padding: 6px 0; position: relative; }
+.hop::before { content: ""; position: absolute; left: 8px; top: 22px; bottom: -8px; width: 2px; background: var(--rail, var(--line)); }
+.hop:last-child::before { display: none; }
+.hop .pin { width: 14px; height: 14px; border-radius: 50%; border: 3px solid currentColor; margin-top: 3px; background: var(--bg); }
+.hop.cause .pin { background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 20%, transparent); }
+.hop .nm { font-weight: 600; font-size: 13.5px; }
+.hop .ds { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+.hop .tag { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 4px; margin-left: 6px; }
+.hop .v { text-align: right; font-weight: 650; font-size: 13.5px; white-space: nowrap; }
+.hop .v small { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); }
 
-/* сравнение с нормой (из «Прибора») */
-.norms { display: grid; gap: 9px; }
-.nr { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-size: 12.5px; }
-.nr .val { font-weight: 600; }
-.nr .track { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--bg-2); position: relative; }
-.nr .track i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--c); }
-.nr .track em { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--ink); opacity: .5; }
-.nr .cmp { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; }
-
-/* прибор */
-.gauge-top { display: grid; grid-template-columns: 128px 1fr; gap: 12px; align-items: center; }
-svg text { font-family: var(--font); }
-
-/* лента */
-.lanes { display: grid; gap: 6px; }
-.lane { display: grid; grid-template-columns: 70px 1fr 56px; gap: 8px; align-items: center; font-size: 12px; }
-.lane .nm { color: var(--muted); }
-.lane .cells { display: grid; grid-template-columns: repeat(30, 1fr); gap: 2px; height: 14px; }
-.lane .cells i { border-radius: 2px; background: var(--c); }
-.lane .now { text-align: right; font-weight: 600; }
-.axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: -2px 0 0 78px; padding-right: 64px; }
-
-/* панель */
+/* приборная панель */
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.tile { border-radius: 10px; padding: 10px 12px; background: var(--bg-2); display: grid; gap: 1px; }
-.tile .k { font-size: 11.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
-.tile .v { font-size: 17px; font-weight: 650; }
-.tile .s { font-size: 11.5px; color: var(--muted); }
+.tile { background: var(--bg-2); border-radius: 10px; padding: 9px 10px 8px; display: grid; gap: 2px; min-width: 0; }
+.tile.wide { grid-column: 1 / -1; }
+.tile .k { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.tile .val { font-size: 18px; font-weight: 700; line-height: 1.15; }
+.tile .val small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.tile .nb { font-size: 11.5px; color: var(--muted); }
+.gauge { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 8%, transparent); position: relative; margin: 5px 0 3px; }
+.gauge i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+.gauge b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .5; }
+.gauge b.norm { opacity: .22; width: 3px; }
 
-.foot { display: flex; gap: 6px; align-items: center; padding: 12px 16px 14px; margin-top: 2px; border-top: 1px solid var(--line); }
-.btn { border: 0; border-radius: 8px; padding: 7px 12px; font-weight: 600; background: var(--accent); color: var(--accent-ink); }
-.btn[disabled] { opacity: .6; cursor: default; }
-.ghost { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 6px 9px; font-weight: 500; }
-.icon { width: 32px; padding: 6px 0; text-align: center; }
-.foot .when { margin-left: auto; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+/* лента часа */
+.strips { display: grid; gap: 7px; }
+.strip { display: grid; grid-template-columns: 62px 1fr 84px; gap: 8px; align-items: center; font-size: 12.5px; }
+.strip .cells { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 16px; }
+.strip .cells i { border-radius: 2px; opacity: .85; }
+.strip .n { text-align: right; font-weight: 650; white-space: nowrap; }
+.axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--faint); margin: 0 92px 0 70px; }
 
-/* поповеры и подсказки (Tippy) */
+/* низ */
+.ft { display: flex; align-items: center; gap: 2px; padding: 8px 10px 8px 14px; margin-top: 12px; border-top: 1px solid var(--line); }
+.user { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; background: none; border: 0; padding: 6px 8px; margin-left: -8px; border-radius: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user:hover { background: var(--bg-2); }
+.ft .sp { flex: 1; }
+.toast { font-size: 12px; color: var(--muted); padding: 6px 16px 0; }
+.toast:empty { display: none; }
+
+/* панель «Пауза» — вместо содержимого, как у Wi‑Fi */
+.pop { margin: 10px 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.pop[hidden] { display: none; }
+.menu { display: grid; }
+.menu button { border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.menu button:hover, .menu button:focus-visible { background: var(--bg); }
+.menu .lbl { padding: 6px 10px 2px; font-size: 11.5px; color: var(--muted); }
+
+/* подсказки (Tippy) */
 .tippy-box[data-theme~="vpn"] { background: var(--tip-bg); color: var(--tip-ink); border-radius: 10px; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
 .tippy-box[data-theme~="vpn"] > .tippy-arrow { color: var(--tip-bg); }
 .tippy-box[data-theme~="vpn"] .tippy-content { padding: 10px 12px; }
-.tippy-box[data-theme~="menu"] { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.18); }
-.tippy-box[data-theme~="menu"] .tippy-content { padding: 4px; }
-.tip { display: grid; gap: 4px; min-width: 190px; }
-.tip .row { display: flex; gap: 8px; align-items: center; }
-.tip .big { font-size: 15px; font-weight: 650; }
-.tip .mut { color: var(--tip-muted); }
+.tip { display: grid; gap: 5px; max-width: 290px; }
+.tip .big { font-weight: 650; font-size: 13px; }
+.tip .tm { color: var(--tip-muted); }
+.tip .kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; }
+.tip .kv span:nth-child(even) { text-align: right; font-weight: 600; }
+.tip .row { display: flex; align-items: center; gap: 6px; }
 .tip svg { display: block; }
-.menu { display: grid; min-width: 200px; }
-.menu button { border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-.menu button:hover, .menu button:focus-visible { background: var(--bg-2); }
-.menu .sep { height: 1px; background: var(--line); margin: 4px 6px; }
-.menu .lbl { padding: 6px 10px 2px; font-size: 11.5px; color: var(--muted); }
-.menu .res { padding: 4px 10px 8px; font-size: 12px; color: var(--muted); }
-#root[hidden] { display: none; }
-.pop { margin: 12px 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
-.pop[hidden] { display: none; }
-.pop .menu button:hover, .pop .menu button:focus-visible { background: var(--bg); }
 .err { display: grid; gap: 4px; padding: 4px 0 2px; }
 .err span { color: var(--muted); font-size: 12.5px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
+<div class="hd" id="hd"></div>
 <div id="root"></div>
 <div id="pop" class="pop" hidden></div>
-<div class="foot">
-  <button class="btn" id="check">Проверить</button>
-  <button class="ghost" id="pause" aria-haspopup="menu" aria-expanded="false">Пауза</button>
-  <button class="ghost" id="history">История</button>
-  <button class="ghost icon" id="more" aria-label="Ещё" aria-haspopup="menu" aria-expanded="false">⋯</button>
-  <span class="when" id="when"></span>
-</div>
+<div class="toast" id="toast"></div>
+<div class="ft" id="ft"></div>
 <script>
 // Отдельным скриптом и первым: ловит и ошибки разбора основного скрипта (их не поймать изнутри него).
 window.addEventListener("error", (e) => { try { window.ipc.postMessage("err:" + String(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`).slice(0, 300)); } catch {} });
@@ -133,252 +146,261 @@ window.addEventListener("error", (e) => { try { window.ipc.postMessage("err:" + 
 const $ = (s) => document.querySelector(s);
 const h = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) { if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v); }
-  for (const k of kids) if (k != null) n.append(typeof k === "string" ? document.createTextNode(k) : k);
+  for (const [k, v] of Object.entries(attrs)) { if (v == null) continue; if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v); }
+  for (const k of kids) if (k != null && k !== false) n.append(typeof k === "string" ? document.createTextNode(k) : k);
   return n;
 };
 const NS = "http://www.w3.org/2000/svg";
-const sv = (tag, attrs = {}) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
-// Не «ipc»: wry объявляет window.ipc неконфигурируемым свойством, и `const ipc` на верхнем уровне —
-// SyntaxError при разборе: весь скрипт меню не запускался (v0.5.0–0.5.1).
+const sv = (tag, attrs = {}, ...kids) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); for (const k of kids) n.append(k); return n; };
+// Не «ipc»: wry объявляет window.ipc неконфигурируемым свойством, и `const ipc` на верхнем уровне — SyntaxError
+// при разборе (так меню не запускалось в 0.5.0–0.5.1).
 const toApp = (msg) => { try { window.ipc.postMessage(msg); } catch {} };
-// Ошибки страницы — в лог приложения (иначе в WebView2 их не видно).
 const report = (msg) => toApp("err:" + String(msg).slice(0, 300));
 window.addEventListener("unhandledrejection", (e) => report(e.reason?.message || e.reason));
-// Подсказки — Tippy.js; не загрузился — меню работает без подсказок.
 const hasTippy = typeof window.tippy === "function";
 if (!hasTippy) report("Tippy.js не загрузился — подсказки выключены");
-const tippyOr = (el, o) => (hasTippy ? window.tippy(el, o) : null);
 toApp("ready"); // сразу, без requestAnimationFrame: в скрытом окне он не срабатывает
+
 const api = async (path, opts = {}) => {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
   if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, init); return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text();
 };
-const pad = (n) => String(n).padStart(2, "0");
-const hhmm = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-const num = (v, d = 0) => v == null ? "—" : Number(v).toLocaleString("ru-RU", { maximumFractionDigits: d, minimumFractionDigits: d });
-const ST = (v) => v == null ? "idle" : v >= 0.8 ? "good" : v >= 0.4 ? "warn" : "bad";
+const num = (x, d = 0) => x == null || Number.isNaN(x) ? "—" : Number(x).toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d });
+const mbps = (x) => x == null ? "—" : `${num(x, x < 10 ? 1 : 0)} Мбит/с`;
+const ms = (x) => x == null ? "—" : x >= 1000 ? `${num(x / 1000, 1)} с` : `${num(x)} мс`;
+const hhmm = (t) => t ? new Date(t).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "";
+const hms = (t) => t ? new Date(t).toLocaleTimeString("ru-RU") : "";
+const day = (t) => t ? new Date(t).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+const list = (a) => a.length < 2 ? (a[0] || "") : `${a.slice(0, -1).join(", ")} и ${a[a.length - 1]}`;
 
-let S = null, H = [];
-let view = "route";
+let S = null, H = [], view = "route";
+const TH = () => S?.thresholds || {};
+const R = () => S?.snapshot?.route || null;
+const ICON = {
+  refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
+  pause: "M9 5v14M15 5v14",
+  play: "M8 5l11 7-11 7z",
+  history: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2",
+  gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
+  auto: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18",
+  sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4",
+  moon: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z",
+};
+const icon = (name) => sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: ICON[name] }));
 
-// ---------- что сказать: состояние → вывод (docs/ux/scenarios.md, таблица состояний) ----------
+// ---------- подсказки ----------
+let tips = [];
+const tipBox = (...kids) => h("div", { class: "tip" }, ...kids);
+const kv = (pairs) => h("div", { class: "kv" }, ...pairs.filter(Boolean).flatMap(([k, v]) => [h("span", { class: "tm", text: k }), h("span", { text: v })]));
+function tip(el, fn) {
+  if (!fn || !hasTippy) return el;
+  tips.push(window.tippy(el, { content: "", theme: "vpn", delay: [150, 0], maxWidth: 320, appendTo: document.body, onShow(i) { const c = fn(); if (!c) return false; window.tippy.hideAll({ exclude: i, duration: 0 }); i.setContent(c); } }));
+  return el;
+}
+function spark(vals) {
+  if (!vals || vals.length < 2) return null;
+  const w = 120, ht = 26, mx = Math.max(...vals) * 1.15 || 1;
+  const pts = vals.map((v, i) => [(i / (vals.length - 1)) * w, ht - (v / mx) * ht]);
+  const s = sv("svg", { width: w, height: ht + 6, viewBox: `0 -3 ${w} ${ht + 6}` });
+  s.append(sv("path", { d: pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(""), fill: "none", stroke: "var(--tip-ink)", "stroke-width": "1.8" }));
+  pts.forEach((p, i) => s.append(sv("circle", { cx: p[0], cy: p[1], r: i === pts.length - 1 ? 3 : 2, fill: "var(--tip-ink)" })));
+  return s;
+}
+const raw3 = (m, f) => m?.raw?.length ? h("span", { class: "tm", text: `проверки: ${m.raw.map(f).join(" · ")} → медиана ${f(m.value)}` }) : null;
+const clientName = () => S?.snapshot?.client?.name || "VPN";
+const clientFull = () => { const c = S?.snapshot?.client; return c ? `${c.name}${c.profile ? " · " + c.profile : ""}` : "клиент VPN не определён"; };
+
+// ---------- состояние: вывод ----------
 function verdict() {
-  const sn = S?.snapshot;
-  if (S?.paused) return { st: "idle", idx: "II", title: `Проверки на паузе до ${hhmm(S.prefs.pause_until_ms)}`, sub: "Нажмите «Проверить» — проверим разово" };
+  const sn = S?.snapshot, r = R(), th = TH();
+  if (S?.paused) return { st: "idle", idx: "II", title: "Проверки на паузе", sub: `До ${hhmm(S.prefs.pause_until_ms)}. Нажмите ▶ внизу, чтобы продолжить.` };
   if (!sn) return { st: "idle", idx: "…", title: S?.checking ? "Проверяю…" : "Ещё не проверяли", sub: "" };
-  const client = sn.client ? sn.client.name : "VPN";
-  const world = (sn.targets || []).filter((t) => t.role === "world");
-  const worldDown = world.filter((t) => !t.ok).map((t) => t.name);
   if (sn.waking) return { st: "idle", idx: "…", title: "Проверяю после сна…", sub: "Сеть и VPN поднимаются — пара минут" };
   if (sn.badge === "offline") return { st: "idle", idx: "×", title: "Нет интернета", sub: "VPN проверим, когда сеть вернётся" };
   if (sn.badge === "captive") return { st: "idle", idx: "?", title: "Wi‑Fi требует входа", sub: "Откройте браузер — сеть просит войти на своей странице" };
-  if (sn.badge === "novpn") return { st: "bad", idx: "!", title: "VPN в офис выключен", sub: `Включите ${client} — Confluence, Jira и SVN без него недоступны` };
-  const idx = sn.score != null ? String(sn.score) : "—";
-  if (sn.badge === "weak") return { st: "warn", idx, title: `Медленный интернет: ${num(sn.internet?.mbps, 1)} Мбит/с`, sub: "VPN работает как обычно — тормозит сам канал" };
   const st = { green: "good", yellow: "warn", red: "bad" }[sn.color] || "idle";
-  const worst = (sn.parts || []).slice().sort((a, b) => a.value - b.value)[0];
-  let sub = st === "good" ? "Офис отвечает как обычно" : (worst ? cap(worst.detail) : "");
-  if (worldDown.length && st === "good") sub = `Офис работает, ${list(worldDown)} ${worldDown.length > 1 ? "недоступны" : "недоступен"}`;
-  const title = st === "good" ? "Можно работать" : st === "warn" ? "Работать можно, но медленно" : "Работать тяжело";
+  const idx = sn.score != null ? String(sn.score) : "!";
+  if (!r) return { st, idx, title: st === "good" ? "Можно работать" : "Работать тяжело", sub: sn.explain || "" };
+  const down = office().filter((t) => !t.ok && !(r.auth_failed || []).includes(t.name)).map((t) => t.name);
+  const world = (sn.targets || []).filter((t) => t.role === "world"), worldDown = world.filter((t) => !t.ok).map((t) => t.name);
+  let title, sub;
+  if (r.cause === "inet" && r.why === "lat") { title = "Интернет отвечает с задержкой"; sub = `${ms(r.inet_ms.value)} до интернета — VPN и офис медленные из‑за этого. VPN не виноват.`; }
+  else if (r.cause === "inet") { title = "Медленный интернет"; sub = `${mbps(r.inet.value)} — SVN упирается в него. VPN в порядке.`; }
+  else if (r.cause === "vpn" && r.why === "off") { title = "VPN выключен"; sub = `Включите ${clientName()} — Confluence, Jira и SVN без него недоступны.`; }
+  else if (r.cause === "vpn" && r.why === "lat") { title = "VPN медленный"; sub = `Задержка до офиса ${ms(r.vpn.value)} (норма до ${ms(th.vpn_good_ms)}). Переподключите ${clientName()}.`; }
+  else if (r.cause === "vpn" && r.why === "speed") { title = "SVN качает медленно"; sub = `${mbps(r.svn.value)} при интернете ${mbps(r.inet.value)} — скорость режет VPN. Переподключите ${clientName()}.`; }
+  else if (r.cause === "office" && r.why === "auth") { title = "Пароль AD не подошёл"; sub = `${list(r.auth_failed)} не приняли вход. Войдите заново.`; }
+  else if (r.cause === "office") { const bad = r.services.filter((x) => x.st !== "good").map((x) => x.name); title = `${list(bad)} ${bad.length > 1 ? "не отвечают" : "не отвечает"}`; sub = "Остальное работает."; }
+  else { title = "Можно работать"; sub = r.svn.value != null ? `SVN ${mbps(r.svn.value)} · VPN ${ms(r.vpn.value)}` : `VPN ${ms(r.vpn.value)}`; if (worldDown.length) sub = `Офис работает, ${list(worldDown)} — ${worldDown.length > 1 ? "не открываются" : "не открывается"}`; }
+  if (down.length && r.cause !== "office" && r.why !== "off") sub += ` ${list(down)} не отвечает.`;
   return { st, idx, title, sub };
 }
-const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
-const list = (a) => a.length <= 1 ? a.join("") : a.slice(0, -1).join(", ") + " и " + a[a.length - 1];
 
-// ---------- общие куски ----------
-function headBlock(v) {
-  return h("div", { class: `head ${v.st}` }, h("div", { class: "index", text: v.idx, "aria-label": `Оценка VPN ${v.idx}` }), h("div", {}, h("b", { text: v.title }), h("span", { text: v.sub })));
+const svcOf = (name) => R()?.services?.find((x) => x.name === name);
+function svcChip(t) {
+  const s = svcOf(t.name), st = S?.paused ? "idle" : s ? s.st : t.ok ? "good" : "bad";
+  return tip(h("span", {}, h("span", { class: `dot d-${st}` }), t.name), () => {
+    const s2 = svcOf(t.name);
+    return tipBox(h("div", { class: "row" }, h("span", { class: `dot d-${st}` }), h("span", { class: "big", text: `${t.name} — ${s2 ? s2.what : t.ok ? "отвечает" : "не отвечает"}` })),
+      kv([["задержка", t.reachable ? ms(t.latency) : "—"], t.mbps != null && t.role === "speed" ? ["скорость", mbps(t.mbps)] : null, t.role === "speed" ? ["комфортно", `от ${mbps(TH().svn_good_mbps)}`] : null,
+        ["вход", t.auth || "—"], ["маршрут", t.via_vpn == null ? "—" : t.via_vpn ? `через VPN${t.adapter ? " (" + t.adapter + ")" : ""}` : `напрямую${t.adapter ? " (" + t.adapter + ")" : ""}`]]),
+      t.error && !t.ok ? h("span", { class: "tm", text: t.error }) : null);
+  });
 }
-function notes() {
-  const out = [];
-  const sn = S?.snapshot;
-  if (!S?.login && (sn?.targets || []).some((t) => t.note)) {
-    const b = h("button", { type: "button", text: "Войти" }); b.addEventListener("click", () => toApp("open:conn"));
-    out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", b));
-  }
-  if (sn?.lite) out.push(h("div", { class: "note", text: `${cap(sn.lite)} — проверяю без скачивания` }));
-  return out;
+function worldChip(t) {
+  const st = S?.paused ? "idle" : t.ok ? "good" : t.reachable ? "warn" : "bad";
+  return tip(h("span", {}, h("span", { class: `dot d-${st}` }), t.name, t.via_vpn != null ? h("small", { text: t.via_vpn ? "VPN" : "напрямую" }) : null), () =>
+    tipBox(h("div", { class: "row" }, h("span", { class: `dot d-${st}` }), h("span", { class: "big", text: `${t.name} — ${t.ok ? "открывается" : "не открывается"}` })),
+      kv([["задержка", t.reachable ? ms(t.latency) : "—"], ["маршрут", t.via_vpn == null ? "—" : t.via_vpn ? "через VPN" : "напрямую, без VPN"], t.adapter ? ["адаптер", t.adapter] : null]),
+      !t.ok && t.error ? h("span", { class: "tm", text: t.error }) : t.http === 403 ? h("span", { class: "tm", text: "Отвечает проверкой Cloudflare (HTTP 403) — в браузере откроется." }) : null));
 }
-function normRows() {
-  const sn = S?.snapshot; if (!sn?.parts?.length) return null;
-  const b = sn.baseline || {};
-  const box = h("div", { class: "norms" });
-  for (const p of sn.parts) {
-    let val = "", cmp = "", frac = p.value, norm = null;
-    if (p.name === "Надбавка VPN" && sn.overhead != null) { val = `+${num(sn.overhead)} мс`; if (b.overhead_ms) { cmp = `обычно +${num(b.overhead_ms)} мс`; } frac = Math.min(1, sn.overhead / 400); norm = b.overhead_ms ? Math.min(1, b.overhead_ms / 400) : null; }
-    else if (p.name === "Доля канала" && sn.share != null) { val = `${num(sn.share * 100)}% канала`; if (b.share) cmp = `обычно ${num(b.share * 100)}%`; frac = Math.min(1, sn.share); norm = b.share ? Math.min(1, b.share) : null; }
-    else if (p.name === "Задержка" && sn.latency != null) { val = `${num(sn.latency)} мс`; if (b.latency_ms) cmp = `обычно ${num(b.latency_ms)} мс`; frac = Math.min(1, sn.latency / 500); norm = b.latency_ms ? Math.min(1, b.latency_ms / 500) : null; }
-    else if (p.name === "Скорость" && sn.speed != null) { val = `${num(sn.speed, 1)} Мбит/с`; if (b.speed_mbps) cmp = `обычно ${num(b.speed_mbps, 1)}`; frac = Math.min(1, sn.speed / 10); norm = b.speed_mbps ? Math.min(1, b.speed_mbps / 10) : null; }
-    else if (p.name === "Стабильность") { val = sn.stability != null ? `${num(sn.stability * 100)}%` : "—"; cmp = "проверок с ответом с момента включения VPN"; frac = sn.stability ?? 0; }
-    else continue;
-    const tr = h("div", { class: "track" }, h("i", { style: `width:${Math.max(3, frac * 100)}%` }));
-    if (norm != null) tr.append(h("em", { style: `left:calc(${norm * 100}% - 1px)` }));
-    const row = h("div", { class: `nr ${ST(p.value)}` }, h("span", { text: p.name }), h("span", { class: "val", text: val }), tr, cmp ? h("span", { class: "cmp", text: cmp }) : null);
-    tip(row, () => tipPart(p, val, cmp));
-    box.append(row);
-  }
-  return box;
+const office = () => (S?.snapshot?.targets || []).filter((t) => t.role === "light" || t.role === "speed");
+const worldT = () => (S?.snapshot?.targets || []).filter((t) => t.role === "world");
+
+function tipInet() {
+  const r = R(); if (!r) return null; const th = TH();
+  return tipBox(h("div", { class: "big", text: `Интернет без VPN: ${mbps(r.inet.value)}` }),
+    kv([["задержка до интернета", ms(r.inet_ms.value)], ["для SVN нужно", `от ${mbps(th.inet_good_mbps)}`]]), raw3(r.inet, (x) => num(x, 1)),
+    r.st_inet_lat !== "good" ? h("span", { text: "Задержка больше секунды — всё, что идёт через интернет, будет медленным." }) : null,
+    r.st_inet_speed !== "good" ? h("span", { text: `Медленнее ${mbps(th.inet_good_mbps)} — SVN быстрее не станет, даже с идеальным VPN.` }) : null);
+}
+function tipVpn() {
+  const r = R(); if (!r) return null;
+  if (r.vpn.value == null) return tipBox(h("div", { class: "big", text: "VPN не подключён" }), h("span", { class: "tm", text: `${clientFull()}: офис не отвечает через туннель.` }));
+  return tipBox(h("div", { class: "big", text: `VPN: средняя задержка ${ms(r.vpn.value)}` }),
+    kv([["норма", `до ${ms(TH().vpn_good_ms)}`], ["из них интернет", ms(r.inet_ms.value)], r.inet_ms.value != null ? ["добавляет VPN", ms(Math.max(0, r.vpn.value - r.inet_ms.value))] : null]),
+    spark(r.vpn.raw), raw3(r.vpn, ms), h("span", { class: "tm", text: clientFull() }));
+}
+function tipSvn() {
+  const r = R(); if (!r) return null; const th = TH();
+  if (r.svn.value == null) return tipBox(h("div", { class: "big", text: "SVN: скорость не измерена" }), h("span", { class: "tm", text: S?.snapshot?.lite ? `${S.snapshot.lite} — проверяю без скачивания` : "Нет свежего замера." }));
+  return tipBox(h("div", { class: "big", text: `SVN качает ${mbps(r.svn.value)}` }),
+    kv([["комфортно", `от ${mbps(th.svn_good_mbps)}`], ["интернет даёт", mbps(r.inet.value)], r.inet.value ? ["доходит до SVN", `${num((r.svn.value / r.inet.value) * 100)}%`] : null]),
+    spark(r.svn.raw), raw3(r.svn, (x) => num(x, 1)),
+    r.cause === "inet" ? h("span", { text: "Упирается в интернет: быстрее, чем он, не будет." }) : r.st_svn !== "good" ? h("span", { text: "Интернет в норме — скорость теряется в VPN." }) : null);
 }
 
 // ---------- виды ----------
-function viewRoute(v) {
-  const sn = S?.snapshot || {};
-  const t = sn.targets || [];
-  const office = t.filter((x) => x.role === "light" || x.role === "speed");
-  const world = t.filter((x) => x.role === "world");
-  const inetOk = sn.badge !== "offline" && sn.badge !== "captive";
-  const vpnOk = sn.badge !== "novpn" && sn.badge !== "offline";
-  const officeOk = office.filter((x) => x.role === "light").every((x) => x.reachable);
-  const ovhSt = (sn.parts || []).find((p) => p.name === "Надбавка VPN" || p.name === "Задержка");
-  const hop = (name, st, sub, val, small, fault, extra, tipFn) => {
-    const row = h("div", { class: `hop ${st}${fault ? " fault" : ""}` }, h("span", { class: "node", "aria-hidden": "true" }),
-      h("div", { class: "t" }, h("b", { text: name }), sub ? h("div", { text: sub }) : null, extra), h("div", { class: "v" }, val, small ? h("small", { text: small }) : null));
-    if (tipFn) tip(row, tipFn);
-    return row;
+function verdictBlock() {
+  const v = verdict();
+  return h("div", { class: "verdict" }, h("div", { class: `idx bg-${v.st}`, text: v.idx }), h("div", {}, h("h3", { text: v.title }), h("div", { class: "sub", text: v.sub })));
+}
+const P = (st) => (S?.paused || !R() ? "idle" : st);
+function viewRoute() {
+  const r = R(), sn = S?.snapshot;
+  const hop = (key, st, name, desc, val, small, tipFn, tag) => {
+    const cause = r?.cause === key;
+    const n = h("div", { class: `hop${cause ? " cause" : ""}`, style: `--rail: var(--${st === "good" || st === "idle" ? "line" : st})` },
+      h("span", { class: `pin c-${st}` }),
+      h("div", { style: "min-width:0" }, h("div", { class: "nm" }, name, cause ? h("span", { class: `tag bg-${st}`, text: "причина" }) : tag ? h("span", { class: "tag bg-idle", text: tag }) : null), desc),
+      h("div", { class: "v" }, val, small ? h("small", { text: small }) : null));
+    return tip(n, tipFn);
   };
-  const chips = (arr, world) => {
-    const c = h("div", { class: "chips" });
-    for (const x of arr) {
-      const st = x.ok ? "good" : x.reachable ? "warn" : "bad";
-      const ch = h("span", { class: `chip ${st}` }, h("span", { class: "dot" }), x.name, world && x.via_vpn != null ? h("i", { text: x.via_vpn ? "VPN" : "напрямую" }) : null);
-      tip(ch, () => tipTarget(x));
-      c.append(ch);
-    }
-    return c;
-  };
-  const inetSt = !inetOk ? "bad" : sn.badge === "weak" ? "warn" : "good";
-  const vpnSt = !inetOk ? "idle" : !vpnOk ? "bad" : ST(ovhSt?.value);
-  const offSt = !inetOk || !vpnOk ? "idle" : officeOk ? "good" : "warn";
-  const worldOk = world.filter((x) => x.ok).length;
-  const worldSt = !inetOk || !world.length ? "idle" : worldOk === world.length ? "good" : worldOk ? "warn" : "bad";
-  const route = h("div", { class: "route" },
-    hop("Интернет", inetSt, sn.internet ? "без VPN" : "", sn.internet?.mbps != null ? `${num(sn.internet.mbps, 1)} Мбит/с` : inetOk ? "есть" : "нет", sn.internet_latency != null ? `${num(sn.internet_latency)} мс` : "", inetSt === "bad", null, () => tipChannel()),
-    hop("VPN", vpnSt, sn.client ? `${sn.client.name}${sn.client.profile ? " · " + sn.client.profile : ""}` : (vpnOk ? "клиент не определён" : "выключен"),
-      sn.overhead != null ? `+${num(sn.overhead)} мс` : "—", sn.share != null ? `${num(sn.share * 100)}% канала` : "", vpnSt === "bad" || vpnSt === "warn", null, () => tipTunnel()),
-    hop("Офис", offSt, "", "", "", offSt === "warn", chips(office, false)),
-    world.length ? hop("Мир", worldSt, "", "", "", worldSt === "bad", chips(world, true)) : null);
-  return [headBlock(v), route, normRows(), ...notes()];
+  const latBad = r && r.st_inet_lat !== "good";
+  return [verdictBlock(), ...notes(), h("div", { class: "route" },
+    hop("inet", P(r?.st_inet), "Интернет", h("div", { class: "ds", text: latBad ? `задержка ${ms(r.inet_ms.value)}` : "без VPN" }), r ? mbps(r.inet.value) : "—", r ? (latBad ? "медленно отвечает" : `задержка ${ms(r.inet_ms.value)}`) : "", tipInet),
+    hop("vpn", P(r?.st_vpn), "VPN", h("div", { class: "ds", text: clientFull(), title: clientFull() }), r?.vpn.value == null ? "нет" : ms(r.vpn.value), r?.vpn.value == null ? "не подключён" : `норма до ${ms(TH().vpn_good_ms)}`, tipVpn, r?.because_vpn),
+    hop("office", P(r?.st_office), "Офис", h("div", { class: "svc" }, ...office().map(svcChip)), r?.svn.value == null ? "—" : mbps(r.svn.value), r?.svn.value == null ? "" : `SVN · комфортно от ${num(TH().svn_good_mbps)}`, tipSvn, r?.because_office),
+    worldT().length ? hop("world", P(worldT().every((t) => t.ok) ? "good" : worldT().some((t) => t.ok) ? "warn" : "bad"), "Мир", h("div", { class: "svc" }, ...worldT().map(worldChip)), "", "", null) : null)];
 }
-function viewGauge(v) {
-  const sn = S?.snapshot || {};
-  const g = sv("svg", { width: 128, height: 88, viewBox: "0 0 128 88", role: "img", "aria-label": `Оценка ${v.idx}` });
-  const arc = (a, b, r) => { const p = (f) => [64 + r * Math.cos(Math.PI * (1 - f)), 74 - r * Math.sin(Math.PI * (1 - f))]; const [x0, y0] = p(a), [x1, y1] = p(b); return `M${x0.toFixed(1)} ${y0.toFixed(1)} A${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`; };
-  g.append(sv("path", { d: arc(0, 1, 54), fill: "none", stroke: "var(--bg-2)", "stroke-width": 10, "stroke-linecap": "round" }));
-  g.append(sv("path", { d: arc(0.7, 1, 54), fill: "none", stroke: "var(--good-bg)", "stroke-width": 10 }));
-  if (sn.score != null) g.append(sv("path", { d: arc(0, sn.score / 100, 54), fill: "none", stroke: `var(--${v.st})`, "stroke-width": 10, "stroke-linecap": "round" }));
-  const tx = sv("text", { x: 64, y: 72, "text-anchor": "middle", "font-size": v.idx.length > 2 ? 16 : 28, "font-weight": 700, fill: "var(--ink)" }); tx.textContent = v.idx; g.append(tx);
-  return [h("div", { class: "gauge-top" }, g, h("div", { class: "head" }, h("div", {}, h("b", { text: v.title }), h("span", { text: v.sub })))), normRows(), ...notes()];
+function viewDash() {
+  const r = R(), th = TH();
+  const gauge = (v, max, mark, st, norm) => h("div", { class: "gauge" }, h("i", { class: `d-${st}`, style: `width:${Math.min(100, ((v ?? 0) / max) * 100)}%` }), h("b", { style: `left:${(mark / max) * 100}%` }), norm != null ? h("b", { class: "norm", style: `left:${Math.min(99, (norm / max) * 100)}%` }) : null);
+  const tile = (k, st, val, unit, g, nb, tipFn) => tip(h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${st}` }), k), h("div", { class: "val" }, val, unit ? h("small", { text: ` ${unit}` }) : null), g, h("div", { class: "nb", text: nb })), tipFn);
+  const svn = r?.svn.value, vpn = r?.vpn.value;
+  return [verdictBlock(), ...notes(), h("div", { class: "tiles" },
+    tile("Скорость SVN", P(r?.st_svn), svn == null ? "—" : num(svn, 1), "Мбит/с", gauge(svn, Math.max(16, th.svn_good_mbps * 2), th.svn_good_mbps, P(r?.st_svn)), r?.because_office ? `${r.because_office} · норма от ${num(th.svn_good_mbps)}` : `норма от ${num(th.svn_good_mbps)}`, tipSvn),
+    tile("Задержка VPN", P(r?.st_vpn), vpn == null ? "нет" : vpn >= 1000 ? num(vpn / 1000, 1) : num(vpn), vpn == null ? "" : vpn >= 1000 ? "с" : "мс", gauge(vpn == null ? 0 : Math.min(vpn, th.vpn_bad_ms * 1.15), th.vpn_bad_ms * 1.15, th.vpn_good_ms, P(r?.st_vpn)), vpn == null ? "не подключён" : r?.because_vpn ? `${r.because_vpn} · норма до ${ms(th.vpn_good_ms)}` : `норма до ${ms(th.vpn_good_ms)}`, tipVpn),
+    tile("Интернет", P(r?.st_inet), r?.inet.value == null ? "—" : num(r.inet.value, r.inet.value < 10 ? 1 : 0), "Мбит/с", null, `задержка ${ms(r?.inet_ms.value)}${r && r.st_inet_lat !== "good" ? " — медленно" : ""}`, tipInet),
+    h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${P(r?.st_office)}` }), "Сервисы"), h("div", { class: "svc" }, ...office().map(svcChip), ...worldT().map(worldChip)))
+  )];
 }
-function viewStrip(v) {
-  // последний час по 2 минуты из /api/history?range=hour
-  const now = Date.now(), step = 120000, start = now - 30 * step;
-  const lanes = [["VPN", (r) => r.b === "novpn" ? "bad" : r.b === "offline" || r.b === "captive" ? "idle" : "good"],
-    ["Задержка", (r) => r.ovh != null ? (r.ovh <= 60 ? "good" : r.ovh <= 200 ? "warn" : "bad") : r.lat != null ? (r.lat <= 150 ? "good" : r.lat <= 500 ? "warn" : "bad") : "idle"],
-    ["Канал", (r) => r.share != null ? (r.share >= 0.6 ? "good" : r.share >= 0.2 ? "warn" : "bad") : r.spd != null ? (r.spd >= 3 ? "good" : r.spd >= 1 ? "warn" : "bad") : "idle"],
-    ["Интернет", (r) => r.b === "offline" ? "bad" : r.b === "weak" ? "warn" : "good"]];
-  const rank = { bad: 3, warn: 2, good: 1, idle: 0 };
-  const box = h("div", { class: "lanes" });
-  for (const [nm, f] of lanes) {
-    const cells = h("div", { class: "cells", role: "img", "aria-label": `${nm} за последний час` });
-    for (let i = 0; i < 30; i++) {
-      const rs = H.filter((r) => r.t >= start + i * step && r.t < start + (i + 1) * step);
-      const st = rs.length ? rs.map(f).reduce((a, b) => rank[b] > rank[a] ? b : a, "idle") : "idle";
-      const cell = h("i", { class: st }); cells.append(cell);
-      if (rs.length) tip(cell, () => h("div", { class: "tip" }, h("span", { class: "mut", text: `${hhmm(start + i * step)}–${hhmm(start + (i + 1) * step)}` }), h("span", { class: "big", text: `${nm}: ${({ good: "норма", warn: "хуже обычного", bad: "плохо", idle: "нет данных" })[st]}` })));
-    }
-    const last = H[H.length - 1];
-    box.append(h("div", { class: "lane" }, h("span", { class: "nm", text: nm }), cells, h("span", { class: "now", text: last ? ({ good: "норма", warn: "хуже", bad: "плохо", idle: "—" })[f(last)] : "—" })));
-  }
-  return [headBlock(v), box, h("div", { class: "axis" }, h("span", { text: "час назад" }), h("span", { text: "сейчас" })), ...notes()];
+function viewStrip() {
+  const r = R(), th = TH(), recs = H.slice(-20);
+  const pad = (cells) => [...Array(Math.max(0, 20 - cells.length)).fill("idle"), ...cells];
+  let lastInet = null;
+  const inetCells = recs.map((x) => { if (x.inet != null) lastInet = x.inet; return lastInet == null ? "idle" : lastInet >= th.inet_good_mbps ? "good" : lastInet >= th.inet_bad_mbps ? "warn" : "bad"; });
+  const vpnCells = recs.map((x) => x.b === "novpn" ? "bad" : x.lat == null ? "idle" : x.lat <= th.vpn_good_ms ? "good" : x.lat <= th.vpn_bad_ms ? "warn" : "bad");
+  const svnCells = recs.map((x) => x.b === "novpn" ? "bad" : x.spd == null ? "idle" : x.spd >= th.svn_good_mbps ? "good" : x.spd >= th.svn_bad_mbps ? "warn" : "bad");
+  const strip = (name, cells, val, tipFn) => tip(h("div", { class: "strip" }, h("span", { class: "mut", text: name }), h("div", { class: "cells" }, ...pad(cells).map((c) => h("i", { class: `d-${S?.paused ? "idle" : c}` }))), h("span", { class: "n", text: val })), tipFn);
+  return [verdictBlock(), ...notes(), h("div", { class: "strips" },
+    strip("Интернет", inetCells, r ? mbps(r.inet.value) : "—", tipInet),
+    strip("VPN", vpnCells, r?.vpn.value == null ? "нет" : ms(r.vpn.value), tipVpn),
+    strip("SVN", svnCells, r?.svn.value == null ? "—" : mbps(r.svn.value), tipSvn),
+    h("div", { class: "axis" }, h("span", { text: "час назад" }), h("span", { text: "сейчас" })))];
 }
-function viewPanel(v) {
-  const sn = S?.snapshot || {};
-  const world = (sn.targets || []).filter((t) => t.role === "world");
-  const tile = (k, st, val, sub, tipFn) => { const t = h("div", { class: `tile ${st}` }, h("span", { class: "k" }, h("span", { class: "dot" }), k), h("span", { class: "v", text: val }), h("span", { class: "s", text: sub })); if (tipFn) tip(t, tipFn); return t; };
-  const part = (n) => (sn.parts || []).find((p) => p.name === n);
-  return [headBlock(v), h("div", { class: "tiles" },
-    tile("VPN", sn.badge === "novpn" ? "bad" : sn.client ? "good" : "idle", sn.client ? sn.client.name : sn.badge === "novpn" ? "Выключен" : "—", sn.client?.profile || "", () => tipTunnel()),
-    tile("Надбавка VPN", ST(part("Надбавка VPN")?.value), sn.overhead != null ? `+${num(sn.overhead)} мс` : "—", sn.baseline?.overhead_ms ? `обычно +${num(sn.baseline.overhead_ms)}` : ""),
-    tile("Доля канала", ST(part("Доля канала")?.value), sn.share != null ? `${num(sn.share * 100)}%` : "—", sn.internet?.mbps != null ? `канал ${num(sn.internet.mbps, 1)} Мбит/с` : "", () => tipChannel()),
-    tile("Мир", world.length ? (world.every((x) => x.ok) ? "good" : world.some((x) => x.ok) ? "warn" : "bad") : "idle", world.length ? `${world.filter((x) => x.ok).length} из ${world.length}` : "—", world.filter((x) => !x.ok).map((x) => x.name).join(", ") || "ChatGPT, Claude, Luma")), ...notes()];
+function notes() {
+  const out = [], sn = S?.snapshot;
+  if (!S?.login && (sn?.targets || []).some((t) => t.note)) out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", h("button", { type: "button", text: "Войти", onclick: () => toApp("open:conn") })));
+  if (sn?.lite) out.push(h("div", { class: "note", text: `${sn.lite[0].toUpperCase()}${sn.lite.slice(1)} — проверяю без скачивания` }));
+  return out;
 }
 
-// ---------- подсказки ----------
-const tips = [];
-function tip(el, contentFn) { const t = tippyOr(el, { content: "", theme: "vpn", animation: "shift-away", delay: [150, 0], maxWidth: 280, appendTo: document.body, onShow(i) { i.setContent(contentFn()); } }); if (t) tips.push(t); }
-function spark(key, fmt) {
-  const pts = H.filter((r) => r[key] != null).slice(-30); if (pts.length < 2) return null;
-  const vs = pts.map((r) => r[key]); const mx = Math.max(...vs) * 1.1 || 1;
-  const w = 200, ht = 34; const d = pts.map((r, i) => `${i ? "L" : "M"}${(i / (pts.length - 1) * w).toFixed(1)} ${(ht - (r[key] / mx) * ht).toFixed(1)}`).join("");
-  const s = sv("svg", { width: w, height: ht + 4, viewBox: `0 -2 ${w} ${ht + 4}` }); s.append(sv("path", { d, fill: "none", stroke: "var(--tip-ink)", "stroke-width": 1.6, "stroke-linejoin": "round" }));
-  return h("div", {}, s, h("span", { class: "mut", text: `за час: ${fmt(Math.min(...vs))}–${fmt(Math.max(...vs))}` }));
+// ---------- шапка и низ ----------
+const THEMES = [["", "как в системе", "auto"], ["light", "светлая", "sun"], ["dark", "тёмная", "moon"]];
+function applyTheme() { const t = S?.prefs?.theme || ""; if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); }
+function toast(text, keep) { const t = $("#toast"); t.textContent = text; fit(); clearTimeout(toast.t); if (!keep) toast.t = setTimeout(() => { t.textContent = ""; fit(); }, 3500); }
+async function checkUpdates() {
+  toast("Проверяю обновления…", true);
+  try { const r = await api("/api/update", { method: "POST", body: "{}" });
+    if (r.error) toast(`Не проверить: ${r.error}`);
+    else if (r.available) toast(`Доступна ${r.latest} — поставится сама в ближайшие минуты`);
+    else toast(`У вас последняя версия ${r.current}${r.channel === "beta" ? " (бета)" : ""}`);
+  } catch { toast("Приложение не ответило"); }
 }
-function tipPart(p, val, cmp) { return h("div", { class: "tip" }, h("div", { class: "row" }, h("span", { class: `dot ${ST(p.value)}` }), h("span", { class: "big", text: `${p.name}: ${val}` })), h("span", { class: "mut", text: cap(p.detail) }), cmp ? h("span", { class: "mut", text: cmp }) : null); }
-function tipTunnel() {
-  const sn = S?.snapshot || {};
-  return h("div", { class: "tip" }, h("span", { class: "big", text: sn.client ? `${sn.client.name}${sn.client.profile ? " · " + sn.client.profile : ""}` : "VPN" }),
-    h("span", { class: "mut", text: `Надбавка — сколько VPN добавляет к задержке: ${sn.overhead != null ? "+" + num(sn.overhead) + " мс" : "нет данных"}` }),
-    spark("ovh", (x) => `+${num(x)} мс`),
-    h("span", { class: "mut", text: `Доля канала — сколько скорости интернета доходит до офиса: ${sn.share != null ? num(sn.share * 100) + "%" : "нет свежего замера"}` }),
-    sn.client?.adapter ? h("span", { class: "mut", text: `Адаптер: ${sn.client.adapter}` }) : null);
-}
-function tipChannel() {
-  const sn = S?.snapshot || {};
-  return h("div", { class: "tip" }, h("span", { class: "big", text: `Интернет: ${sn.internet?.mbps != null ? num(sn.internet.mbps, 1) + " Мбит/с" : "скорость не мерили"}` }),
-    h("span", { class: "mut", text: "Потолок для VPN: быстрее своего интернета VPN не будет" }), spark("inet", (x) => `${num(x, 1)} Мбит/с`),
-    sn.internet_latency != null ? h("span", { class: "mut", text: `Задержка до интернета: ${num(sn.internet_latency)} мс` }) : null);
-}
-function tipTarget(x) {
-  const st = x.ok ? "good" : x.reachable ? "warn" : "bad";
-  return h("div", { class: "tip" }, h("div", { class: "row" }, h("span", { class: `dot ${st}` }), h("span", { class: "big", text: x.name })),
-    h("span", { class: "mut", text: x.ok ? [x.latency != null ? `${num(x.latency)} мс` : "", x.mbps != null && x.role !== "world" ? `${num(x.mbps, 1)} Мбит/с` : ""].filter(Boolean).join(" · ") || "отвечает" : (x.error || "не отвечает") }),
-    x.via_vpn != null ? h("span", { class: "mut", text: x.via_vpn ? `через VPN${x.adapter ? " (" + x.adapter + ")" : ""}` : `напрямую${x.adapter ? " (" + x.adapter + ")" : ""}` }) : null);
-}
-
-// ---------- меню «Пауза» и «⋯» ----------
-function menuButton(text, fn, right) { const b = h("button", { type: "button" }, h("span", { text }), right ? h("span", { class: "mut", text: right }) : null); b.addEventListener("click", fn); return b; }
-let popFor = null;
-function closePop() { popFor = null; $("#pop").hidden = true; $("#root").hidden = false; $("#pop").replaceChildren(); for (const b of document.querySelectorAll(".foot [aria-expanded]")) b.setAttribute("aria-expanded", "false"); fit(); }
-function openPop(anchor, build) {
-  if (popFor === anchor) { closePop(); return; }
-  closePop(); popFor = anchor; anchor.setAttribute("aria-expanded", "true");
-  const m = h("div", { class: "menu" }); build(m); $("#pop").replaceChildren(m); $("#pop").hidden = false; $("#root").hidden = true; fit();
-  m.querySelector("button")?.focus();
+async function checkNow() { toast("Проверяю VPN…"); await api("/api/check", { method: "POST", body: "{}" }); setTimeout(refresh, 400); }
+function header() {
+  const sn = S?.snapshot, beta = S?.prefs?.channel === "beta" || /-/.test(S?.version || "");
+  const ver = tip(h("span", { class: "lnk", role: "button", tabindex: "0", text: `v${(S?.version || "").replace(/-.*/, "")}`, onclick: checkUpdates, onkeydown: (e) => e.key === "Enter" && checkUpdates() }), () =>
+    tipBox(h("div", { class: "big", text: `Версия ${S?.version}${beta ? ", канал «Бета»" : ""}` }), kv([["обновлено", day(S?.updated_ms)], S?.latest && S.latest !== S.version ? ["доступна", S.latest] : null]), h("span", { class: "tm", text: "Нажмите — проверить обновления" })));
+  const when = sn ? tip(h("span", { class: "lnk", role: "button", tabindex: "0", text: S?.checking ? "проверяю…" : hhmm(sn.at), onclick: checkNow, onkeydown: (e) => e.key === "Enter" && checkNow() }), () =>
+    tipBox(h("div", { class: "big", text: `Проверено в ${hms(sn.at)}` }), kv([["вид", sn.full ? "полная, со скачиванием" : sn.lite ? "без скачивания" : "лёгкая"], sn.took_ms ? ["заняла", `${num(sn.took_ms / 1000, 1)} с`] : null]), h("span", { class: "tm", text: "Нажмите — проверить сейчас" }))) : null;
+  const ti = Math.max(0, THEMES.findIndex(([k]) => k === (S?.prefs?.theme || "")));
+  const themeBtn = h("button", { class: "ib", type: "button", "aria-label": `Тема: ${THEMES[ti][1]}`, title: `Тема: ${THEMES[ti][1]} — нажмите, чтобы сменить`, onclick: async () => { const next = THEMES[(ti + 1) % THEMES.length][0]; S.prefs.theme = next; applyTheme(); render(); await api("/api/prefs", { method: "POST", body: JSON.stringify({ theme: next }) }); } }, icon(THEMES[ti][2]));
+  $("#hd").replaceChildren(...[h("b", { text: "Domini VPN" }), S?.city ? h("span", { text: `· ${S.city} ·` }) : h("span", { text: "·" }), ver, beta ? h("span", { class: "beta", text: "бета" }) : null, h("span", { class: "sp" }), when, themeBtn].filter(Boolean));
 }
 function pauseItems(m) {
   const set = async (body) => { await api("/api/pause", { method: "POST", body: JSON.stringify(body) }); closePop(); refresh(); };
-  if (S?.paused) m.append(menuButton("Продолжить проверки", () => set({ resume: true })));
-  else m.append(h("div", { class: "lbl", text: "Не проверять" }), menuButton("30 минут", () => set({ minutes: 30 })), menuButton("1 час", () => set({ minutes: 60 })), menuButton("До конца дня", () => set({ minutes: 0 })));
+  if (S?.paused) m.append(h("button", { type: "button", onclick: () => set({ resume: true }) }, h("span", { text: "Продолжить проверки" })));
+  else m.append(h("div", { class: "lbl", text: "Не проверять" }), ...[["30 минут", 30], ["1 час", 60], ["До конца дня", 0]].map(([n, v]) => h("button", { type: "button", onclick: () => set({ minutes: v }) }, h("span", { text: n }))));
 }
-$("#pause").addEventListener("click", (e) => openPop(e.currentTarget, pauseItems));
-const VIEW_NAMES = { route: "Маршрут", gauge: "Прибор", strip: "Лента часа", panel: "Панель" };
-function moreItems(m) {
-    m.append(h("div", { class: "lbl", text: "Вид меню" }));
-    for (const [k, n] of Object.entries(VIEW_NAMES)) m.append(menuButton(n, async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: k }) }); closePop(); refresh(); }, view === k ? "✓" : ""));
-    const res = h("div", { class: "res" });
-    m.append(h("div", { class: "sep" }), menuButton("Проверить обновления", async () => {
-      res.textContent = "Проверяю…";
-      const r = await api("/api/update", { method: "POST", body: "{}" });
-      if (r.error) res.textContent = "Не удалось проверить — нет связи с GitHub";
-      else if (r.available) { res.replaceChildren(`Доступна ${r.latest}. `); const b = h("button", { type: "button", text: "Установить" }); b.addEventListener("click", () => api("/api/update", { method: "POST", body: JSON.stringify({ install: true }) })); res.append(b); }
-      else res.textContent = `У вас последняя версия ${r.current}${r.channel === "beta" ? " (бета)" : ""}`;
-    }), res);
-    m.append(menuButton("Подключение и вход", () => toApp("open:conn")), h("div", { class: "sep" }), menuButton("Выйти из VPN Monitor", () => toApp("quit")));
+function footer() {
+  const r = R(), login = S?.login;
+  const ust = !login ? "warn" : r ? r.st_user : "good";
+  const user = tip(h("button", { class: "user", type: "button", onclick: () => toApp("open:conn") }, h("span", { class: `dot d-${ust}` }), h("span", { text: login || "Войти" })), () =>
+    tipBox(h("div", { class: "big", text: login ? `Учётная запись AD: ${login}` : "Вход не выполнен" }),
+      ...office().map((t) => { const bad = (r?.auth_failed || []).includes(t.name); return h("div", { class: "row" }, h("span", { class: `dot d-${bad ? "bad" : t.ok ? "good" : "idle"}` }), h("span", { text: `${t.name} — ${bad ? "вход не принят" : t.ok ? "вход принят" : "не отвечает"}` })); }),
+      h("span", { class: "tm", text: "Нажмите — посмотреть расширенный статус" })));
+  const ib = (name, label, on, fn) => tip(h("button", { class: `ib${on ? " on" : ""}`, type: "button", "aria-label": label, onclick: fn }, icon(name)), () => tipBox(h("span", { text: label })));
+  const pauseLabel = S?.paused ? (() => { const left = Math.max(0, S.prefs.pause_until_ms - Date.now()); const endOfDay = new Date(S.prefs.pause_until_ms).getHours() === 23 && new Date(S.prefs.pause_until_ms).getMinutes() === 59; return endOfDay ? "Пауза до конца дня — до 23:59. Нажмите — продолжить" : `Пауза: ещё ${Math.ceil(left / 60000)} мин, до ${hhmm(S.prefs.pause_until_ms)}. Нажмите — продолжить`; })() : "Пауза проверок: 30 минут, час или до конца дня";
+  const pauseBtn = ib(S?.paused ? "play" : "pause", pauseLabel, !!S?.paused, (e) => S?.paused ? api("/api/pause", { method: "POST", body: JSON.stringify({ resume: true }) }).then(refresh) : openPop(e.currentTarget, pauseItems));
+  $("#ft").replaceChildren(user, h("span", { class: "sp" }),
+    ib("refresh", S?.checking ? "Проверяю…" : "Проверить сейчас", false, checkNow), pauseBtn,
+    ib("history", "История за сутки и неделю", false, () => toApp("open:history")),
+    ib("gear", "Настройки: вид меню, уведомления, обновления, вход", false, () => toApp("open:conn")));
 }
-$("#more").addEventListener("click", (e) => openPop(e.currentTarget, moreItems));
+
+// ---------- панель «Пауза» вместо содержимого ----------
+let popFor = null;
+function closePop() { popFor = null; $("#pop").hidden = true; $("#pop").replaceChildren(); $("#root").hidden = false; fit(); }
+function openPop(anchor, build) {
+  if (popFor === anchor) { closePop(); return; }
+  closePop(); popFor = anchor;
+  const m = h("div", { class: "menu" }); build(m); $("#pop").replaceChildren(m); $("#pop").hidden = false; $("#root").hidden = true; fit();
+  m.querySelector("button")?.focus();
+}
 
 // ---------- отрисовка ----------
 function render() {
   tips.splice(0).forEach((t) => t.destroy());
+  applyTheme();
   view = S?.prefs?.view || "route";
-  const v = verdict();
-  const parts = ({ route: viewRoute, gauge: viewGauge, strip: viewStrip, panel: viewPanel }[view] || viewRoute)(v);
-  $("#root").replaceChildren(...parts.filter(Boolean));
-  const btn = $("#check"); btn.disabled = !!S?.checking; btn.textContent = S?.checking ? "Проверяю…" : "Проверить";
-  $("#pause").textContent = S?.paused ? "Продолжить" : "Пауза";
-  $("#when").textContent = S?.snapshot ? hhmm(S.snapshot.at) : "";
+  if (view === "gauge" || view === "panel") view = "dash";
+  header();
+  $("#root").replaceChildren(...({ route: viewRoute, dash: viewDash, strip: viewStrip }[view] || viewRoute)().filter(Boolean));
+  footer();
+  if (popFor) $("#root").hidden = true;
   fit();
 }
 // Высота окна = высота содержимого (body без высоты), а не scrollHeight: тот не меньше окна, и окно только росло.
@@ -397,10 +419,7 @@ async function refresh() {
   }
   timer = setTimeout(refresh, S?.checking ? 1000 : 5000);
 }
-$("#check").addEventListener("click", async () => { await api("/api/check", { method: "POST", body: "{}" }); setTimeout(refresh, 300); });
-$("#history").addEventListener("click", () => toApp("open:history"));
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (popFor) closePop(); else toApp("hide"); } });
-tippyOr($("#when"), { content: "Время последней проверки", theme: "vpn", delay: [300, 0] });
 window.vpnmon = { shown: () => { closePop(); lastH = 0; refresh(); } };
 refresh();
 </script>

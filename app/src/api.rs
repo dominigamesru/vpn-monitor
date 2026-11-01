@@ -65,6 +65,12 @@ fn ctype(v: &str) -> Header {
     Header::from_bytes(&b"Content-Type"[..], v.as_bytes()).expect("валидный заголовок")
 }
 
+/// Страницы и библиотеки встроены в exe: кеш WebView2 и браузера не должен показывать прошлую версию после
+/// обновления (папка данных WebView2 одна на все версии).
+fn no_store() -> Header {
+    Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).expect("заголовок")
+}
+
 fn json_resp(v: &Value, code: u16) -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_string(v.to_string())
         .with_status_code(code)
@@ -135,20 +141,39 @@ fn handle(
         info!("api", "{method} {path}");
     }
     let resp = match (&method, path) {
-        (Method::Get, "/") | (Method::Get, "/index.html") => {
-            Response::from_string(PAGE).with_header(ctype("text/html; charset=utf-8"))
-        }
-        (Method::Get, "/flyout") => {
-            Response::from_string(FLYOUT).with_header(ctype("text/html; charset=utf-8"))
-        }
-        (Method::Get, "/vendor/popper.min.js") => {
-            Response::from_string(POPPER).with_header(ctype("text/javascript; charset=utf-8"))
-        }
-        (Method::Get, "/vendor/tippy.min.js") => {
-            Response::from_string(TIPPY).with_header(ctype("text/javascript; charset=utf-8"))
-        }
-        (Method::Get, "/vendor/tippy.css") => {
-            Response::from_string(TIPPY_CSS).with_header(ctype("text/css; charset=utf-8"))
+        (Method::Get, "/") | (Method::Get, "/index.html") => Response::from_string(PAGE)
+            .with_header(ctype("text/html; charset=utf-8"))
+            .with_header(no_store()),
+        (Method::Get, "/flyout") => Response::from_string(FLYOUT)
+            .with_header(ctype("text/html; charset=utf-8"))
+            .with_header(no_store()),
+        (Method::Get, "/vendor/popper.min.js") => Response::from_string(POPPER)
+            .with_header(ctype("text/javascript; charset=utf-8"))
+            .with_header(no_store()),
+        (Method::Get, "/vendor/tippy.min.js") => Response::from_string(TIPPY)
+            .with_header(ctype("text/javascript; charset=utf-8"))
+            .with_header(no_store()),
+        (Method::Get, "/vendor/tippy.css") => Response::from_string(TIPPY_CSS)
+            .with_header(ctype("text/css; charset=utf-8"))
+            .with_header(no_store()),
+        (Method::Get, "/favicon.ico") => {
+            // тот же значок, что в трее, с текущим статусом
+            let sh = lock(shared);
+            let (badge, color) = sh
+                .snapshot
+                .as_ref()
+                .map(|s| (s.verdict.badge, s.verdict.color))
+                .unwrap_or((
+                    vpn_monitor::score::Badge::Unknown,
+                    vpn_monitor::score::Color::Gray,
+                ));
+            let ico =
+                vpn_monitor::icon::to_ico(&vpn_monitor::icon::render(badge, color, sh.checking));
+            Response::from_data(ico)
+                .with_header(ctype("image/x-icon"))
+                .with_header(
+                    Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).expect("заголовок"),
+                )
         }
         (Method::Get, "/api/help") => {
             Response::from_string(HELP.replace("{port}", &port.to_string()))
@@ -242,6 +267,12 @@ fn handle(
                 .filter(|x| vpn_monitor::prefs::VIEWS.contains(x))
             {
                 sh.prefs.view = view.into();
+            }
+            if let Some(t) = v["theme"]
+                .as_str()
+                .filter(|x| vpn_monitor::prefs::THEMES.contains(x))
+            {
+                sh.prefs.theme = t.into();
             }
             if let Some(ch) = v["channel"]
                 .as_str()
@@ -517,6 +548,7 @@ fn state(shared: &SharedRef) -> Value {
             "client": sn.client,
             "waking": sn.waking, "lite": sn.lite,
             "internet_latency": sn.internet_latency_ms, "overhead": sn.overhead_ms, "share": sn.share,
+            "route": sn.route, "full": sn.full, "took_ms": sn.took_ms,
             "targets": sn.targets.iter().map(probe_json).collect::<Vec<_>>(),
             "internet": sn.internet.as_ref().map(probe_json),
         })
@@ -542,6 +574,12 @@ fn state(shared: &SharedRef) -> Value {
         "prefs": sh.prefs,
         "paused": sh.prefs.paused(vpn_monitor::metrics::now_ms()),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
+        "city": sh.city,
+        // когда поставлена эта версия: время файла exe (скачан при обновлении)
+        "updated_ms": std::env::current_exe().ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok())
+            .map(ms),
     })
 }
 

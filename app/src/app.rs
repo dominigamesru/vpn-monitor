@@ -48,6 +48,9 @@ pub struct Shared {
     pub diag_running: bool,
     /// Выбор сотрудника: вид меню, канал, пауза, уведомления (user.json; до 0.5.3 — prefs.json), v0.5.
     pub prefs: vpn_monitor::prefs::Prefs,
+    /// Город, где нас видит интернет (по внешнему адресу), v0.6; обновляется раз в 6 часов.
+    pub city: Option<String>,
+    pub city_at: Option<std::time::Instant>,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -168,6 +171,8 @@ pub fn run(replace: bool, first_run: bool) {
         settings: settings.clone(),
         dir: dir.clone(),
         snapshot: None,
+        city: None,
+        city_at: None,
         checking: false,
         latest: None,
         update_error: None,
@@ -492,6 +497,21 @@ fn spawn_checker(
                     error!("metrics", "не записать метрики: {e}");
                 }
                 sh.snapshot = Some(snap.clone());
+                // город — раз в 6 часов и только когда есть интернет; отдельным потоком, чтобы не держать проверку
+                let due = sh
+                    .city_at
+                    .is_none_or(|t| t.elapsed() > Duration::from_secs(6 * 3600));
+                if due && snap.route.is_some() {
+                    sh.city_at = Some(std::time::Instant::now());
+                    let sh2 = shared.clone();
+                    std::thread::spawn(move || match vpn_monitor::net::city() {
+                        Ok(c) => {
+                            info!("geo", "город: {c}");
+                            lock(&sh2).city = Some(c);
+                        }
+                        Err(e) => warn!("geo", "город не определён: {e}"),
+                    });
+                }
             }
             // R3.4: зелёный — раз в 3 минуты, иначе — раз в минуту
             wait = Duration::from_secs(if snap.verdict.color == Color::Green {
@@ -840,14 +860,40 @@ fn refresh(u: &mut Ui) {
     u.updated
         .set_text(format!("Обновлено: {}", log::hhmm(s.at)));
 
-    let mut tip = format!("Domini VPN — {status}");
-    if let Some(l) = v.latency {
-        tip += &format!("\nЗадержка {l:.0} мс");
-    }
-    if let Some(sp) = v.speed {
-        tip += &format!(", скорость {sp:.1} Мбит/с");
-    }
-    let tip: String = tip.chars().take(120).collect();
+    // подсказка иконки — несколько строк: оценка, вывод, цифры звеньев, время (v0.6)
+    let title = match v.score {
+        Some(n) if matches!(v.badge, Badge::Score(_) | Badge::WeakInternet(_)) => {
+            format!("Domini VPN Monitor — {n}/99")
+        }
+        _ => "Domini VPN Monitor".to_string(),
+    };
+    let client = s.client.as_ref().map(|c| c.name.as_str()).unwrap_or("VPN");
+    let (line, nums) = if u.paused {
+        ("Проверки на паузе".to_string(), String::new())
+    } else {
+        match (&v.badge, &s.route) {
+            (Badge::NoInternet, _) => (
+                "Нет интернета — VPN проверим, когда сеть вернётся".into(),
+                String::new(),
+            ),
+            (Badge::Captive, _) => (
+                "Wi‑Fi требует входа на своей странице".into(),
+                String::new(),
+            ),
+            (Badge::Unknown, _) if s.waking => ("Проверяю после сна…".into(), String::new()),
+            (_, Some(r)) => (
+                vpn_monitor::route::headline(r, client),
+                vpn_monitor::route::numbers(r),
+            ),
+            _ => (status.clone(), String::new()),
+        }
+    };
+    let tip = vpn_monitor::route::tooltip(&[
+        title,
+        line,
+        nums,
+        format!("Проверено в {}", log::hhmm(s.at)),
+    ]);
     let _ = u.tray.set_tooltip(Some(tip));
 }
 
