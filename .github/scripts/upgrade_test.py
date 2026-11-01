@@ -141,6 +141,11 @@ def main() -> int:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
         print(f"снимок экрана: {shot}" if shot.exists() else f"снимок не сделан: {r.stderr.strip()[:300]}")
 
+    # папки WebView2: общая `WebView2`, старые `vpn-monitor-X.Y.Z.exe.WebView2` удаляются (занятые — в следующий раз)
+    if ok:
+        dirs = sorted(p.name for p in install.iterdir() if p.is_dir())
+        print(f"папки в установке: {dirs}")
+
     print("---- vpn-monitor.log ----")
     print(log.read_text(encoding="utf-8", errors="replace") if log.exists() else "(лога нет)")
     subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{old_ver}.exe"], capture_output=True)

@@ -7,7 +7,7 @@ use tao::dpi::{LogicalSize, PhysicalPosition};
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
-use wry::{WebView, WebViewBuilder};
+use wry::{WebContext, WebView, WebViewBuilder};
 
 pub const WIDTH: f64 = 372.0;
 const START_HEIGHT: f64 = 480.0;
@@ -15,6 +15,9 @@ const START_HEIGHT: f64 = 480.0;
 pub struct Flyout {
     window: Window,
     webview: WebView,
+    /// Данные WebView2 — одна папка `WebView2` на все версии (до 0.5.3 — `vpn-monitor-X.Y.Z.exe.WebView2` на
+    /// каждую). Объявлена после `webview`, чтобы жить дольше него.
+    _context: WebContext,
     visible: bool,
     hidden_at: Instant,
     /// Где иконка — чтобы после смены высоты окно осталось у неё, а не уехало за край экрана.
@@ -29,6 +32,7 @@ impl Flyout {
     pub fn new<T: 'static, F>(
         target: &EventLoopWindowTarget<T>,
         url: &str,
+        data_dir: std::path::PathBuf,
         proxy: EventLoopProxy<T>,
         wrap: F,
     ) -> Result<Self, String>
@@ -48,7 +52,8 @@ impl Flyout {
         round_corners(window.hwnd());
         let wrap = std::rc::Rc::new(wrap);
         let (load_proxy, load_wrap) = (proxy.clone(), wrap.clone());
-        let webview = WebViewBuilder::new()
+        let mut context = WebContext::new(Some(data_dir));
+        let webview = WebViewBuilder::new_with_web_context(&mut context)
             .with_url(url)
             .with_ipc_handler(move |req| {
                 let _ = proxy.send_event(wrap(req.body().clone()));
@@ -69,6 +74,7 @@ impl Flyout {
         Ok(Self {
             window,
             webview,
+            _context: context,
             visible: false,
             hidden_at: Instant::now() - Duration::from_secs(10),
             icon: None,
