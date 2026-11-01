@@ -6,6 +6,7 @@
   обновления иконку, возможно, придётся вытащить из-под «^» — дальше Windows её запомнит.
 - Ярлык «Domini VPN Monitor» на рабочем столе: открывает окно, а если приложение не запущено — запускает его.
 - Релизы называются «Domini VPN Monitor vX.Y.Z», файл — `domini-vpn-monitor.exe`, контрольные суммы — `sha256`.
+  Бета-версии — `vX.Y.Z-beta.N` с файлом `domini-vpn-monitor-beta.exe`.
 - Профиль OpenVPN Connect — с названием, как в его меню («vpn.dominigames.com [DG_Rykov_Sergey_main]»), а не номером.
 
 ## 0.5.3

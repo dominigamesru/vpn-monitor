@@ -70,7 +70,7 @@ def main() -> int:
         "size": len(exe),
     }
     # как в release.yml: новое имя и старое (его качают обновлятели версий до 0.5.4)
-    (srv / f"v{new_ver}/domini-vpn-monitor.exe").write_bytes(exe)
+    (srv / f"v{new_ver}/{'domini-vpn-monitor-beta.exe' if '-' in new_ver else 'domini-vpn-monitor.exe'}").write_bytes(exe)
     (srv / f"v{new_ver}/vpn-monitor.exe").write_bytes(exe)
     (srv / f"v{new_ver}/settings.json").write_text(json.dumps(new_settings, ensure_ascii=False, indent=2), encoding="utf-8")
     (srv / "latest/latest.version").write_text(new_ver + "\n", encoding="utf-8")
@@ -80,7 +80,7 @@ def main() -> int:
     shutil.rmtree(install, ignore_errors=True)
     install.mkdir(parents=True)
     # с 0.5.4 установка живёт в постоянном domini-vpn-monitor.exe (обновление — переименованием), до — по версиям
-    stable_era = tuple(int(x) for x in old_ver.split(".")) >= (0, 5, 4)
+    stable_era = tuple(int(x) for x in old_ver.split("-")[0].split(".")) >= (0, 5, 4)
     old_exe = install / ("domini-vpn-monitor.exe" if stable_era else f"vpn-monitor-{old_ver}.exe")
     old_exe.write_bytes(fetch(f"{GH}/v{old_ver}/vpn-monitor.exe"))
     old_settings = json.loads(fetch(f"{GH}/v{old_ver}/settings.json"))

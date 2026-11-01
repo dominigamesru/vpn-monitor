@@ -50,7 +50,10 @@ GitLab `devops/vpn-monitor-cli`).
 - Поставка — GitHub Releases ([ADR 0004](docs/adr/0004-delivery-github-releases.md)):
   - **релиз** (`GLOSSARY.md`) — GitHub Release «Domini VPN Monitor vX.Y.Z» с `domini-vpn-monitor.exe`, настройками и `sha256` (плюс `vpn-monitor.exe` для обновлятелей до 0.5.4), всегда `make_latest: false`;
     опубликованный релиз не перезаписывается и не удаляется;
-  - релиз `latest` — только `latest.version` (последняя версия); откат — workflow `promote` со старой версией.
+  - релиз `latest` — только `latest.version` (последняя версия); откат — workflow `promote` со старой версией;
+  - **semver и каналы:** версия в `app/Cargo.toml` — `0.6.0` (стабильная: тег `v0.6.0`, в оба канала) или
+    `0.6.0-beta.1` (бета: тег `v0.6.0-beta.1`, pre-release, exe `domini-vpn-monitor-beta.exe`, только бета-канал);
+    установленный exe — всегда `domini-vpn-monitor.exe` (Windows помнит иконку в трее по пути).
 - Секретов в настройках нет — репо публичное.
 - **Все JSON обратно совместимы** — `settings.json`, `latest.version`, файлы метрик, ответы API, данные в Диспетчере
   учётных данных: поля только добавляются (новые — с `#[serde(default)]`), старые не удаляются и не меняют смысл,

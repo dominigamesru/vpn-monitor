@@ -40,7 +40,13 @@ jobs:
           cargo = tomllib.load(open("app/Cargo.toml", "rb"))["package"]["version"]
           if os.environ["GITHUB_REF_TYPE"] == "tag" and os.environ["GITHUB_REF_NAME"].lstrip("v") != cargo:
               raise SystemExit(f"Тег {os.environ['GITHUB_REF_NAME']} не совпадает с версией {cargo} в app/Cargo.toml")
-          open(os.environ["GITHUB_OUTPUT"], "a").write(f"version={cargo}\n")
+          # semver: 0.6.0 — стабильная (в оба канала), 0.6.0-beta.1 — бета (только в бета-канал, exe с -beta)
+          import re
+          if not re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?", cargo):
+              raise SystemExit(f"Версия {cargo} в app/Cargo.toml — не semver (0.6.0 или 0.6.0-beta.1)")
+          pre = "-" in cargo
+          asset = "domini-vpn-monitor-beta.exe" if pre else "domini-vpn-monitor.exe"
+          open(os.environ["GITHUB_OUTPUT"], "a").write(f"version={cargo}\npre={str(pre).lower()}\nasset={asset}\n")
 
       - name: Релиз v${{ steps.ver.outputs.version }} уже есть?
         id: exists
@@ -83,12 +89,14 @@ jobs:
         shell: python
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          ASSET: ${{ steps.ver.outputs.asset }}
         run: |
           import hashlib, json, os, pathlib, zlib
           ver = os.environ["VERSION"]
           out = pathlib.Path("dist"); out.mkdir()
           exe = pathlib.Path("app/target/release/vpn-monitor.exe").read_bytes()
-          (out / "domini-vpn-monitor.exe").write_bytes(exe)
+          asset = os.environ["ASSET"]
+          (out / asset).write_bytes(exe)
           # то же exe под старым именем — его качают обновлятели версий до 0.5.4
           (out / "vpn-monitor.exe").write_bytes(exe)
           settings = json.loads(pathlib.Path("app/config/settings.json").read_text(encoding="utf-8"))
@@ -99,7 +107,7 @@ jobs:
               "size": len(exe),
           }
           (out / "settings.json").write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-          sums = "".join(f"{hashlib.sha256((out / n).read_bytes()).hexdigest()}  {n}\n" for n in ("domini-vpn-monitor.exe", "vpn-monitor.exe", "settings.json"))
+          sums = "".join(f"{hashlib.sha256((out / n).read_bytes()).hexdigest()}  {n}\n" for n in (asset, "vpn-monitor.exe", "settings.json"))
           (out / "sha256").write_text(sums, encoding="utf-8", newline="\n")
           (out / "latest.version").write_text(ver + "\n", encoding="utf-8", newline="\n")
           print(sums)
@@ -109,8 +117,9 @@ jobs:
         shell: bash
         run: |
           tag="v${{ steps.ver.outputs.version }}"
-          gh release create "$tag" dist/domini-vpn-monitor.exe dist/settings.json dist/sha256 dist/vpn-monitor.exe \
-            --target "$GITHUB_SHA" --title "Domini VPN Monitor $tag" --generate-notes --latest=false
+          pre=""; [ "${{ steps.ver.outputs.pre }}" = "true" ] && pre="--prerelease"
+          gh release create "$tag" "dist/${{ steps.ver.outputs.asset }}" dist/settings.json dist/sha256 dist/vpn-monitor.exe \
+            --target "$GITHUB_SHA" --title "Domini VPN Monitor $tag" --generate-notes --latest=false $pre
 
       - name: Канал beta := ${{ steps.ver.outputs.version }} (всегда)
         if: steps.exists.outputs.skip != 'true'
@@ -123,15 +132,10 @@ jobs:
           gh release upload beta dist/latest.version --clobber
           echo "beta = $(cat dist/latest.version)"
 
-      - name: latest.version := ${{ steps.ver.outputs.version }} (если не только бета)
-        if: steps.exists.outputs.skip != 'true'
+      - name: latest.version := ${{ steps.ver.outputs.version }} (только стабильная)
+        if: steps.exists.outputs.skip != 'true' && steps.ver.outputs.pre != 'true'
         shell: bash
         run: |
-          # app/config/channel = beta — версия идёт только в бета-канал; в стабильный — через workflow promote
-          if [ "$(tr -d '[:space:]' < app/config/channel 2>/dev/null)" = "beta" ]; then
-            echo "::notice::Версия только для бета-канала — latest.version не меняю"
-            exit 0
-          fi
           if ! gh release view latest >/dev/null 2>&1; then
             gh release create latest --target "$GITHUB_SHA" --title "Последняя версия" \
               --notes "Служебный релиз: latest.version — версия, которую ставят все установленные копии. Сами сборки — в релизах vX.Y.Z. Откат — workflow promote."
