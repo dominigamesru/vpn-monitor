@@ -129,7 +129,8 @@ fn copy_with_retry(from: &Path, to: &Path) -> Result<(), String> {
     Err(format!("не скопировать exe в {}: {last}", to.display()))
 }
 
-/// Удаляет exe прошлых версий в папке установки (занятые — пропускает, удалятся в следующий раз).
+/// Удаляет exe прошлых версий в папке установки и их папки WebView2 (`vpn-monitor-X.Y.Z.exe.WebView2`, до 0.5.3 —
+/// своя на каждую версию; теперь общая `WebView2`). Занятые — пропускает, удалятся в следующий раз.
 pub fn cleanup_old_exes(dir: &Path, keep: &Path) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -143,6 +144,13 @@ pub fn cleanup_old_exes(dir: &Path, keep: &Path) {
             .to_string();
         let ours = name.starts_with("vpn-monitor-")
             && (name.ends_with(".exe") || name.ends_with(".exe.part"));
+        if name.starts_with("vpn-monitor-") && name.ends_with(".exe.WebView2") && p.is_dir() {
+            match std::fs::remove_dir_all(&p) {
+                Ok(()) => info!("install", "удалена старая папка {name}"),
+                Err(e) => info!("install", "старая папка {name} пока занята: {e}"),
+            }
+            continue;
+        }
         if ours && !same_file(&p, keep) {
             match std::fs::remove_file(&p) {
                 Ok(()) => info!("install", "удалён старый {name}"),

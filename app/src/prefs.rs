@@ -1,4 +1,4 @@
-//! Выбор сотрудника на этой машине (`prefs.json` в папке установки): вид меню, канал обновлений, пауза,
+//! Выбор сотрудника на этой машине (`user.json` в папке установки (до 0.5.3 — `prefs.json`)): вид меню, канал обновлений, пауза,
 //! уведомления, последняя увиденная версия. JSON обратно совместим: все поля с умолчаниями.
 
 use serde::{Deserialize, Serialize};
@@ -75,11 +75,18 @@ pub const VIEWS: &[&str] = &["route", "gauge", "strip", "panel"];
 pub const CHANNELS: &[&str] = &["latest", "beta"];
 
 fn path(dir: &Path) -> PathBuf {
-    dir.join("prefs.json")
+    dir.join("user.json")
 }
+
+/// Имя файла до 0.5.3: при первом запуске переименовываем в `user.json`, выбор сотрудника не теряется.
+const LEGACY: &str = "prefs.json";
 
 impl Prefs {
     pub fn load(dir: &Path) -> Self {
+        let legacy = dir.join(LEGACY);
+        if !path(dir).exists() && legacy.exists() {
+            let _ = std::fs::rename(&legacy, path(dir));
+        }
         std::fs::read_to_string(path(dir))
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
@@ -137,5 +144,22 @@ mod tests {
         assert!(!p.paused(now + 31 * 60_000));
         let eod = pause_until(now, 0);
         assert!(eod > now && eod - now <= 86_400_000);
+    }
+
+    #[test]
+    fn legacy_prefs_json_becomes_user_json() {
+        let dir = std::env::temp_dir().join(format!("vpnmon-prefs-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::remove_file(dir.join("user.json"));
+        std::fs::write(
+            dir.join("prefs.json"),
+            r#"{"view":"strip","channel":"beta"}"#,
+        )
+        .unwrap();
+        let p = Prefs::load(&dir);
+        assert_eq!(p.view, "strip");
+        assert_eq!(p.channel, "beta");
+        assert!(dir.join("user.json").exists() && !dir.join("prefs.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

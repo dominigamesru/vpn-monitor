@@ -46,7 +46,7 @@ pub struct Shared {
     pub api_error: Option<String>,
     pub diag: Option<serde_json::Value>,
     pub diag_running: bool,
-    /// Выбор сотрудника: вид меню, канал, пауза, уведомления (prefs.json), v0.5.
+    /// Выбор сотрудника: вид меню, канал, пауза, уведомления (user.json; до 0.5.3 — prefs.json), v0.5.
     pub prefs: vpn_monitor::prefs::Prefs,
 }
 
@@ -204,6 +204,7 @@ pub fn run(replace: bool, first_run: bool) {
                         match crate::flyout::Flyout::new(
                             target,
                             &format!("{url}flyout"),
+                            dir.join("WebView2"),
                             fly_proxy.clone(),
                             UserEvent::FlyoutIpc,
                         ) {
