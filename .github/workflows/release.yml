@@ -111,26 +111,13 @@ jobs:
           (out / "sha256").write_text(sums, encoding="utf-8", newline="\n")
           (out / "latest.version").write_text(ver + "\n", encoding="utf-8", newline="\n")
           print(sums)
-          # заметки релиза — из app/CHANGELOG.md: «Что нового» для сотрудников и «Технически» под спойлером
-          import re
-          md = pathlib.Path("app/CHANGELOG.md").read_text(encoding="utf-8")
-          sec = next((x for x in re.split(r"^## ", md, flags=re.M)[1:] if x.split(None, 1)[0] == ver), "")
-          head, _, body = sec.partition("\n")
-          title = head.split(" — ", 1)[1] if " — " in head else ""
-          user, *tech = re.split(r"^### ", body, flags=re.M)
-          parts = [f"## {title}" if title else "", "### Что нового", user.strip()]
-          for t in tech:
-              name, _, rest = t.partition("\n")
-              parts.append(f"<details><summary>{name.strip()}</summary>\n\n{rest.strip()}\n\n</details>")
-          parts.append(
-              "### Установить\n"
-              f"Скачайте `{asset}` и запустите двойным кликом — пока только Windows 10 и 11. Уже установлено — обновится "
-              "само в течение нескольких минут. Контрольные суммы — `sha256`."
-          )
-          (out / "notes.md").write_text("\n\n".join(p for p in parts if p) + "\n", encoding="utf-8", newline="\n")
-          # консоль раннера Windows — cp1252: русский текст в ней падает (выпуск 0.7.1 не прошёл)
-          sys.stdout.reconfigure(encoding="utf-8")
-          print((out / "notes.md").read_text(encoding="utf-8"))
+          # заметки релиза — scripts/release_notes.py: эта версия и все невыпущенные после последней опубликованной
+          import subprocess, urllib.request
+          try:
+              prev = urllib.request.urlopen(f"https://github.com/{os.environ['GH_REPO']}/releases/download/latest/latest.version", timeout=20).read().decode().strip()
+          except Exception:
+              prev = ""
+          subprocess.run([sys.executable, "scripts/release_notes.py", "--version", ver, "--prev", prev, "--asset", asset, "--stdout"], check=True)
 
       - name: GitHub Release v${{ steps.ver.outputs.version }}
         if: steps.exists.outputs.skip != 'true'
