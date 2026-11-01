@@ -74,6 +74,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .st { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
 .st i { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 800; color: #fff; background: var(--c); }
 .warn .st i, .st.warn i { color: #15202e; }
+.btn.busy { display: inline-flex; align-items: center; gap: 8px; }
+.btn.busy::before { content: ""; width: 13px; height: 13px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .btn { border: 0; border-radius: 9px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
 .btn.danger { background: transparent; color: var(--bad); border: 1px solid var(--line); font-weight: 600; }
@@ -405,7 +408,8 @@ function renderHeader() {
   const v = verdict();
   const mini = $("#mini"); mini.className = `mini ${v.st}`; mini.textContent = v.idx; mini.setAttribute("aria-label", `${v.title}. ${v.sub}`);
   $("#ver").textContent = `— версия ${S.version}`;
-  document.title = /^\d+$/.test(v.idx) ? `Domini VPN Monitor — ${v.idx}/99` : "Domini VPN Monitor";
+  const needLogin = !S?.login && (S?.snapshot?.targets || []).some((t) => /^нет входа/.test(t.note || ""));
+  document.title = needLogin && !S?.paused ? "⚠️ Требуется вход — Domini VPN Monitor" : /^\d+$/.test(v.idx) ? `Domini VPN Monitor — ${v.idx}/99` : "Domini VPN Monitor";
 }
 
 // ---------- СЕЙЧАС ----------
@@ -413,9 +417,10 @@ function renderNow() {
   tips.splice(0).forEach((t) => t.destroy());
   const v = verdict(), sn = S?.snapshot || {}, r = R(), th = TH();
   tip($("#mini"), () => { const v2 = verdict(); return el("div", { class: "tip" }, el("span", { class: "big", text: v2.title }), el("span", { class: "mut", text: v2.sub }), el("span", { class: "mut", text: "Оценка VPN 1–99 — по медиане трёх последних проверок" })); });
-  const btn = el("button", { class: "btn", id: "checkBtn", type: "button", text: S?.checking ? "Проверяю…" : "Проверить" });
+  // во время проверки всё остаётся как было — крутится и не нажимается только кнопка
+  const btn = el("button", { class: S?.checking ? "btn busy" : "btn", id: "checkBtn", type: "button", text: S?.checking ? "Проверяю…" : "Проверить" });
   if (S?.checking) btn.disabled = true;
-  btn.addEventListener("click", async () => { btn.disabled = true; await api("/api/check", { method: "POST", body: "{}" }); setTimeout(() => poll(true), 300); });
+  btn.addEventListener("click", async () => { btn.disabled = true; btn.classList.add("busy"); btn.textContent = "Проверяю…"; await api("/api/check", { method: "POST", body: "{}" }); setTimeout(() => poll(true), 300); });
   $("#hero").replaceChildren(el("div", { class: `index ${v.st}`, text: v.idx, "aria-label": `Оценка VPN ${v.idx}` }), el("div", {}, el("b", { text: v.title }), el("span", { text: v.sub })), btn);
   tip($("#hero .index"), () => el("div", { class: "tip" }, el("span", { class: "big", text: "Оценка VPN — 1–99" }), el("span", { class: "mut", text: "Насколько удобно работать через VPN сейчас: скорость SVN, задержка до офиса и интернет — по медиане трёх последних проверок." })));
   const t = sn.targets || [], world = t.filter((x) => x.role === "world");
@@ -590,7 +595,7 @@ function renderConn() {
   if (S.login && !editing) { form.hidden = true;
     const ch = el("button", { class: "btn ghost", type: "button", text: "Сменить" }), out = el("button", { class: "btn ghost", type: "button", text: "Выйти" });
     ch.addEventListener("click", () => { editing = true; $("#loginInput").value = S.login; renderConn(); $("#passInput").focus(); });
-    out.addEventListener("click", async () => { await api("/api/credentials", { method: "DELETE" }); poll(true); });
+    out.addEventListener("click", async () => { out.disabled = true; await api("/api/credentials", { method: "DELETE" }); S.login = null; editing = false; $("#loginInput").value = ""; $("#passInput").value = ""; renderConn(); poll(true); });
     host.append(el("div", { class: "row" }, badge("good", `Вошли как ${S.login}`), ch, out));
   } else { form.hidden = false; if (!S.login) host.append(el("p", { class: "sub", text: "Вход не выполнен." })); }
   // справа — по каждому сервису: каким входом проверяем и когда последний раз ответил (история за 7 дней)

@@ -47,10 +47,15 @@ pub fn start(
 }
 
 fn serve(server: Server, port: u16, shared: SharedRef, cmd: Sender<Cmd>, update_now: Sender<()>) {
+    // каждый запрос — в своём потоке: долгий (проверка обновлений, сводка с клиентами VPN) не держит остальные —
+    // иначе окно и меню во время проверки ждали /api/state и стояли пустыми
     for req in server.incoming_requests() {
-        if let Err(e) = handle(req, port, &shared, &cmd, &update_now) {
-            error!("api", "{e}");
-        }
+        let (shared, cmd, update_now) = (shared.clone(), cmd.clone(), update_now.clone());
+        std::thread::spawn(move || {
+            if let Err(e) = handle(req, port, &shared, &cmd, &update_now) {
+                error!("api", "{e}");
+            }
+        });
     }
 }
 
@@ -365,6 +370,8 @@ fn handle(
             Ok(()) => {
                 info!("login", "вход AD удалён из Диспетчера учётных данных");
                 lock(shared).store.set_login("");
+                // сразу перепроверить без входа — иконка, подсказка и окно покажут «Требуется вход»
+                let _ = cmd.send(Cmd::CheckNow);
                 json_resp(&credentials(), 200)
             }
             Err(e) => json_resp(&json!({"error": e}), 500),

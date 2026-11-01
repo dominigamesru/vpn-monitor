@@ -870,12 +870,25 @@ fn make_icon(b: Badge, c: Color, checking: bool) -> Icon {
         .expect("иконка 32×32 RGBA")
 }
 
+/// Сервисы офиса проверялись без входа AD (проба пишет «нет входа…» в `note`).
+fn need_login(s: &vpn_monitor::monitor::Snapshot) -> bool {
+    s.targets.iter().any(|t| {
+        t.note
+            .as_deref()
+            .is_some_and(|n| n.starts_with("нет входа"))
+    })
+}
+
 fn refresh(u: &mut Ui) {
     let (badge, color) = u.last.as_ref().map_or((Badge::Unknown, Color::Red), |s| {
         (s.verdict.badge, s.verdict.color)
     });
+    // нет входа AD (вышли в «Настройках» или ещё не входили) — жёлтый «!» на иконке, пока не войдут
+    let need_login = u.last.as_ref().is_some_and(need_login);
     let (badge, color) = if u.paused {
         (Badge::Paused, Color::Gray)
+    } else if need_login && !matches!(badge, Badge::NoInternet | Badge::Captive) {
+        (Badge::NoVpn, Color::Yellow)
     } else {
         (badge, color)
     };
@@ -951,6 +964,7 @@ fn refresh(u: &mut Ui) {
 
     // подсказка иконки — несколько строк: оценка, вывод, цифры звеньев, время (v0.6)
     let title = match v.score {
+        _ if need_login && !u.paused => "⚠️ Требуется вход — Domini VPN Monitor".to_string(),
         Some(n) if matches!(v.badge, Badge::Score(_) | Badge::WeakInternet(_)) => {
             format!("Domini VPN Monitor — {n}/99")
         }
