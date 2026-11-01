@@ -24,6 +24,9 @@ pub struct Settings {
     pub internet: Internet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gitlab_oauth: Option<GitlabOauth>,
+    /// Куда писать в поддержку (портал Jira Service Desk), v0.6.2.
+    #[serde(default = "d_support_url")]
+    pub support_url: String,
     /// Клиенты VPN в офис и как их узнать (v0.4).
     #[serde(default)]
     pub vpn_clients: Vec<VpnClientRule>,
@@ -101,6 +104,9 @@ pub struct Thresholds {
     pub vpn_bad_ms: f64,
 }
 
+fn d_support_url() -> String {
+    "https://jira.corp.dominigames.com/servicedesk/customer/portal/1/create/23".into()
+}
 fn d_svn_good() -> f64 {
     8.0
 }
