@@ -77,11 +77,22 @@ dialog#supDlg::backdrop { background: rgba(13,19,27,.45); }
 .supform fieldset { border: 0; padding: 0; margin: 0; }
 .supform fieldset label { display: flex; gap: 8px; align-items: center; color: var(--ink); margin: 4px 0; }
 .supform fieldset input { width: auto; }
+.supform .file details { margin: 0 0 6px 26px; font-size: 12.5px; }
+.supform .file summary { color: var(--accent); cursor: pointer; }
+.supform .file pre { max-height: 180px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; }
 #supErr { color: var(--bad); min-height: 1em; margin: 4px 0; }
 ul.tickets { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 2px; }
-ul.tickets li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+ul.tickets li { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
 ul.tickets a { color: var(--accent); font-weight: 600; }
-ul.tickets li span { color: var(--muted); font-variant-numeric: tabular-nums; }
+ul.tickets .k { display: inline-flex; align-items: center; gap: 2px; }
+ul.tickets .k .ib { width: 26px; height: 26px; background: none; border-radius: 6px; }
+ul.tickets .k .ib svg { width: 14px; height: 14px; }
+ul.tickets .k .ib.done { color: var(--good); }
+ul.tickets .d { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+.pill { justify-self: start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
+.pill.warn { color: var(--warn); } .pill.accent { color: var(--accent); } .pill.good { color: var(--good); }
+@media (max-width: 560px) { ul.tickets li { grid-template-columns: auto minmax(0,1fr); } ul.tickets .d { grid-column: 2; } }
+.newslink { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 13px; }
 ul.tickets li .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; max-width: 70ch; }
 .good { --c: var(--good); --cb: var(--good-bg); } .warn { --c: var(--warn); --cb: var(--warn-bg); }
@@ -293,6 +304,8 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
         <button class="btn" id="supportBtn" type="button">Отправить запрос в Jira</button>
       </div>
       <p class="st" id="supResult" role="status" style="margin:10px 0 0"></p>
+      <div class="row" id="ticketsHead" hidden style="justify-content:space-between;margin-top:10px"><b>Мои запросы</b><button class="btn ghost" id="ticketsRefresh" type="button">Обновить статусы</button></div>
+      <p class="st" id="ticketsErr" hidden style="color:var(--bad);margin:4px 0 0"></p>
       <ul class="tickets" id="tickets"></ul>
     </div>
     <div class="card">
@@ -567,6 +580,12 @@ function lineChart(host, pts, from, to, cfg) {
   for (const p of pts) if (p.off) svg.append(sv("rect", { x: x(p.t - (p.step || 60000) / 2), y: top, width: Math.max(1, x(p.t + (p.step || 60000) / 2) - x(p.t - (p.step || 60000) / 2)), height: h - top - bottom, fill: css("--off-band") }));
   for (const f of [0, 0.5, 1]) { const v = max * f, yy = y(v); svg.append(sv("line", { x1: PAD_L, x2: w - PAD_R, y1: yy, y2: yy, stroke: css(f ? "--line" : "--axis") })); const t = sv("text", { x: PAD_L - 8, y: yy + 4, "text-anchor": "end" }); t.textContent = cfg.fmt(v); svg.append(t); }
   for (const [t, l] of ticks(from, to)) { const tx = sv("text", { x: x(t), y: h - 4, "text-anchor": "middle" }); tx.textContent = l; svg.append(tx); }
+  // отметки «здесь вы отправили запрос в поддержку» (v0.8) — пунктир с номером заявки
+  for (const tk of TICKETS) { if (!tk.created_ms || tk.created_ms < from || tk.created_ms > to) continue; const xx = x(tk.created_ms);
+    const g = sv("g", { class: "tmark" }); const ttl = sv("title"); ttl.textContent = `Запрос ${tk.key} отправлен ${when(tk.created_ms)}`; g.append(ttl);
+    g.append(sv("line", { x1: xx, x2: xx, y1: top, y2: h - bottom, stroke: css("--accent"), "stroke-dasharray": "3 3", "stroke-width": 1.2 }));
+    if (cfg.marks) { const t = sv("text", { x: xx + 4, y: top + 10, fill: css("--accent") }); t.textContent = tk.key; g.append(t); }
+    svg.append(g); }
   const gap = range === "day" ? 25 * 60000 : 2.5 * 3600000;
   for (const s of cfg.series) {
     let d = "", prev = null;
@@ -587,7 +606,7 @@ function lineChart(host, pts, from, to, cfg) {
 function renderCharts(pts, from, to) {
   const host = $("#charts"); host.replaceChildren(); const b = S?.snapshot?.baseline || {};
   const th = TH();
-  lineChart(host, pts, from, to, { title: "Оценка VPN", max: 100, fmt: (v) => num(v), series: [{ key: "score", name: "Оценка", color: css("--s1") }] });
+  lineChart(host, pts, from, to, { title: "Оценка VPN", marks: true, max: 100, fmt: (v) => num(v), series: [{ key: "score", name: "Оценка", color: css("--s1") }] });
   lineChart(host, pts, from, to, { title: `Задержка VPN до офиса, мс (норма до ${num(th.vpn_good_ms)})`, fmt: (v) => `${num(v)} мс`, norm: th.vpn_good_ms, normLow: 0, normHigh: 1, series: [{ key: "lat", name: "Задержка VPN", color: css("--s1") }] });
   if (pts.some((p) => p.spd != null)) lineChart(host, pts, from, to, { title: `Скорость SVN, Мбит/с (норма от ${num(th.svn_good_mbps)})`, fmt: (v) => num(v, 1), norm: th.svn_good_mbps, normLow: 1, normHigh: 3, series: [{ key: "spd", name: "Скорость SVN", color: css("--s3") }] });
   lineChart(host, pts, from, to, { title: "Интернет без VPN, Мбит/с", fmt: (v) => num(v, 1), series: [{ key: "inetRaw", name: "Интернет", color: css("--s2"), dots: range === "day" }] });
@@ -649,7 +668,7 @@ function renderConn() {
   $("#viewChoice").replaceChildren(...Object.entries(views).map(([k, n]) => { const b = el("button", { type: "button", "aria-pressed": String(curView === k), text: n }); b.addEventListener("click", async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: k }) }); poll(true); }); return b; }));
   const chans = { latest: "Стабильный", beta: "Бета" };
   $("#channelChoice").replaceChildren(...Object.entries(chans).map(([k, n]) => { const b = el("button", { type: "button", "aria-pressed": String(S.prefs.channel === k), text: n }); b.addEventListener("click", async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ channel: k }) }); poll(true); }); return b; }));
-  const nopts = [["vpn", "VPN в офис или в мир упал и вернулся"], ["auth", "Пароль AD не подошёл"], ["update", "Обновлено до новой версии"], ["slow", "VPN медленнее обычного"]];
+  const nopts = [["vpn", "VPN в офис или в мир упал и вернулся"], ["auth", "Пароль AD не подошёл"], ["update", "Обновлено до новой версии"], ["slow", "VPN медленнее обычного"], ["tickets", "Запрос в поддержку сменил статус"]];
   $("#notifyOpts").replaceChildren(...nopts.map(([k, n]) => { const c = el("input", { type: "checkbox", id: `n-${k}` }); c.checked = !!S.prefs.notify[k]; c.addEventListener("change", () => api("/api/prefs", { method: "POST", body: JSON.stringify({ notify: { [k]: c.checked } }) })); return el("label", { class: "opt", for: `n-${k}` }, el("div", { text: n }), c); }));
   $("#notifyOpts").append(el("small", { class: "st", text: "Не чаще 4 уведомлений в час; во время паузы — никаких." }));
   $("#autostart").checked = S.autostart;
@@ -680,8 +699,22 @@ $("#diagBtn").addEventListener("click", async () => { await api("/api/diagnostic
 // ---------- запрос в поддержку (ADR 0013) ----------
 let supDraft = null;
 const kb = (n) => n < 1024 ? `${n} Б` : `${num(n / 1024, n < 10240 ? 1 : 0)} КБ`;
-async function loadTickets() { try { const r = await api("/api/tickets"); const host = $("#tickets"); host.replaceChildren();
-  for (const t of r.tickets || []) { const a = el("a", { href: /^https:\/\//.test(t.url) ? t.url : "#", target: "_blank", rel: "noopener", text: t.key }); host.append(el("li", {}, a, el("span", { class: "t", text: t.summary }), el("span", { text: t.created_ms ? new Date(t.created_ms).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "" }))); } } catch {} }
+let TICKETS = [];
+const ST_CAT = { NEW: ["warn", "ждёт поддержку"], INDETERMINATE: ["accent", "в работе"], DONE: ["good", "решена"] };
+function renderTickets(list, err) { TICKETS = list || []; const host = $("#tickets"); host.replaceChildren();
+  for (const t of TICKETS) {
+    const a = el("a", { href: /^https:\/\//.test(t.url) ? t.url : "#", target: "_blank", rel: "noopener", text: t.key });
+    const copy = el("button", { class: "ib", type: "button", "aria-label": `Скопировать номер ${t.key}`, title: "Скопировать номер" }, svgIcon("M9 9h10v10H9zM5 15V5h10"));
+    copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(t.key); copy.title = "Скопировано"; copy.classList.add("done"); setTimeout(() => { copy.classList.remove("done"); copy.title = "Скопировать номер"; }, 1500); } catch {} });
+    const [cls, word] = ST_CAT[t.status_category] || ["idle", "статус неизвестен"];
+    const pill = el("span", { class: `pill ${cls}`, title: t.status ? `${t.status}${t.status_ms ? " · с " + new Date(t.status_ms).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}` : "Статус узнаем при следующей проверке" , text: t.status || word });
+    host.append(el("li", {}, el("span", { class: "k" }, a, copy), el("span", { class: "t", text: t.summary }), pill, el("span", { class: "d", text: t.created_ms ? new Date(t.created_ms).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "" }))); }
+  $("#ticketsHead").hidden = !TICKETS.length; $("#ticketsErr").textContent = err ? `Статусы не обновились: ${err}` : ""; $("#ticketsErr").hidden = !err; }
+function svgIcon(d) { const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("aria-hidden", "true"); const p = document.createElementNS(NS, "path"); p.setAttribute("d", d); s.append(p); return s; }
+async function loadTickets() { try { const r = await api("/api/tickets"); renderTickets(r.tickets); } catch {} }
+async function refreshTickets() { const b = $("#ticketsRefresh"); b.disabled = true; b.classList.add("busy");
+  try { const r = await api("/api/tickets", { method: "POST", body: "{}" }); renderTickets(r.tickets, r.error); } catch { $("#ticketsErr").textContent = "Приложение не ответило."; $("#ticketsErr").hidden = false; }
+  b.disabled = false; b.classList.remove("busy"); }
 $("#supportBtn").addEventListener("click", async () => {
   const b = $("#supportBtn"); b.disabled = true;
   try { supDraft = await api("/api/support"); } catch { supDraft = null; } b.disabled = false;
@@ -692,9 +725,12 @@ $("#supportBtn").addEventListener("click", async () => {
     $("#supResult").replaceChildren(`Отправить запрос из приложения нельзя: ${supDraft?.reason || "приложение не ответило"}. Сводка скопирована — вставьте её в форму. `, ...[link].filter(Boolean)); return; }
   $("#supWho").textContent = `От вашего имени (${supDraft.login}) в Jira Service Desk. После создания заявка откроется в браузере.`;
   $("#supSummary").value = supDraft.summary; $("#supDesc").value = supDraft.description; $("#supPriority").value = supDraft.priority || "Low"; $("#supErr").textContent = "";
-  $("#supFiles").replaceChildren(...supDraft.files.map((f, i) => el("label", {}, el("input", { type: "checkbox", id: `supF${i}`, value: f.name, checked: "" }), `${f.name} · ${kb(f.bytes)}`)));
+  // каждый файл — флажок и «посмотреть»: что уйдёт в поддержку, видно до отправки
+  $("#supFiles").replaceChildren(...supDraft.files.map((f, i) => el("div", { class: "file" }, el("label", {}, el("input", { type: "checkbox", id: `supF${i}`, value: f.name, checked: "" }), `${f.name} · ${kb(f.bytes)}`),
+    f.preview ? el("details", {}, el("summary", { text: f.name.endsWith(".log") ? "посмотреть последние строки" : "посмотреть начало" }), el("pre", { text: f.preview })) : null)));
   $("#supSend").disabled = false; $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal(); $("#supSummary").focus(); });
 $("#supCancel").addEventListener("click", () => $("#supDlg").close());
+$("#ticketsRefresh").addEventListener("click", refreshTickets);
 $("#supForm").addEventListener("submit", async (e) => { e.preventDefault(); const send = $("#supSend"); send.disabled = true; send.classList.add("busy"); send.textContent = "Отправляю…"; $("#supErr").textContent = "";
   const attach = [...$("#supFiles").querySelectorAll("input:checked")].map((x) => x.value);
   let r; try { r = await api("/api/support", { method: "POST", body: JSON.stringify({ summary: $("#supSummary").value, description: $("#supDesc").value, priority: $("#supPriority").value, attach }) }); } catch { r = { error: "Приложение не ответило — попробуйте ещё раз." }; }
@@ -716,7 +752,7 @@ $("#unYes").addEventListener("click", async () => { await api("/api/uninstall", 
 
 // ---------- что нового ----------
 async function news() { if (!S || S.prefs.last_seen_version === S.version) return; const md = await api("/api/changes"); const sec = (md.split(/^## /m).find((s) => s.startsWith(S.version)) || "").split(/^### /m)[0].split("\n").slice(1).reduce((a, l) => { if (l.startsWith("- ")) a.push(l.slice(2)); else if (/^\s+\S/.test(l) && a.length) a[a.length - 1] += " " + l.trim(); return a; }, []).map((l) => l.replace(/\*\*/g, ""));
-  if (!sec.length) return; $("#newsText").replaceChildren(el("b", { text: `Обновлено до ${S.version}` }), el("ul", { class: "news" }, ...sec.slice(0, 3).map((l) => el("li", { text: l })))); $("#newsBanner").hidden = false; }
+  if (!sec.length) return; $("#newsText").replaceChildren(el("b", { text: `Обновлено до ${S.version}` }), el("ul", { class: "news" }, ...sec.slice(0, 3).map((l) => el("li", { text: l }))), el("a", { class: "newslink", href: "#release-notes", target: "_blank", rel: "noopener", text: "Все изменения этой и прошлых версий" })); $("#newsBanner").hidden = false; }
 // ---------- AI-АГЕНТ ----------
 function renderAgent() {
   const base = `http://${location.host}`;
@@ -753,7 +789,7 @@ function showTab() { let [t, part] = location.hash.slice(1).split("/"); if (t ==
   if (part) { const target = document.getElementById(part === "diagnostics" ? "diagnostics" : part); if (target) setTimeout(() => target.scrollIntoView({ block: "start" }), 50); } }
 addEventListener("hashchange", showTab);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { range = b.dataset.range; document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); loadHistory(); }));
-async function loadHistory() { try { H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
+async function loadHistory() { try { if (!TICKETS.length) { const r = await api("/api/tickets").catch(() => ({})); TICKETS = r.tickets || []; } H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
 let pt = null, off = false;
 async function poll(once) { clearTimeout(pt);
   try { S = await api("/api/state"); if (off) { off = false; $("#offlineBanner").hidden = true; }

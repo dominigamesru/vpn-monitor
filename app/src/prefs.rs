@@ -28,6 +28,9 @@ pub struct Notify {
     /// «Медленнее обычного» — по желанию.
     #[serde(default)]
     pub slow: bool,
+    /// «Заявка в поддержку сменила статус» (v0.8).
+    #[serde(default = "d_true")]
+    pub tickets: bool,
 }
 
 impl Default for Notify {
@@ -37,6 +40,7 @@ impl Default for Notify {
             auth: true,
             update: true,
             slow: false,
+            tickets: true,
         }
     }
 }

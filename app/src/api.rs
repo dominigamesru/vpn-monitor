@@ -47,15 +47,20 @@ pub fn start(
 }
 
 fn serve(server: Server, port: u16, shared: SharedRef, cmd: Sender<Cmd>, update_now: Sender<()>) {
-    // каждый запрос — в своём потоке: долгий (проверка обновлений, сводка с клиентами VPN) не держит остальные —
-    // иначе окно и меню во время проверки ждали /api/state и стояли пустыми
+    serve_each(server, move |req| {
+        if let Err(e) = handle(req, port, &shared, &cmd, &update_now) {
+            error!("api", "{e}");
+        }
+    });
+}
+
+/// Каждый запрос — в своём потоке: долгий (проверка обновлений, сводка с клиентами VPN) не держит остальные —
+/// иначе окно и меню во время проверки ждали /api/state и стояли пустыми (до 0.7.1). Тест `slow_request_does_not_block`.
+fn serve_each<F: Fn(Request) + Send + Sync + 'static>(server: Server, f: F) {
+    let f = std::sync::Arc::new(f);
     for req in server.incoming_requests() {
-        let (shared, cmd, update_now) = (shared.clone(), cmd.clone(), update_now.clone());
-        std::thread::spawn(move || {
-            if let Err(e) = handle(req, port, &shared, &cmd, &update_now) {
-                error!("api", "{e}");
-            }
-        });
+        let f = f.clone();
+        std::thread::spawn(move || f(req));
     }
 }
 
@@ -139,6 +144,31 @@ fn handle(
     let mut body = String::new();
     if method == Method::Post {
         let _ = req.as_reader().take(64 * 1024).read_to_string(&mut body);
+    }
+    if method == Method::Post && path == "/api/tickets" {
+        // обновить статусы заявок сейчас (сеть, до 20 с на заявку) — из своего потока
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let (dir, url) = {
+                let sh = lock(&shared);
+                (sh.dir.clone(), sh.settings.support_url.clone())
+            };
+            let err = match (
+                vpn_monitor::jsm::parse_portal(&url),
+                vpn_monitor::creds::load_ad(),
+            ) {
+                (Some(p), Some(ad)) => {
+                    vpn_monitor::jsm::refresh_statuses(&dir, &p, &ad.login, &ad.password).1
+                }
+                (None, _) => Some("адрес поддержки — не портал Jira Service Desk".into()),
+                (_, None) => Some("войдите с учётной записью AD".into()),
+            };
+            let _ = req.respond(json_resp(
+                &json!({"tickets": vpn_monitor::jsm::load_tickets(&dir), "error": err}),
+                200,
+            ));
+        });
+        return Ok(());
     }
     if method == Method::Post && path == "/api/support" {
         // заявка в Jira Service Desk (ADR 0013): сеть до 30 с на запрос — отвечаем из своего потока
@@ -336,12 +366,19 @@ fn handle(
                 sh.prefs.channel = ch.into();
                 info!("api", "канал обновлений: {ch}");
             }
-            for (k, slot) in [("vpn", 0), ("auth", 1), ("update", 2), ("slow", 3)] {
+            for (k, slot) in [
+                ("vpn", 0),
+                ("auth", 1),
+                ("update", 2),
+                ("slow", 3),
+                ("tickets", 4),
+            ] {
                 if let Some(b) = v["notify"][k].as_bool() {
                     match slot {
                         0 => sh.prefs.notify.vpn = b,
                         1 => sh.prefs.notify.auth = b,
                         2 => sh.prefs.notify.update = b,
+                        4 => sh.prefs.notify.tickets = b,
                         _ => sh.prefs.notify.slow = b,
                     }
                 }
@@ -963,7 +1000,7 @@ fn support_draft(shared: &SharedRef) -> Value {
         "summary": format!("VPN Monitor: {state}"),
         "description": text,
         "priority": "Low",
-        "files": files.iter().map(|(n, c)| json!({"name": n, "bytes": c.len()})).collect::<Vec<_>>(),
+        "files": files.iter().map(|(n, c)| json!({"name": n, "bytes": c.len(), "preview": preview(n, c)})).collect::<Vec<_>>(),
     })
 }
 
@@ -1022,7 +1059,8 @@ fn support_create(shared: &SharedRef, v: &Value) -> Result<vpn_monitor::jsm::Cre
                 key: c.key.clone(),
                 url: c.url.clone(),
                 summary: title.clone(),
-                created_ms: vpn_monitor::metrics::now_ms() as i64,
+                created_ms: vpn_monitor::metrics::now_ms(),
+                ..Default::default()
             };
             if let Err(e) = vpn_monitor::jsm::save_ticket(&dir, t) {
                 warn!(
@@ -1039,4 +1077,54 @@ fn support_create(shared: &SharedRef, v: &Value) -> Result<vpn_monitor::jsm::Cre
         Err(e) => warn!("support", "заявка не создана: {e}"),
     }
     r
+}
+
+/// Кусок файла для просмотра в окне заявки: у лога — последние строки (там свежее), у остальных — начало.
+fn preview(name: &str, content: &[u8]) -> String {
+    let text = String::from_utf8_lossy(content);
+    let lines: Vec<&str> = text.lines().collect();
+    let pick: Vec<&str> = if name.ends_with(".log") {
+        lines[lines.len().saturating_sub(40)..].to_vec()
+    } else {
+        lines.iter().take(40).copied().collect()
+    };
+    pick.join("\n").chars().take(6000).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn slow_request_does_not_block() {
+        let server = Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        std::thread::spawn(move || {
+            serve_each(server, |req| {
+                if req.url() == "/slow" {
+                    std::thread::sleep(Duration::from_secs(3));
+                }
+                let _ = req.respond(Response::from_string("ok"));
+            })
+        });
+        let slow = std::thread::spawn(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/slow"))
+                .call()
+                .is_ok()
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        let t = Instant::now();
+        assert!(
+            ureq::get(format!("http://127.0.0.1:{port}/state"))
+                .call()
+                .is_ok()
+        );
+        assert!(
+            t.elapsed() < Duration::from_secs(1),
+            "быстрый запрос ждал медленный: {:?}",
+            t.elapsed()
+        );
+        assert!(slow.join().unwrap());
+    }
 }

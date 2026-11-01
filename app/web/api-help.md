@@ -11,7 +11,8 @@
 | POST | `/api/update` | проверить обновление сейчас (последняя версия — в `latest.version` релиза `latest`) |
 | GET | `/api/support` | черновик заявки в поддержку: можно ли создать из приложения, тема, описание, файлы |
 | POST | `/api/support` | создать заявку в Jira Service Desk от имени сотрудника: `{summary, description, priority, attach: [имена файлов]}` → `{created: {key, url, attach_failed}}` или `{error}`; заявка открывается в браузере |
-| GET | `/api/tickets` | созданные из приложения заявки (`jira-tickets.json`), новые первыми |
+| GET | `/api/tickets` | созданные из приложения заявки (`jira-tickets.json`), новые первыми; со статусом (`status`, `status_category`, `status_ms`) |
+| POST | `/api/tickets` | спросить статусы нерешённых заявок в Jira сейчас → `{tickets, error}` |
 | POST | `/api/diagnostics` | запустить диагностику подключения; результат — `GET /api/diagnostics` (`running`, `report`) |
 | GET | `/api/log?lines=300` | хвост лога |
 | GET | `/api/credentials` | кто вошёл логином AD (без пароля) |

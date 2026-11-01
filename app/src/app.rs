@@ -237,6 +237,7 @@ pub fn run(replace: bool, first_run: bool) {
         shared.clone(),
     );
     spawn_office(base_settings, dir.clone(), shared.clone());
+    spawn_tickets(dir.clone(), shared.clone());
     spawn_updater(
         settings.clone(),
         dir.clone(),
@@ -622,6 +623,44 @@ fn observation(s: &Snapshot) -> vpn_monitor::notify::Observation {
 
 /// Удалённые настройки (v0.7): раз в 5 минут — office.json из релиза `latest`; поменялся — наложить на свои
 /// настройки, сохранить копию, отдать проверке и окну. Файла нет — свои настройки.
+/// Статусы заявок в поддержку (v0.8): раз в 15 минут спрашиваем Jira о нерешённых, смена — уведомление.
+/// Заявок нет или все решены — сеть не трогаем.
+fn spawn_tickets(dir: PathBuf, shared: SharedRef) {
+    std::thread::spawn(move || {
+        let mut last_err = String::new();
+        std::thread::sleep(Duration::from_secs(90));
+        loop {
+            let open = vpn_monitor::jsm::open_tickets(&vpn_monitor::jsm::load_tickets(&dir));
+            let (url, notify) = {
+                let sh = lock(&shared);
+                (sh.settings.support_url.clone(), sh.prefs.notify.tickets)
+            };
+            if !open.is_empty()
+                && let (Some(p), Some(ad)) = (
+                    vpn_monitor::jsm::parse_portal(&url),
+                    vpn_monitor::creds::load_ad(),
+                )
+            {
+                let (toasts, err) =
+                    vpn_monitor::jsm::refresh_statuses(&dir, &p, &ad.login, &ad.password);
+                for (title, body) in toasts {
+                    info!("support", "{title}");
+                    if notify && let Err(e) = win::toast(&title, &body) {
+                        warn!("support", "{e}");
+                    }
+                }
+                // ошибку (нет VPN, сменился пароль) пишем один раз, пока она та же
+                let e = err.unwrap_or_default();
+                if !e.is_empty() && e != last_err {
+                    warn!("support", "статусы заявок не узнать: {e}");
+                }
+                last_err = e;
+            }
+            std::thread::sleep(vpn_monitor::jsm::STATUS_PERIOD);
+        }
+    });
+}
+
 fn spawn_office(base: Settings, dir: PathBuf, shared: SharedRef) {
     std::thread::spawn(move || {
         let path = dir.join(vpn_monitor::office::FILE);

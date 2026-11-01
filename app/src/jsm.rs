@@ -220,7 +220,7 @@ pub const TICKETS_FILE: &str = "jira-tickets.json";
 const TICKETS_KEEP: usize = 50;
 
 /// Созданная заявка. JSON обратно совместим: поля только добавляются.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Ticket {
     pub key: String,
     #[serde(default)]
@@ -230,6 +230,133 @@ pub struct Ticket {
     /// Когда создана, мс UNIX.
     #[serde(default)]
     pub created_ms: i64,
+    /// Статус в Service Desk, как его видит сотрудник («Ожидает поддержку», «Решено»), v0.8.
+    #[serde(default)]
+    pub status: String,
+    /// Категория статуса Jira: `NEW`, `INDETERMINATE`, `DONE` (пусто — ещё не узнавали).
+    #[serde(default)]
+    pub status_category: String,
+    /// Когда статус сменился, мс UNIX.
+    #[serde(default)]
+    pub status_ms: i64,
+}
+
+/// Статус заявки из ответа `GET /rest/servicedeskapi/request/{key}`: (статус, категория, когда сменился).
+pub fn parse_status(body: &str) -> Option<(String, String, i64)> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let cs = &v["currentStatus"];
+    let status = cs["status"].as_str()?.to_string();
+    let cat = cs["statusCategory"].as_str().unwrap_or("").to_string();
+    let at = cs["statusDate"]["epochMillis"].as_i64().unwrap_or(0);
+    Some((status, cat, at))
+}
+
+/// Узнать статус заявки (под входом AD сотрудника).
+pub fn fetch_status(
+    p: &Portal,
+    login: &str,
+    password: &str,
+    key: &str,
+) -> Result<(String, String, i64), String> {
+    let req = ureq::http::Request::builder()
+        .method("GET")
+        .uri(format!("{}/rest/servicedeskapi/request/{key}", p.base))
+        .header("Authorization", auth(login, password))
+        .header("Accept", "application/json")
+        .body(())
+        .map_err(|e| e.to_string())?;
+    let mut resp = crate::net::agent(Duration::from_secs(20))
+        .run(req)
+        .map_err(|e| e.to_string())?;
+    let st = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().unwrap_or_default();
+    if st != 200 {
+        return Err(explain(st, &text));
+    }
+    parse_status(&text).ok_or_else(|| "в ответе Jira нет статуса".into())
+}
+
+/// Заявки, статус которых стоит спросить: не решённые (и ещё не узнанные).
+pub fn open_tickets(list: &[Ticket]) -> Vec<String> {
+    list.iter()
+        .filter(|t| t.status_category != "DONE")
+        .map(|t| t.key.clone())
+        .collect()
+}
+
+/// Записать новый статус; `Some(старый статус)` — если сменился (для уведомления), `None` — тот же.
+pub fn with_status(
+    list: &mut [Ticket],
+    key: &str,
+    status: &str,
+    cat: &str,
+    at: i64,
+) -> Option<String> {
+    let t = list.iter_mut().find(|t| t.key == key)?;
+    if t.status == status && t.status_category == cat {
+        return None;
+    }
+    let old = std::mem::replace(&mut t.status, status.to_string());
+    t.status_category = cat.to_string();
+    t.status_ms = at;
+    Some(old)
+}
+
+/// Текст уведомления о смене статуса; первое узнавание (старого статуса нет) — без уведомления.
+pub fn status_toast(t: &Ticket, old: &str) -> Option<(String, String)> {
+    if old.is_empty() {
+        return None;
+    }
+    let title = if t.status_category == "DONE" {
+        format!("Заявка {} решена", t.key)
+    } else {
+        format!("Заявка {}: {}", t.key, t.status)
+    };
+    Some((title, t.summary.clone()))
+}
+
+/// Спросить статусы нерешённых заявок и записать; вернуть уведомления о сменах (заголовок, текст).
+/// Ошибка сети или входа — пустой список и текст ошибки (файл не трогаем).
+pub fn refresh_statuses(
+    dir: &std::path::Path,
+    p: &Portal,
+    login: &str,
+    password: &str,
+) -> (Vec<(String, String)>, Option<String>) {
+    let mut list = load_tickets(dir);
+    let mut toasts = vec![];
+    let mut err = None;
+    let mut changed = false;
+    for key in open_tickets(&list) {
+        match fetch_status(p, login, password, &key) {
+            Ok((st, cat, at)) => {
+                if let Some(old) = with_status(&mut list, &key, &st, &cat, at) {
+                    changed = true;
+                    if let Some(t) = list.iter().find(|t| t.key == key)
+                        && let Some(n) = status_toast(t, &old)
+                    {
+                        toasts.push(n);
+                    }
+                }
+            }
+            Err(e) => {
+                err = Some(e);
+                break;
+            }
+        }
+    }
+    if changed && let Err(e) = save_tickets(dir, &list) {
+        err = Some(e);
+    }
+    (toasts, err)
+}
+
+/// Как часто спрашивать статусы заявок в фоне.
+pub const STATUS_PERIOD: Duration = Duration::from_secs(15 * 60);
+
+pub fn save_tickets(dir: &std::path::Path, list: &[Ticket]) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(TICKETS_FILE), text).map_err(|e| e.to_string())
 }
 
 /// Заявки из файла, новые первыми; файла нет или он битый — пусто (файл не главный, приложение без него работает).
@@ -249,9 +376,7 @@ pub fn with_ticket(mut list: Vec<Ticket>, t: Ticket) -> Vec<Ticket> {
 }
 
 pub fn save_ticket(dir: &std::path::Path, t: Ticket) -> Result<(), String> {
-    let list = with_ticket(load_tickets(dir), t);
-    let text = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(TICKETS_FILE), text).map_err(|e| e.to_string())
+    save_tickets(dir, &with_ticket(load_tickets(dir), t))
 }
 
 #[cfg(test)]
@@ -292,12 +417,37 @@ mod tests {
     }
 
     #[test]
+    fn status_parsed_and_changes_notified() {
+        // ответ Jira Service Desk Data Center (сокращён)
+        let body = r#"{"issueKey":"DEVOPS-1287","currentStatus":{"status":"Ожидает поддержку","statusCategory":"NEW","statusDate":{"epochMillis":1793568000000}}}"#;
+        let (st, cat, at) = parse_status(body).unwrap();
+        assert_eq!(
+            (st.as_str(), cat.as_str(), at),
+            ("Ожидает поддержку", "NEW", 1793568000000)
+        );
+        assert!(parse_status("{}").is_none());
+        let mut list = vec![Ticket {
+            key: "DEVOPS-1287".into(),
+            summary: "VPN".into(),
+            ..Default::default()
+        }];
+        assert_eq!(open_tickets(&list), ["DEVOPS-1287"]);
+        let old = with_status(&mut list, "DEVOPS-1287", "Ожидает поддержку", "NEW", 1).unwrap();
+        assert!(status_toast(&list[0], &old).is_none()); // первое узнавание — тихо
+        assert!(with_status(&mut list, "DEVOPS-1287", "Ожидает поддержку", "NEW", 1).is_none());
+        let old = with_status(&mut list, "DEVOPS-1287", "Решено", "DONE", 2).unwrap();
+        assert_eq!(
+            status_toast(&list[0], &old).unwrap().0,
+            "Заявка DEVOPS-1287 решена"
+        );
+        assert!(open_tickets(&list).is_empty());
+    }
+
+    #[test]
     fn tickets_newest_first_no_dupes_and_tolerant() {
         let t = |k: &str| Ticket {
             key: k.into(),
-            url: String::new(),
-            summary: String::new(),
-            created_ms: 0,
+            ..Default::default()
         };
         let l = with_ticket(with_ticket(vec![], t("DEVOPS-1")), t("DEVOPS-2"));
         assert_eq!(
