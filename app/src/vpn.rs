@@ -121,7 +121,136 @@ fn profile(client: &str) -> Option<String> {
                 .flatten()
         })
         .collect();
-    (names.len() == 1).then(|| names[0].clone())
+    if names.len() != 1 {
+        return None;
+    }
+    let stem = names[0].clone();
+    if !lower.contains("connect") {
+        return Some(stem);
+    }
+    // OpenVPN Connect называет файлы профилей числом (внутренний id, «1780314832991»); человеческое название —
+    // «vpn.dominigames.com [DG_Rykov_Sergey_main]» — лежит в его JSON. Формат не документирован: ищем объект с этим
+    // id и берём поле с названием; не нашли — FRIENDLY_NAME или сервер из .ovpn; число не показываем.
+    let base = env_path("APPDATA", "OpenVPN Connect")?;
+    if let Some((title, file)) = connect_title(&base, &stem) {
+        CONNECT_LOGGED.call_once(|| info!("vpn", "OpenVPN Connect: название профиля из {file}"));
+        return Some(title);
+    }
+    let ovpn = std::fs::read_to_string(dir.join(format!("{stem}.ovpn"))).unwrap_or_default();
+    if let Some(t) = title_from_ovpn(&ovpn) {
+        CONNECT_LOGGED.call_once(|| info!("vpn", "OpenVPN Connect: название профиля из .ovpn"));
+        return Some(t);
+    }
+    CONNECT_LOGGED.call_once(|| {
+        info!(
+            "vpn",
+            "OpenVPN Connect: название профиля не найдено — показываю только клиента"
+        )
+    });
+    (!looks_like_id(&stem)).then_some(stem)
+}
+
+static CONNECT_LOGGED: std::sync::Once = std::sync::Once::new();
+
+/// Номер вместо названия (внутренний id профиля) — показывать незачем.
+fn looks_like_id(s: &str) -> bool {
+    s.len() >= 6 && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn connect_title(base: &std::path::Path, id: &str) -> Option<(String, String)> {
+    let rd = std::fs::read_dir(base).ok()?;
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        if !text.contains(id) {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        if let Some(t) = title_in_json(&v, id) {
+            let file = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            return Some((t, file));
+        }
+    }
+    None
+}
+
+/// Объект, где встречается `id` (значением или ключом), и в нём поле с названием.
+fn title_in_json(v: &serde_json::Value, id: &str) -> Option<String> {
+    const NAME_KEYS: &[&str] = &[
+        "name",
+        "title",
+        "profileName",
+        "displayName",
+        "friendlyName",
+        "label",
+    ];
+    let pick = |o: &serde_json::Map<String, serde_json::Value>| {
+        NAME_KEYS
+            .iter()
+            .filter_map(|k| o.get(*k).and_then(|x| x.as_str()))
+            .find(|t| !looks_like_id(t))
+            .and_then(safe_label)
+    };
+    match v {
+        serde_json::Value::Object(o) => {
+            if o.values().any(|x| x.as_str() == Some(id))
+                && let Some(t) = pick(o)
+            {
+                return Some(t);
+            }
+            if let Some(serde_json::Value::Object(inner)) = o.get(id)
+                && let Some(t) = pick(inner)
+            {
+                return Some(t);
+            }
+            o.values().find_map(|x| title_in_json(x, id))
+        }
+        serde_json::Value::Array(a) => a.iter().find_map(|x| title_in_json(x, id)),
+        serde_json::Value::String(s)
+            if s.contains(id) && s.trim_start().starts_with(['{', '[']) =>
+        {
+            // Electron-хранилища кладут JSON строкой внутри JSON
+            serde_json::from_str::<serde_json::Value>(s)
+                .ok()
+                .and_then(|x| title_in_json(&x, id))
+        }
+        _ => None,
+    }
+}
+
+/// Из .ovpn — только безопасные строки: `setenv FRIENDLY_NAME "…"` или имя сервера из `remote host port`.
+fn title_from_ovpn(text: &str) -> Option<String> {
+    for line in text.lines().map(str::trim) {
+        let l = line.trim_start_matches(['#', ' ']);
+        for prefix in ["setenv FRIENDLY_NAME", "OVPN_ACCESS_SERVER_FRIENDLY_NAME="] {
+            if let Some(rest) = l.strip_prefix(prefix) {
+                let t = rest.trim().trim_matches('"').trim();
+                if !t.is_empty() {
+                    return safe_label(t);
+                }
+            }
+        }
+    }
+    text.lines()
+        .map(str::trim)
+        .find_map(|l| l.strip_prefix("remote "))
+        .and_then(|r| r.split_whitespace().next())
+        .filter(|h| {
+            h.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        })
+        .map(str::to_string)
 }
 
 static HAPP_KEYS_LOGGED: std::sync::Once = std::sync::Once::new();
@@ -264,5 +393,34 @@ mod tests {
         );
         assert_eq!(safe_label("vless://uuid@host:443?x=1"), None);
         assert_eq!(safe_label("Офис Москва").as_deref(), Some("Офис Москва"));
+    }
+
+    #[test]
+    fn openvpn_connect_title_from_json_and_ovpn() {
+        let id = "1780314832991";
+        let v: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"profiles":[{{"id":"{id}","name":"vpn.dominigames.com [DG_Rykov_Sergey_main]"}}]}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            title_in_json(&v, id).as_deref(),
+            Some("vpn.dominigames.com [DG_Rykov_Sergey_main]")
+        );
+        // ключом и строкой с JSON внутри (Electron)
+        let v: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"store":"{{\"{id}\":{{\"title\":\"office [me]\"}}}}"}}"#
+        ))
+        .unwrap();
+        assert_eq!(title_in_json(&v, id).as_deref(), Some("office [me]"));
+        assert_eq!(
+            title_from_ovpn("client\nremote vpn.dominigames.com 1194 udp\n<key>\nsecret\n</key>")
+                .as_deref(),
+            Some("vpn.dominigames.com")
+        );
+        assert_eq!(
+            title_from_ovpn("setenv FRIENDLY_NAME \"DG main\"\nremote x 1").as_deref(),
+            Some("DG main")
+        );
+        assert!(looks_like_id(id) && !looks_like_id("Lisbon"));
     }
 }

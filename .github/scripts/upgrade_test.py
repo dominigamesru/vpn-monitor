@@ -150,7 +150,16 @@ def main() -> int:
     print(log.read_text(encoding="utf-8", errors="replace") if log.exists() else "(лога нет)")
     subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{old_ver}.exe"], capture_output=True)
     subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{new_ver}.exe"], capture_output=True)
+    subprocess.run(["taskkill", "/F", "/IM", "vpn-monitor.exe"], capture_output=True)
     httpd.shutdown()
+    # постоянный путь: Windows помнит иконку в трее по пути exe — новая версия должна работать из vpn-monitor.exe
+    text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+    marker = f"VPN Monitor {new_ver}, режим трей"
+    tail = text[text.rfind(marker):] if marker in text else ""
+    stable_ok = (install / "vpn-monitor.exe").exists() and "vpn-monitor.exe" in tail.split("\n", 2)[1] if tail else False
+    if ok and not stable_ok:
+        print(f"::error::{new_ver} работает не из vpn-monitor.exe — иконка в трее будет прятаться после обновлений")
+        return 1
     if ok and not flyout_ok:
         print(f"::error::{new_ver}: страница меню у иконки в WebView2 не ответила за 60 с — см. лог выше")
         return 1
