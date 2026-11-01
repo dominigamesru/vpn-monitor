@@ -89,12 +89,14 @@ impl Record {
             Color::Green => "green",
             Color::Yellow => "yellow",
             Color::Red => "red",
+            Color::Gray => "gray",
         };
         let b = match v.badge {
             Badge::Score(_) => "score",
             Badge::NoVpn => "novpn",
             Badge::WeakInternet(_) => "weak",
             Badge::Unknown => "unknown",
+            Badge::NoInternet => "offline",
         };
         let tg = s
             .targets

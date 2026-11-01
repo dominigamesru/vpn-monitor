@@ -18,6 +18,7 @@ pub fn color_rgba(c: Color) -> Rgba {
         Color::Green => [0x1f, 0xa8, 0x4a, 0xff],
         Color::Yellow => [0xe8, 0xa2, 0x00, 0xff],
         Color::Red => [0xd9, 0x2d, 0x2d, 0xff],
+        Color::Gray => GRAY,
     }
 }
 const GRAY: Rgba = [0x70, 0x76, 0x80, 0xff];
@@ -120,6 +121,7 @@ fn glyph_rows(ch: char) -> [u8; 5] {
         '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
         '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
         'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+        'x' => [0b101, 0b101, 0b010, 0b101, 0b101],
         _ => [0; 5],
     }
 }
@@ -219,6 +221,10 @@ pub fn render(badge: Badge, color: Color, checking: bool) -> Vec<u8> {
                 c.ring_arc(cx, cy, 11.0, 2.4, 220.0, 320.0, WHITE);
             }
         }
+        Badge::NoInternet => {
+            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
+            c.glyph('x', 17, 13, 3, WHITE);
+        }
         Badge::Unknown => {
             c.round_rect(14.0, 14.0, 18.0, 18.0, 9.0, col);
         }
@@ -250,6 +256,7 @@ mod tests {
             (Badge::NoVpn, Color::Red),
             (Badge::WeakInternet(2), Color::Yellow),
             (Badge::Unknown, Color::Red),
+            (Badge::NoInternet, Color::Gray),
         ] {
             let px = render(b, c, false);
             assert_eq!(px.len(), (SIZE * SIZE * 4) as usize);

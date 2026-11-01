@@ -13,6 +13,8 @@ pub enum Color {
     Green,
     Yellow,
     Red,
+    /// Нет данных о VPN (нет интернета).
+    Gray,
 }
 
 impl Color {
@@ -21,6 +23,7 @@ impl Color {
             Color::Green => "зелёный",
             Color::Yellow => "жёлтый",
             Color::Red => "красный",
+            Color::Gray => "серый",
         }
     }
 }
@@ -36,6 +39,8 @@ pub enum Badge {
     NoVpn,
     /// Слабый интернет — полоски 1..=3.
     WeakInternet(u8),
+    /// Нет интернета вообще — серый знак; VPN тут ни при чём (v0.4.1).
+    NoInternet,
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +219,7 @@ pub fn evaluate(
     th: &Thresholds,
     now: SystemTime,
     baseline: Option<Baseline>,
+    online: bool,
 ) -> Verdict {
     let light: Vec<&ProbeResult> = light
         .iter()
@@ -229,6 +235,21 @@ pub fn evaluate(
             speed: None,
             stability,
             explain: "нет проб светофора".into(),
+            parts: vec![],
+            baseline,
+        };
+    }
+    if !online {
+        return Verdict {
+            color: Color::Gray,
+            badge: Badge::NoInternet,
+            score: None,
+            latency: None,
+            speed: None,
+            stability,
+            explain:
+                "нет интернета: не отвечают ни проверочные адреса, ни цели — VPN не оценивается"
+                    .into(),
             parts: vec![],
             baseline,
         };
@@ -387,6 +408,7 @@ mod tests {
             &th,
             SystemTime::now(),
             None,
+            true,
         );
         assert_eq!(v.badge, Badge::NoVpn);
         assert_eq!(v.color, Color::Red);
@@ -409,6 +431,7 @@ mod tests {
             &th,
             now,
             None,
+            true,
         );
         assert_eq!(good.color, Color::Green, "{good:?}");
         assert!(matches!(good.badge, Badge::Score(s) if s >= 90));
@@ -421,8 +444,27 @@ mod tests {
             &th,
             now,
             None,
+            true,
         );
         assert_eq!(slow.color, Color::Red, "{slow:?}");
+    }
+
+    #[test]
+    fn no_internet_is_not_blamed_on_vpn() {
+        let th = Settings::embedded().thresholds;
+        let v = evaluate(
+            &[light(false, 0.0)],
+            &[],
+            None,
+            false,
+            &History::default(),
+            &th,
+            SystemTime::now(),
+            None,
+            false,
+        );
+        assert_eq!(v.badge, Badge::NoInternet);
+        assert_eq!(v.color, Color::Gray);
     }
 
     #[test]
@@ -439,6 +481,7 @@ mod tests {
             &th,
             now,
             None,
+            true,
         );
         assert_eq!(v.badge, Badge::WeakInternet(1));
         // 7 Мбит/с: выше порога, но ниже порога + 8 → остаются полоски
@@ -451,6 +494,7 @@ mod tests {
             &th,
             now,
             None,
+            true,
         );
         assert!(matches!(v.badge, Badge::WeakInternet(_)));
         let v = evaluate(
@@ -462,6 +506,7 @@ mod tests {
             &th,
             now,
             None,
+            true,
         );
         assert!(matches!(v.badge, Badge::Score(_)));
     }

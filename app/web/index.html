@@ -300,7 +300,7 @@ function cls(kind, v) {
   if (kind === "score") return v >= th.score_green ? "good" : v >= th.score_yellow ? "warning" : "critical";
   return "nodata";
 }
-const colorToStatus = { green: "good", yellow: "warning", red: "critical" };
+const colorToStatus = { green: "good", yellow: "warning", red: "critical", gray: "nodata" };
 
 // ---------- состояние ----------
 function renderState() {
@@ -314,7 +314,8 @@ function renderState() {
   const st = colorToStatus[sn.color] || "nodata";
   scoreEl.className = "score " + (sn.badge === "unknown" ? "nodata" : st);
   scoreEl.style.background = sn.badge === "unknown" ? "" : `var(--${st})`;
-  if (sn.badge === "novpn") { scoreEl.textContent = "!"; $("#title").textContent = "VPN не включён"; }
+  if (sn.badge === "offline") { scoreEl.className = "score nodata"; scoreEl.style.background = ""; scoreEl.textContent = "×"; $("#title").textContent = "Нет интернета — VPN не оценивается"; }
+  else if (sn.badge === "novpn") { scoreEl.textContent = "!"; $("#title").textContent = "VPN не включён"; }
   else if (sn.badge === "weak") { scoreEl.textContent = sn.score != null ? pad(sn.score) : "—"; $("#title").textContent = "Слабый интернет — VPN тут ни при чём"; }
   else { scoreEl.textContent = sn.score != null ? pad(sn.score) : "—"; $("#title").textContent = `Оценка VPN — ${({ good: "работать удобно", warning: "терпимо, но медленно", critical: "работать тяжело" })[st]}`; }
   const nextSec = sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec;
@@ -375,8 +376,9 @@ function prepare(records) {
     return {
       t: r.t, off: r.b === "novpn", score: r.b === "novpn" ? null : r.s, lat: r.lat, spd: r.spd, inet, inetRaw: r.inet ?? null,
       svn: tg.svn?.ok ? tg.svn.mbps : null, gitlab: tg.gitlab?.ok ? tg.gitlab.mbps : null,
-      vpn: r.b === "novpn" ? "critical" : r.b === "unknown" ? "nodata" : "good",
-      latS: r.b === "novpn" ? "nodata" : cls("lat", r.lat), spdS: r.b === "novpn" ? "nodata" : cls("spd", r.spd), inetS: cls("inet", inet),
+      vpn: r.b === "novpn" ? "critical" : (r.b === "unknown" || r.b === "offline") ? "nodata" : "good",
+      latS: (r.b === "novpn" || r.b === "offline") ? "nodata" : cls("lat", r.lat), spdS: (r.b === "novpn" || r.b === "offline") ? "nodata" : cls("spd", r.spd),
+      inetS: r.b === "offline" ? "critical" : cls("inet", inet),
     };
   });
 }
