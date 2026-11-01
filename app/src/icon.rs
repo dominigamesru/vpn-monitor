@@ -1,5 +1,6 @@
-//! Иконка-светофор: логотип (фавикон dominigames.com, если он был при сборке, иначе нарисованный) и знак
-//! поверх — оценка числом, «!», полоски слабого интернета или значок «идёт проверка».
+//! Иконка-светофор: собачка (фавикон dominigames.com, если он был при сборке, иначе нарисованный «D») слева снизу
+//! без фона и плашка статуса справа сверху — оценка числом, «!», полоски слабого интернета; во время проверки —
+//! синяя точка слева сверху.
 #![allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 
 use crate::score::{Badge, Color};
@@ -128,27 +129,30 @@ fn glyph_rows(ch: char) -> [u8; 5] {
     }
 }
 
-/// Логотип 32×32: фавикон или нарисованный «D».
+/// Логотип в левом нижнем углу (21×21): фавикон без фона или нарисованный «D».
+const LOGO: u32 = 21;
+
 fn base() -> Canvas {
-    if let Some(c) = FAVICON.and_then(decode_favicon) {
+    let mut c = Canvas::new();
+    if let Some(bytes) = FAVICON
+        && draw_favicon(&mut c, bytes, 0, SIZE - LOGO, LOGO).is_some()
+    {
         return c;
     }
-    let mut c = Canvas::new();
-    c.round_rect(0.0, 0.0, 32.0, 32.0, 7.0, [0x1d, 0x2b, 0x4f, 0xff]);
-    c.glyph('D', 7, 3, 3, WHITE);
+    c.round_rect(0.0, 11.0, 21.0, 21.0, 5.0, [0x1d, 0x2b, 0x4f, 0xff]);
+    c.glyph('D', 6, 16, 2, WHITE);
     c
 }
 
-fn decode_favicon(bytes: &[u8]) -> Option<Canvas> {
+/// Вписывает фавикон в квадрат `box_` с сохранением пропорций и прозрачности, усредняя пиксели.
+fn draw_favicon(c: &mut Canvas, bytes: &[u8], ox0: u32, oy0: u32, box_: u32) -> Option<()> {
     let dir = ico::IconDir::read(std::io::Cursor::new(bytes)).ok()?;
     let entry = dir.entries().iter().max_by_key(|e| e.width())?;
     let img = entry.decode().ok()?;
     let (w, h, data) = (img.width(), img.height(), img.rgba_data());
-    let mut c = Canvas::new();
-    // вписываем с сохранением пропорций, усредняя пиксели (уменьшение)
-    let scale = (w.max(h) as f32) / SIZE as f32;
+    let scale = (w.max(h) as f32) / box_ as f32;
     let (ow, oh) = ((w as f32 / scale) as u32, (h as f32 / scale) as u32);
-    let (ox, oy) = ((SIZE - ow) / 2, (SIZE - oh) / 2);
+    let (ox, oy) = (ox0 + (box_ - ow) / 2, oy0 + (box_ - oh));
     for y in 0..oh {
         for x in 0..ow {
             let (sx0, sy0) = ((x as f32 * scale) as u32, (y as f32 * scale) as u32);
@@ -169,7 +173,11 @@ fn decode_favicon(bytes: &[u8]) -> Option<Canvas> {
                     n += 1.0;
                 }
             }
-            let i = (((y + oy) * SIZE + x + ox) * 4) as usize;
+            let (px, py) = (x + ox, y + oy);
+            if px >= SIZE || py >= SIZE {
+                continue;
+            }
+            let i = ((py * SIZE + px) * 4) as usize;
             if acc[3] > 0.0 {
                 for k in 0..3 {
                     c.px[i + k] = (acc[k] / acc[3]).round() as u8;
@@ -178,68 +186,71 @@ fn decode_favicon(bytes: &[u8]) -> Option<Canvas> {
             c.px[i + 3] = (acc[3] / n).round() as u8;
         }
     }
-    Some(c)
+    Some(())
 }
 
-/// Готовая иконка RGBA 32×32.
+/// Готовая иконка RGBA 32×32: собачка слева снизу, статус — плашкой справа сверху; во время проверки статус не
+/// меняется, а слева сверху появляется синяя точка (v0.6).
 pub fn render(badge: Badge, color: Color, checking: bool) -> Vec<u8> {
     let mut c = base();
-    let col = if matches!(badge, Badge::Unknown) {
-        GRAY
-    } else {
-        color_rgba(color)
+    let col = match badge {
+        Badge::Unknown | Badge::Captive | Badge::Paused | Badge::NoInternet => GRAY,
+        _ => color_rgba(color),
     };
-    if checking {
-        // значок «идёт проверка»: кольцо-стрелка в правом нижнем углу
-        c.round_rect(12.0, 12.0, 20.0, 20.0, 10.0, [0x2f, 0x6f, 0xdc, 0xff]);
-        c.ring_arc(22.0, 22.0, 6.0, 2.6, 40.0, 330.0, WHITE);
-        c.rect(25, 13, 4, 4, WHITE);
-        return c.px;
-    }
+    // плашка статуса: x 13..31, y 1..18
+    let (bx, by, bw, bh) = (13.0, 1.0, 18.0, 17.0);
     match badge {
         Badge::Score(n) => {
-            let n = n.clamp(1, 99);
-            let text = format!("{n:02}");
-            c.round_rect(3.0, 14.0, 29.0, 18.0, 4.0, col);
-            let mut x = 6;
+            let text = format!("{:02}", n.clamp(1, 99));
+            c.round_rect(bx, by, bw, bh, 4.0, col);
+            let mut x = 15;
             for ch in text.chars() {
-                c.glyph(ch, x, 16, 3, WHITE);
-                x += 12;
+                c.glyph(ch, x, 4, 2, WHITE);
+                x += 8;
             }
-        }
-        Badge::NoVpn => {
-            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, col);
-            c.glyph('!', 17, 13, 3, WHITE);
         }
         Badge::WeakInternet(bars) => {
-            c.round_rect(8.0, 12.0, 24.0, 20.0, 5.0, col);
-            // как у Wi-Fi: точка, затем дуги
-            let (cx, cy) = (20.0, 28.5);
-            c.round_rect(cx - 2.0, cy - 2.5, 4.0, 4.0, 2.0, WHITE);
+            c.round_rect(bx, by, bw, bh, 4.0, col);
+            let (cx, cy) = (22.0, 15.0);
+            c.round_rect(cx - 1.5, cy - 2.0, 3.0, 3.0, 1.5, WHITE);
             if bars >= 2 {
-                c.ring_arc(cx, cy, 6.0, 2.4, 215.0, 325.0, WHITE);
+                c.ring_arc(cx, cy, 5.0, 2.0, 215.0, 325.0, WHITE);
             }
             if bars >= 3 {
-                c.ring_arc(cx, cy, 11.0, 2.4, 220.0, 320.0, WHITE);
+                c.ring_arc(cx, cy, 9.0, 2.0, 220.0, 320.0, WHITE);
             }
         }
-        Badge::Captive => {
-            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
-            c.glyph('?', 17, 13, 3, WHITE);
-        }
-        Badge::Paused => {
-            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
-            c.glyph('|', 17, 13, 3, WHITE);
-        }
-        Badge::NoInternet => {
-            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
-            c.glyph('x', 17, 13, 3, WHITE);
-        }
         Badge::Unknown => {
-            c.round_rect(14.0, 14.0, 18.0, 18.0, 9.0, col);
+            c.round_rect(17.0, 3.0, 12.0, 12.0, 6.0, col);
+        }
+        _ => {
+            let ch = match badge {
+                Badge::NoVpn => '!',
+                Badge::Captive => '?',
+                Badge::Paused => '|',
+                _ => 'x',
+            };
+            c.round_rect(bx, by, bw, bh, 4.0, col);
+            c.glyph(ch, 19, 4, 2, WHITE);
         }
     }
+    if checking {
+        // синяя точка «идёт проверка»
+        c.round_rect(1.0, 1.0, 8.0, 8.0, 4.0, [0x2f, 0x7c, 0xf6, 0xff]);
+    }
     c.px
+}
+
+/// RGBA 32×32 → `.ico` (PNG внутри) — фавикон окна в браузере, тот же, что иконка в трее (v0.6).
+pub fn to_ico(px: &[u8]) -> Vec<u8> {
+    let img = ico::IconImage::from_rgba_data(SIZE, SIZE, px.to_vec());
+    let mut dir = ico::IconDir::new(ico::ResourceType::Icon);
+    if let Ok(e) = ico::IconDirEntry::encode(&img) {
+        dir.add_entry(e);
+    }
+    let mut out = Vec::new();
+    let _ = dir.write(&mut out);
+    out
 }
 
 /// RGBA → PNG (для предпросмотра иконок в тестах и отладке).
@@ -273,6 +284,22 @@ mod tests {
             let px = render(b, c, false);
             assert_eq!(px.len(), (SIZE * SIZE * 4) as usize);
             assert!(px.chunks(4).any(|p| p[3] > 0));
+        }
+        // предпросмотр: ICON_PREVIEW=папка cargo test renders_all_badges — PPM каждой иконки
+        if let Ok(dir) = std::env::var("ICON_PREVIEW") {
+            for (i, (b, c, ch)) in [
+                (Badge::Score(84), Color::Green, false),
+                (Badge::Score(61), Color::Yellow, true),
+                (Badge::NoVpn, Color::Red, false),
+                (Badge::WeakInternet(2), Color::Yellow, false),
+                (Badge::NoInternet, Color::Gray, true),
+                (Badge::Paused, Color::Gray, false),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let _ = std::fs::write(format!("{dir}/icon{i}.ppm"), to_ppm(&render(b, c, ch)));
+            }
         }
         assert_eq!(
             render(Badge::Unknown, Color::Red, true).len(),

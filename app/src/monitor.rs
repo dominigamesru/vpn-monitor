@@ -30,6 +30,11 @@ pub struct Snapshot {
     pub overhead_ms: Option<f64>,
     pub share: Option<f64>,
     pub verdict: Verdict,
+    /// v0.6: маршрут — звенья по медиане трёх проверок, виновник, каскад; цвет и оценка иконки — из него.
+    pub route: Option<crate::route::Route>,
+    /// v0.6: была ли полная проба со скачиванием и сколько заняла проверка.
+    pub full: bool,
+    pub took_ms: u64,
 }
 
 pub struct Monitor {
@@ -49,6 +54,11 @@ pub struct Monitor {
     speeds: VecDeque<f64>,
     overheads: VecDeque<f64>,
     shares: VecDeque<f64>,
+    /// v0.6: последние три проверки по звеньям маршрута (route.rs).
+    r_inet: VecDeque<f64>,
+    r_inet_ms: VecDeque<f64>,
+    r_vpn: VecDeque<f64>,
+    r_svn: VecDeque<f64>,
     /// Своя норма (медианы за неделю) — задаёт трей перед проверкой из файлов метрик (v0.4).
     pub baseline: Option<crate::score::Baseline>,
     /// Клиент и профиль VPN прошлой проверки — по нему трей выбирает норму (v0.5).
@@ -97,6 +107,10 @@ impl Monitor {
             speeds: VecDeque::new(),
             overheads: VecDeque::new(),
             shares: VecDeque::new(),
+            r_inet: VecDeque::new(),
+            r_inet_ms: VecDeque::new(),
+            r_vpn: VecDeque::new(),
+            r_svn: VecDeque::new(),
             baseline: None,
             last_client: None,
             grace_until: None,
@@ -250,6 +264,8 @@ impl Monitor {
                 self.speeds.clear();
                 self.overheads.clear();
                 self.shares.clear();
+                self.r_vpn.clear();
+                self.r_svn.clear();
             }
         }
         let mut office_speed: Option<f64> = None;
@@ -268,6 +284,26 @@ impl Monitor {
         {
             office_speed = Some(sp);
             push_capped(&mut self.speeds, sp, SMOOTH_CHECKS);
+            if !skip_history {
+                push_capped(&mut self.r_svn, sp, crate::route::LAST);
+            }
+        }
+        // v0.6: звенья маршрута — интернет (скорость, если мерили; задержка), средняя задержка до офиса через VPN
+        if online && !skip_history {
+            if let Some(ms) = internet_latency.filter(|m| *m > 0.0) {
+                push_capped(&mut self.r_inet_ms, ms, crate::route::LAST);
+            }
+            if internet_fresh && let Some(m) = self.last_internet.as_ref().and_then(|r| r.mbps) {
+                push_capped(&mut self.r_inet, m, crate::route::LAST);
+            }
+            let office_ms: Vec<f64> = light_results
+                .iter()
+                .filter(|r| r.reachable && r.via_vpn != Some(false))
+                .filter_map(|r| r.latency_ms)
+                .collect();
+            if let Some(m) = crate::route::median(&office_ms) {
+                push_capped(&mut self.r_vpn, m, crate::route::LAST);
+            }
         }
         for r in &results {
             // полная проба точнее по скорости — лёгкая не затирает её скорость, но обновляет доступность
@@ -354,6 +390,72 @@ impl Monitor {
             verdict.color = score::Color::Gray;
             verdict.explain = "проверяю после сна — сеть ещё поднимается".into();
         }
+        // v0.6: маршрут; цвет и оценка иконки — из него (кроме «нет интернета», Wi‑Fi со входом, после сна)
+        let route = online.then(|| {
+            let office: Vec<(String, crate::route::Svc, bool)> = targets
+                .iter()
+                .filter(|r| matches!(r.role, Some(Role::Light) | Some(Role::Speed)))
+                .map(|r| {
+                    let st = if r.fail == Some(crate::probe::Fail::Auth) {
+                        crate::route::Svc::AuthFailed
+                    } else if r.reachable && r.ok {
+                        crate::route::Svc::Up
+                    } else {
+                        crate::route::Svc::Down
+                    };
+                    (r.name.clone(), st, r.role == Some(Role::Speed))
+                })
+                .collect();
+            let vpn_up = light.iter().any(|r| r.reachable);
+            let (inet, inet_ms, vpn, svn) = (
+                Vec::from(self.r_inet.clone()),
+                Vec::from(self.r_inet_ms.clone()),
+                Vec::from(self.r_vpn.clone()),
+                Vec::from(self.r_svn.clone()),
+            );
+            crate::route::evaluate(
+                &crate::route::Input {
+                    inet_mbps: &inet,
+                    inet_ms: &inet_ms,
+                    vpn_ms: &vpn,
+                    svn_mbps: &svn,
+                    vpn_up,
+                    office: &office,
+                },
+                &self.settings.thresholds,
+            )
+        });
+        if let Some(r) = &route
+            && !captive
+            && !skip_history
+            && matches!(
+                verdict.badge,
+                score::Badge::Score(_) | score::Badge::WeakInternet(_)
+            )
+        {
+            verdict.color = match r.color {
+                crate::route::St::Good => score::Color::Green,
+                crate::route::St::Warn => score::Color::Yellow,
+                crate::route::St::Bad => score::Color::Red,
+            };
+            if let Some(n) = r.score {
+                verdict.score = Some(n);
+                if matches!(verdict.badge, score::Badge::Score(_)) {
+                    verdict.badge = score::Badge::Score(n);
+                }
+            }
+            info!(
+                "route",
+                "маршрут: интернет {:?}/{:?}, VPN {:?}, SVN {:?}, офис {:?}; виновник {:?} ({:?})",
+                r.st_inet_speed,
+                r.st_inet_lat,
+                r.st_vpn,
+                r.st_svn,
+                r.st_office,
+                r.cause,
+                r.why
+            );
+        }
         self.weak_internet = matches!(verdict.badge, score::Badge::WeakInternet(_));
         info!(
             "score",
@@ -379,6 +481,9 @@ impl Monitor {
             overhead_ms: tunnel.overhead_ms,
             share: tunnel.share,
             verdict,
+            route,
+            full: results.iter().any(|r| r.full),
+            took_ms: t0.elapsed().as_millis() as u64,
         }
     }
 }

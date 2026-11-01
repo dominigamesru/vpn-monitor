@@ -78,6 +78,46 @@ pub struct Thresholds {
     /// Замер канала годится для доли канала, пока он не старше стольких минут.
     #[serde(default = "d_share_fresh")]
     pub share_fresh_min: u64,
+    // --- v0.6: маршрут — статус звеньев по медиане трёх проверок (route.rs) ---
+    /// Средняя скорость SVN, Мбит/с: от этого — норма / ниже этого — плохо.
+    #[serde(default = "d_svn_good")]
+    pub svn_good_mbps: f64,
+    #[serde(default = "d_svn_bad")]
+    pub svn_bad_mbps: f64,
+    /// Скорость интернета, Мбит/с: медленнее нормы SVN физически не будет в норме.
+    #[serde(default = "d_svn_good")]
+    pub inet_good_mbps: f64,
+    #[serde(default = "d_svn_bad")]
+    pub inet_bad_mbps: f64,
+    /// Задержка до интернета, мс: выше — «так себе» / выше — «плохо».
+    #[serde(default = "d_ilat_warn")]
+    pub inet_lat_warn_ms: f64,
+    #[serde(default = "d_ilat_bad")]
+    pub inet_lat_bad_ms: f64,
+    /// Средняя задержка до офиса через VPN, мс.
+    #[serde(default = "d_vpn_good")]
+    pub vpn_good_ms: f64,
+    #[serde(default = "d_vpn_bad")]
+    pub vpn_bad_ms: f64,
+}
+
+fn d_svn_good() -> f64 {
+    8.0
+}
+fn d_svn_bad() -> f64 {
+    2.0
+}
+fn d_ilat_warn() -> f64 {
+    1000.0
+}
+fn d_ilat_bad() -> f64 {
+    3000.0
+}
+fn d_vpn_good() -> f64 {
+    300.0
+}
+fn d_vpn_bad() -> f64 {
+    700.0
 }
 
 fn d_ovh_good() -> f64 {

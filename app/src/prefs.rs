@@ -43,7 +43,7 @@ impl Default for Notify {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prefs {
-    /// Вид меню трея: `route` (по умолчанию), `gauge`, `strip`, `panel`.
+    /// Вид меню трея: `route` (по умолчанию), `dash`, `strip` (до v0.6 — ещё `gauge`, `panel`).
     #[serde(default = "d_view")]
     pub view: String,
     /// Канал обновлений: `latest` (стабильный) или `beta`.
@@ -57,6 +57,9 @@ pub struct Prefs {
     /// Версия, «что нового» которой сотрудник уже видел.
     #[serde(default)]
     pub last_seen_version: Option<String>,
+    /// Тема меню у иконки и окна: `""` — как в системе, `light`, `dark` (v0.6).
+    #[serde(default)]
+    pub theme: String,
 }
 
 impl Default for Prefs {
@@ -67,11 +70,15 @@ impl Default for Prefs {
             pause_until_ms: None,
             notify: Notify::default(),
             last_seen_version: None,
+            theme: String::new(),
         }
     }
 }
 
-pub const VIEWS: &[&str] = &["route", "gauge", "strip", "panel"];
+/// Виды меню. v0.6: `route`, `dash` (приборная панель), `strip`; `gauge` и `panel` — старые, страница показывает
+/// их как `dash` (файл может прийти от прошлой версии или откатиться к ней).
+pub const VIEWS: &[&str] = &["route", "dash", "strip", "gauge", "panel"];
+pub const THEMES: &[&str] = &["", "light", "dark"];
 pub const CHANNELS: &[&str] = &["latest", "beta"];
 
 fn path(dir: &Path) -> PathBuf {
