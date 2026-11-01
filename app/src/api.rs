@@ -553,6 +553,21 @@ fn state(shared: &SharedRef) -> Value {
             "internet": sn.internet.as_ref().map(probe_json),
         })
     });
+    // для «Настроек»: по каждому сервису офиса — каким входом проверяем и когда он последний раз ответил
+    let services: Vec<Value> = {
+        let recs = sh
+            .store
+            .since(vpn_monitor::metrics::now_ms() - 7 * 86_400_000);
+        s.targets.iter()
+                .filter(|t| t.enabled && matches!(t.role, vpn_monitor::settings::Role::Light | vpn_monitor::settings::Role::Speed))
+                .map(|t| {
+                    let last_ok = recs.iter().rev().find(|r| r.tg.get(&t.id).is_some_and(|x| x.ok)).map(|r| r.t);
+                    let p = sh.snapshot.as_ref().and_then(|sn| sn.targets.iter().find(|r| r.target_id == t.id));
+                    json!({"id": t.id, "name": t.name, "auth": p.map(|r| r.auth_used.clone()),
+                           "note": p.and_then(|r| r.note.clone()), "ok": p.map(|r| r.ok), "last_ok_ms": last_ok})
+                })
+                .collect::<Vec<_>>()
+    };
     json!({
         "version": VERSION,
         "latest": sh.latest,
@@ -575,6 +590,7 @@ fn state(shared: &SharedRef) -> Value {
         "paused": sh.prefs.paused(vpn_monitor::metrics::now_ms()),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
         "city": sh.city,
+        "services": services,
         // когда поставлена эта версия: время файла exe (скачан при обновлении)
         "updated_ms": std::env::current_exe().ok()
             .and_then(|p| std::fs::metadata(p).ok())

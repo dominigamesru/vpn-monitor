@@ -7,7 +7,7 @@
 <link rel="icon" id="favicon" href="/favicon.ico">
 <link rel="stylesheet" href="/vendor/tippy.css">
 <style>
-/* Окно (v0.5): три вкладки — «Сейчас», «История», «Подключение». Палитра и шрифт — как у меню у иконки. */
+/* Окно: три вкладки — «Сейчас», «История», «Настройки» (адрес #conn — с v0.5). Палитра и шрифт — как у меню у иконки. */
 :root {
   --page: #eef1f5; --surface: #ffffff; --surface-2: #f3f5f8; --ink: #15202e; --muted: #5a6b80; --line: #e2e7ee; --axis: #c9d2dd;
   --accent: #2f5bea; --accent-ink: #ffffff;
@@ -110,7 +110,14 @@ th { color: var(--muted); font-weight: 600; } td.num { white-space: nowrap; }
 .empty { color: var(--muted); padding: 10px 0; }
 .tablewrap { overflow-x: auto; }
 
-/* Подключение */
+/* Настройки */
+.adgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 24px; }
+@media (max-width: 760px) { .adgrid { grid-template-columns: 1fr; } }
+.svcstate { display: grid; gap: 8px; align-content: start; border-left: 1px solid var(--line); padding-left: 20px; }
+@media (max-width: 760px) { .svcstate { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 14px; } }
+.svcstate .row2 { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; }
+.svcstate .row2 b { font-weight: 600; font-size: 13.5px; }
+.svcstate .row2 small { grid-column: 2; color: var(--muted); font-size: 12px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 form.login { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 10px; align-items: end; }
 @media (max-width: 640px) { form.login { grid-template-columns: 1fr; } }
@@ -150,7 +157,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   <header class="top">
     <h1><span class="mini idle" id="mini" tabindex="0">…</span> Domini VPN Monitor <span class="ver" id="ver"></span></h1>
     <nav class="tabs" aria-label="Разделы">
-      <a href="#now">Сейчас</a><a href="#history">История</a><a href="#conn">Подключение</a>
+      <a href="#now">Сейчас</a><a href="#history">История</a><a href="#conn">Настройки</a>
     </nav>
   </header>
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
@@ -165,7 +172,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
         <div class="route" id="route"></div>
       </div>
       <div class="card">
-        <h2>Звенья и нормы</h2>
+        <h2>Каналы</h2>
         <p class="sub" id="normSub"></p>
         <div class="norms" id="norms"></div>
         <div class="lineinfo" id="lineinfo"></div>
@@ -200,15 +207,20 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   <!-- ПОДКЛЮЧЕНИЕ -->
   <section data-tab="conn" hidden>
     <div class="card">
-      <h2>Учётная запись AD</h2>
-      <p class="sub">Один вход для Jira, Confluence, SVN и GitLab. Пароль хранится в Диспетчере учётных данных Windows; приложение только читает.</p>
-      <div id="loginState"></div>
-      <form class="login" id="loginForm" autocomplete="on">
-        <label class="f">Логин<input type="text" id="loginInput" autocomplete="username" placeholder="i.ivanov" required></label>
-        <label class="f">Пароль<input type="password" id="passInput" autocomplete="current-password" required></label>
-        <button class="btn" type="submit" id="loginBtn">Войти</button>
-      </form>
-      <div class="diag" id="loginChecks" style="margin-top:10px"></div>
+      <div class="adgrid">
+        <div>
+          <h2>Учётная запись AD</h2>
+          <p class="sub">Один вход для Jira, Confluence, SVN и GitLab. Пароль хранится в Диспетчере учётных данных Windows; приложение только читает.</p>
+          <div id="loginState"></div>
+          <form class="login" id="loginForm" autocomplete="on">
+            <label class="f">Логин<input type="text" id="loginInput" autocomplete="username" placeholder="i.ivanov" required></label>
+            <label class="f">Пароль<input type="password" id="passInput" autocomplete="current-password" required></label>
+            <button class="btn" type="submit" id="loginBtn">Войти</button>
+          </form>
+          <div class="diag" id="loginChecks" style="margin-top:10px"></div>
+        </div>
+        <div class="svcstate" id="svcState" aria-label="Подключение по сервисам"></div>
+      </div>
     </div>
     <div class="grid2">
       <div class="card">
@@ -340,18 +352,17 @@ function renderNow() {
     hop("Офис", P(r?.st_office), "", r?.svn.value == null ? "" : mbps(r.svn.value), r?.svn.value == null ? "" : `SVN · норма от ${num(th.svn_good_mbps)}`, chips(officeT(), false), null, r?.cause === "office", r?.because_office),
     world.length ? hop("Мир", P(wOk === world.length ? "good" : wOk ? "warn" : "bad"), "", "", "", chips(world, true)) : null);
   // звенья против порогов (медиана трёх проверок)
-  $("#normSub").textContent = "Статус звена — по медиане трёх последних проверок, чтобы один выпад не менял картину. В «Истории» — каждая проверка как есть.";
+  $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин` : "Ещё не проверяли";
   const norms = $("#norms"); norms.replaceChildren();
   const row = (name, st, val, frac, mark, cmp) => { const tr = el("div", { class: "track" }, el("i", { style: `width:${Math.max(3, Math.min(1, frac) * 100)}%` })); if (mark != null) tr.append(el("em", { style: `left:calc(${Math.min(1, mark) * 100}% - 1px)` })); norms.append(el("div", { class: `nr ${st}` }, badge(st, name), el("span", { class: "val", text: val }), tr, el("span", { class: "cmp", text: cmp }))); };
   if (r) {
     const sMax = th.svn_good_mbps * 2, vMax = th.vpn_bad_ms * 1.15;
     row("Скорость SVN", P(r.st_svn), mbps(r.svn.value), (r.svn.value ?? 0) / sMax, th.svn_good_mbps / sMax, r.svn.value == null ? "Не мерили — проверка без скачивания или VPN выключен" : `Норма — от ${mbps(th.svn_good_mbps)}; ${raw(r.svn, (x) => num(x, 1))}${r.inet.value ? `; до SVN доходит ${num((r.svn.value / r.inet.value) * 100)}% интернета` : ""}`);
-    row("Задержка VPN", P(r.st_vpn), msf(r.vpn.value), Math.min(r.vpn.value ?? 0, vMax) / vMax, th.vpn_good_ms / vMax, r.vpn.value == null ? "VPN не подключён" : `Норма — до ${msf(th.vpn_good_ms)}; ${raw(r.vpn, msf)}`);
+    row("Задержка VPN", P(r.st_vpn_lat ?? r.st_vpn), msf(r.vpn.value), Math.min(r.vpn.value ?? 0, vMax) / vMax, th.vpn_good_ms / vMax, r.vpn.value == null ? "VPN не подключён" : `Норма — до ${msf(th.vpn_good_ms)}; ${raw(r.vpn, msf)}`);
     row("Интернет", P(r.st_inet), mbps(r.inet.value), (r.inet.value ?? 0) / Math.max(th.inet_good_mbps * 4, r.inet.value ?? 0), th.inet_good_mbps / Math.max(th.inet_good_mbps * 4, r.inet.value ?? 0), `Нужно от ${mbps(th.inet_good_mbps)}; задержка ${msf(r.inet_ms.value)} (медленно — больше ${msf(th.inet_lat_warn_ms)})`);
   } else norms.append(el("div", { class: "empty", text: "Сравнивать пока не с чем." }));
   const li = $("#lineinfo"); li.replaceChildren();
   if (sn.lite) li.append(el("span", { text: `${cap(sn.lite)} — проверяю без скачивания` }));
-  if (sn.at) li.append(el("span", { text: `Проверено в ${hhmm(sn.at)}${sn.full ? ", полная" : ""}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин` }));
 }
 function tipTarget(x) {
   const st = x.ok ? "good" : x.reachable ? "warn" : "bad";
@@ -489,6 +500,13 @@ function renderConn() {
     out.addEventListener("click", async () => { await api("/api/credentials", { method: "DELETE" }); poll(true); });
     host.append(el("div", { class: "row" }, badge("good", `Вошли как ${S.login}`), ch, out));
   } else { form.hidden = false; if (!S.login) host.append(el("p", { class: "sub", text: "Вход не выполнен." })); }
+  // справа — по каждому сервису: каким входом проверяем и когда последний раз ответил (история за 7 дней)
+  const ago = (t) => { if (!t) return "ни разу за неделю"; const m = Math.round((Date.now() - t) / 60000); return m < 2 ? "только что" : m < 60 ? `${m} мин назад` : new Date(t).toDateString() === new Date().toDateString() ? `сегодня в ${hhmm(t)}` : when(t); };
+  $("#svcState").replaceChildren(el("span", { class: "sub", style: "margin:0", text: "Подключение по сервисам" }), ...(S.services || []).map((x) => {
+    const st = x.ok ? "good" : x.note ? "warn" : x.ok === false ? "bad" : "idle";
+    return el("div", { class: `row2 ${st}` }, el("span", { class: "dot" }), el("b", { text: x.name }),
+      el("small", { text: `вход: ${x.note ? "не задан" : x.auth || "—"}` }), el("small", { text: `последний успех: ${ago(x.last_ok_ms)}` }));
+  }));
   const views = { route: "Маршрут", dash: "Приборная панель", strip: "Лента часа" };
   const curView = S.prefs.view === "gauge" || S.prefs.view === "panel" ? "dash" : S.prefs.view;
   $("#viewChoice").replaceChildren(...Object.entries(views).map(([k, n]) => { const b = el("button", { type: "button", "aria-pressed": String(curView === k), text: n }); b.addEventListener("click", async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: k }) }); poll(true); }); return b; }));

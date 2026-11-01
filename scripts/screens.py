@@ -38,6 +38,7 @@ def route(inet, ims, vpn, svn, st, cause=None, why=None, bv=None, bo=None, color
          "cause": cause, "why": why, "because_vpn": bv, "because_office": bo, "color": color,
          "score": score, "auth_failed": list(auth), "st_user": user}
     r.update(dict(zip(names, st)))
+    r["st_vpn_lat"] = "good" if (cause, why) == ("vpn", "speed") else r["st_vpn"]
     return r
 
 
@@ -131,6 +132,8 @@ def state_json(key, now, view="route"):
             "prefs": {"view": view, "channel": "latest", "pause_until_ms": now + 47 * 60000 if paused else None,
                       "theme": "", "last_seen_version": "0.6.0",
                       "notify": {"vpn": True, "auth": True, "update": True, "slow": False}},
+            "services": [{"id": t["id"], "name": t["name"], "auth": t.get("auth"), "note": None, "ok": t["ok"],
+                          "last_ok_ms": now - 60000 if t["ok"] else now - 3 * 3600000} for t in st["targets"] if t["role"] != "world"],
             "paused": paused, "targets": [], "dir": "C:\\Users\\sergi\\AppData\\Local\\DominiVPNMonitor"}
 
 
