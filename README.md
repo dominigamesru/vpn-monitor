@@ -14,7 +14,7 @@ GitLab и интернета, самообновление и откат чер�
 [docs/requirements.md](docs/requirements.md).
 
 ## Установить
-1. Скачать `vpn-monitor.exe` из [релизов](https://github.com/dominigamesru/vpn-monitor/releases) (последняя версия —
+1. Скачать `domini-vpn-monitor.exe` из [релизов](https://github.com/dominigamesru/vpn-monitor/releases) (последняя версия —
    в `latest.version` релиза `latest`).
 2. Запустить двойным кликом: приложение встанет в `%LOCALAPPDATA%\DominiVPNMonitor`, включит автозапуск и откроет
    окно в браузере на вкладке «Подключение».

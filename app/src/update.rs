@@ -4,7 +4,8 @@
 //! Раскладка (контракт со всеми установленными копиями):
 //! - `{base}/latest/latest.version` — строка `0.1.2`;
 //! - `{base}/v{ver}/settings.json` — настройки версии, в `exe.sha256` — контрольная сумма exe;
-//! - `{base}/v{ver}/vpn-monitor.exe`.
+//! - `{base}/v{ver}/domini-vpn-monitor.exe` (с 0.5.4; в релизах есть и `vpn-monitor.exe` — для обновлятелей
+//!   версий до 0.5.4, которые знают только это имя; у релизов до 0.5.4 — только `vpn-monitor.exe`).
 
 use crate::settings::ExeInfo;
 use sha2::{Digest, Sha256};
@@ -12,7 +13,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const EXE_ASSET: &str = "vpn-monitor.exe";
+pub const EXE_ASSET: &str = "domini-vpn-monitor.exe";
+/// Имя exe в релизах до 0.5.4 — запасное: откат на старую версию.
+pub const LEGACY_EXE_ASSET: &str = "vpn-monitor.exe";
 
 pub fn latest_version_url(base: &str) -> String {
     format!("{}/latest/latest.version", base.trim_end_matches('/'))
@@ -113,9 +116,13 @@ pub fn download_exe(
     expected_sha256: &str,
     dest: &Path,
 ) -> Result<u64, String> {
-    let url = asset_url(base, ver, EXE_ASSET);
     let agent = crate::net::agent(Duration::from_secs(600));
+    let mut url = asset_url(base, ver, EXE_ASSET);
     let mut resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
+    if resp.status().as_u16() == 404 {
+        url = asset_url(base, ver, LEGACY_EXE_ASSET);
+        resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
+    }
     let st = resp.status().as_u16();
     if st != 200 {
         return Err(format!("{url}: HTTP {st}"));
@@ -226,7 +233,7 @@ mod tests {
         );
         assert_eq!(
             asset_url(b, "0.1.0", EXE_ASSET),
-            "https://github.com/o/r/releases/download/v0.1.0/vpn-monitor.exe"
+            "https://github.com/o/r/releases/download/v0.1.0/domini-vpn-monitor.exe"
         );
     }
 }

@@ -111,6 +111,9 @@ pub fn run(replace: bool, first_run: bool) {
                     if let Err(e) = win::autostart_set(&stable) {
                         error!("tray", "автозапуск: {e}");
                     }
+                    if let Err(e) = win::desktop_shortcut(&stable) {
+                        warn!("tray", "ярлык на рабочем столе: {e}");
+                    }
                     match win::spawn_detached(&stable, &["--tray", "--replace"]) {
                         Ok(()) => return,
                         Err(e) => error!(

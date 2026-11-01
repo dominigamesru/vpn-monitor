@@ -86,6 +86,9 @@ fn install(dir: &Path) -> Result<Done, String> {
     let secrets_empty = loaded.ad_login().is_none() && loaded.get("CONFLUENCE_TOKEN").is_none();
 
     cleanup_old_exes(dir, &target);
+    if let Err(e) = win::desktop_shortcut(&target) {
+        warn!("install", "ярлык на рабочем столе: {e}");
+    }
     win::autostart_set(&target)?;
     info!(
         "install",
@@ -119,12 +122,12 @@ fn copy_with_retry(from: &Path, to: &Path) -> Result<(), String> {
     Err(format!("не скопировать exe в {}: {last}", to.display()))
 }
 
-/// Постоянное имя exe в папке установки. Windows запоминает «показывать иконку в трее» по пути exe: до 0.5.4
+/// Постоянное имя exe в папке установки (то же, что у файла в релизе). Windows запоминает «показывать иконку в трее» по пути exe: до 0.5.4
 /// каждая версия жила в `vpn-monitor-X.Y.Z.exe`, и после обновления иконка пряталась под «^» как новая программа.
-pub const STABLE_EXE: &str = "vpn-monitor.exe";
+pub const STABLE_EXE: &str = "domini-vpn-monitor.exe";
 /// Сюда переименовывается запущенный exe при обновлении (Windows разрешает переименовать запущенный exe, но не
 /// перезаписать); удаляется при следующем запуске.
-const OLD_EXE: &str = "vpn-monitor.old.exe";
+const OLD_EXE: &str = "domini-vpn-monitor.old.exe";
 
 pub enum Place {
     /// Установка двойным кликом: скопировать себя.

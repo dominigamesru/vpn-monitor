@@ -34,8 +34,8 @@ jobs:
         run: |
           v="${VERSION#v}"
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Не версия: $VERSION"; exit 1; }
-          gh release view "v$v" --json assets --jq '.assets[].name' | grep -qx vpn-monitor.exe \
-            || { echo "::error::Нет релиза v$v с vpn-monitor.exe"; exit 1; }
+          gh release view "v$v" --json assets --jq '.assets[].name' | grep -qxE 'domini-vpn-monitor\.exe|vpn-monitor\.exe' \
+            || { echo "::error::Нет релиза v$v с exe"; exit 1; }
           gh release view "v$v" --json assets --jq '.assets[].name' | grep -qx settings.json \
             || { echo "::error::В релизе v$v нет settings.json"; exit 1; }
           echo "$v" > latest.version

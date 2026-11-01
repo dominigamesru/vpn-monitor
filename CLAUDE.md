@@ -48,7 +48,7 @@ GitLab `devops/vpn-monitor-cli`).
 ## Сборка и поставка
 - Приложение в трее и CI/CD ведёт Claude: сборка, проверки и публикация — GitHub Actions; ручных шагов в релизе нет.
 - Поставка — GitHub Releases ([ADR 0004](docs/adr/0004-delivery-github-releases.md)):
-  - **релиз** (`GLOSSARY.md`) — GitHub Release `vX.Y.Z` с exe, настройками и `SHA256SUMS`, всегда `make_latest: false`;
+  - **релиз** (`GLOSSARY.md`) — GitHub Release «Domini VPN Monitor vX.Y.Z» с `domini-vpn-monitor.exe`, настройками и `sha256` (плюс `vpn-monitor.exe` для обновлятелей до 0.5.4), всегда `make_latest: false`;
     опубликованный релиз не перезаписывается и не удаляется;
   - релиз `latest` — только `latest.version` (последняя версия); откат — workflow `promote` со старой версией.
 - Секретов в настройках нет — репо публичное.
