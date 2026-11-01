@@ -8,6 +8,7 @@ pub mod gitlab;
 pub mod icon;
 pub mod log;
 pub mod login;
+pub mod mcp;
 pub mod metrics;
 pub mod monitor;
 pub mod net;

@@ -96,6 +96,33 @@ fn handle(
     let method = req.method().clone();
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
+    if method == Method::Post && path == "/mcp" {
+        // MCP-клиенты (Claude Code, Desktop) не шлют X-VPN-Monitor: защита — Origin только локальный и JSON
+        let origin = header(&req, "Origin");
+        let ct = header(&req, "Content-Type").unwrap_or_default();
+        if !vpn_monitor::mcp::origin_allowed(origin.as_deref()) || !ct.contains("application/json")
+        {
+            return req
+                .respond(json_resp(&json!({"error": "MCP: только локальные клиенты, Content-Type: application/json"}), 403))
+                .map_err(|e| e.to_string());
+        }
+        let mut body = String::new();
+        let _ = req.as_reader().take(256 * 1024).read_to_string(&mut body);
+        // vpn_check ждёт проверку до минуты — отвечаем из своего потока, чтобы окно и API не замирали
+        let data = McpData {
+            shared: shared.clone(),
+            cmd: cmd.clone(),
+        };
+        std::thread::spawn(move || {
+            let resp = match vpn_monitor::mcp::handle_body(&body, &data) {
+                Ok(Some(v)) => json_resp(&v, 200),
+                Ok(None) => Response::from_string(String::new()).with_status_code(202),
+                Err(e) => json_resp(&e, 400),
+            };
+            let _ = req.respond(resp);
+        });
+        return Ok(());
+    }
     if method != Method::Get && header(&req, "X-VPN-Monitor").as_deref() != Some("1") {
         return req
             .respond(json_resp(
@@ -175,6 +202,10 @@ fn handle(
                     Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).expect("заголовок"),
                 )
         }
+        (Method::Get, "/mcp") => json_resp(
+            &json!({"error": "MCP: только POST (Streamable HTTP без SSE)"}),
+            405,
+        ),
         (Method::Get, "/api/help") => {
             Response::from_string(HELP.replace("{port}", &port.to_string()))
                 .with_header(ctype("text/markdown; charset=utf-8"))
@@ -745,4 +776,117 @@ fn tail_log(n: usize) -> String {
     let text = std::fs::read_to_string(&p).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// Данные для MCP из общего состояния трея.
+struct McpData {
+    shared: SharedRef,
+    cmd: Sender<Cmd>,
+}
+
+impl vpn_monitor::mcp::Data for McpData {
+    fn summary(&self) -> String {
+        summary(&self.shared)
+    }
+    fn status(&self) -> Value {
+        let st = state(&self.shared);
+        json!({
+            "version": st["version"], "city": st["city"], "login": st["login"], "paused": st["paused"],
+            "snapshot": {
+                "at": st["snapshot"]["at"], "color": st["snapshot"]["color"], "badge": st["snapshot"]["badge"],
+                "score": st["snapshot"]["score"], "client": st["snapshot"]["client"], "route": st["snapshot"]["route"],
+                "advice": st["snapshot"]["advice"], "baseline": st["snapshot"]["baseline"],
+                "targets": st["snapshot"]["targets"],
+            },
+            "thresholds": st["thresholds"],
+        })
+    }
+    fn history(&self, range: &str) -> Value {
+        let h = history(&self.shared, range);
+        let recs = h["records"].as_array().cloned().unwrap_or_default();
+        let med = |key: &str| {
+            let mut v: Vec<f64> = recs.iter().filter_map(|r| r[key].as_f64()).collect();
+            v.sort_by(|a, b| a.total_cmp(b));
+            (!v.is_empty()).then(|| v[v.len() / 2])
+        };
+        // отрезки «плохо» (красный или VPN выключен), подряд идущие проверки — один отрезок
+        let mut bad: Vec<Value> = vec![];
+        let mut cur: Option<(i64, i64, String)> = None;
+        for r in &recs {
+            let t = r["t"].as_i64().unwrap_or(0);
+            let is_bad = r["c"] == "red" || r["b"] == "novpn";
+            match (&mut cur, is_bad) {
+                (Some(c), true) => c.1 = t,
+                (None, true) => cur = Some((t, t, r["b"].as_str().unwrap_or("").to_string())),
+                (Some(_), false) => {
+                    let (a, b, k) = cur.take().unwrap_or_default();
+                    bad.push(
+                        json!({"from": a, "to": b, "minutes": (b - a) / 60000 + 1, "kind": k}),
+                    );
+                }
+                (None, false) => {}
+            }
+        }
+        if let Some((a, b, k)) = cur {
+            bad.push(json!({"from": a, "to": b, "minutes": (b - a) / 60000 + 1, "kind": k}));
+        }
+        json!({
+            "range": range, "checks": recs.len(), "from": h["from"], "to": h["to"],
+            "bad_periods": bad,
+            "median": {"vpn_ms": med("lat"), "svn_mbps": med("spd"), "inet_mbps": med("inet"), "score": med("s")},
+        })
+    }
+    fn check(&self) -> String {
+        let before = lock(&self.shared).snapshot.as_ref().map(|s| s.at);
+        let _ = self.cmd.send(Cmd::CheckNow);
+        for _ in 0..90 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let sh = lock(&self.shared);
+            if !sh.checking && sh.snapshot.as_ref().map(|s| s.at) != before {
+                break;
+            }
+        }
+        summary(&self.shared)
+    }
+    fn diagnostics(&self) -> Value {
+        let (running, report) = {
+            let sh = lock(&self.shared);
+            (sh.diag_running, sh.diag.clone())
+        };
+        if report.is_none() && !running {
+            start_diag(&self.shared);
+            for _ in 0..60 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                if !lock(&self.shared).diag_running {
+                    break;
+                }
+            }
+        }
+        lock(&self.shared)
+            .diag
+            .clone()
+            .unwrap_or(json!({"note": "диагностика ещё идёт"}))
+    }
+    fn log_tail(&self, lines: usize) -> String {
+        tail_log(lines)
+    }
+    fn report_html(&self) -> String {
+        let esc = |t: &str| {
+            t.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+        };
+        format!(
+            "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><title>Отчёт Domini VPN Monitor</title><style>\
+             :root{{--bg:#fff;--fg:#15202e;--mut:#5a6b80;--line:#e2e7ee}}\
+             @media (prefers-color-scheme:dark){{:root{{--bg:#161f2a;--fg:#e6edf5;--mut:#8d9db2;--line:#263342}}}}\
+             body{{background:var(--bg);color:var(--fg);font:14px/1.5 'Segoe UI',system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px}}\
+             pre{{white-space:pre-wrap;border:1px solid var(--line);border-radius:10px;padding:12px}}h1{{font-size:18px}}p{{color:var(--mut)}}\
+             </style></head><body><h1>Отчёт Domini VPN Monitor</h1><p>Сводка для поддержки — без паролей и токенов.</p><pre>{}</pre></body></html>",
+            esc(&summary(&self.shared))
+        )
+    }
+    fn version(&self) -> String {
+        VERSION.to_string()
+    }
 }
