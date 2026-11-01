@@ -186,7 +186,16 @@ pub fn run(replace: bool, first_run: bool) {
     let mut flyout: Option<crate::flyout::Flyout> = None;
     let fly_proxy = proxy.clone();
     event_loop.run(move |event, target, flow| {
-        *flow = ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_secs(5));
+        // меню открыто — 4 раза в секунду смотрим, не ушёл ли человек в другое окно; иначе — раз в 5 с (пауза)
+        let open = flyout.as_ref().is_some_and(|f| f.is_visible());
+        *flow = ControlFlow::WaitUntil(
+            std::time::Instant::now() + Duration::from_millis(if open { 250 } else { 5000 }),
+        );
+        if let Some(f) = flyout.as_mut()
+            && f.lost_to_other_window()
+        {
+            f.hide();
+        }
         match event {
             Event::NewEvents(StartCause::Init) => match build_ui(&settings, api_url.is_some()) {
                 Ok(u) => {
@@ -273,6 +282,11 @@ pub fn run(replace: bool, first_run: bool) {
                         }
                     }
                     UserEvent::FlyoutIpc(msg) => {
+                        static FIRST: std::sync::Once = std::sync::Once::new();
+                        FIRST.call_once(|| {
+                            let m: String = msg.chars().take(40).collect();
+                            info!("flyout", "страница меню на связи (первое сообщение: {m})");
+                        });
                         if let Some(h) = msg.strip_prefix("h:").and_then(|v| v.parse::<f64>().ok())
                         {
                             if let Some(f) = flyout.as_mut() {
@@ -334,15 +348,7 @@ pub fn run(replace: bool, first_run: bool) {
                     }
                 }
             }
-            Event::WindowEvent {
-                window_id,
-                event: tao::event::WindowEvent::Focused(false),
-                ..
-            } if flyout.as_ref().is_some_and(|f| f.id() == window_id) => {
-                if let Some(f) = flyout.as_mut() {
-                    f.hide();
-                }
-            }
+            // Focused(false) приходит и когда фокус уходит внутрь WebView2 — по нему не прячем (см. lost_to_other_window)
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if let Some(u) = ui.as_mut() {
                     let paused = lock(&shared).prefs.paused(vpn_monitor::metrics::now_ms());
