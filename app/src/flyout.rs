@@ -46,10 +46,23 @@ impl Flyout {
             .build(target)
             .map_err(|e| format!("окно меню: {e}"))?;
         round_corners(window.hwnd());
+        let wrap = std::rc::Rc::new(wrap);
+        let (load_proxy, load_wrap) = (proxy.clone(), wrap.clone());
         let webview = WebViewBuilder::new()
             .with_url(url)
             .with_ipc_handler(move |req| {
                 let _ = proxy.send_event(wrap(req.body().clone()));
+            })
+            // диагностика: грузится ли страница меню вообще (в логе заказчика от страницы — тишина)
+            .with_on_page_load_handler(move |ev, url| {
+                let what = match ev {
+                    wry::PageLoadEvent::Started => "начала грузиться",
+                    wry::PageLoadEvent::Finished => "загрузилась",
+                };
+                vpn_monitor::info!("flyout", "страница меню {what}: {url}");
+                if matches!(ev, wry::PageLoadEvent::Finished) {
+                    let _ = load_proxy.send_event(load_wrap("loaded".into()));
+                }
             })
             .build(&window)
             .map_err(|e| format!("WebView2: {e}"))?;
@@ -63,6 +76,17 @@ impl Flyout {
             shown_at: Instant::now(),
             had_foreground: std::cell::Cell::new(false),
         })
+    }
+
+    /// Что на странице на самом деле — в лог (ответ приходит из WebView2, минуя IPC страницы).
+    pub fn probe(&self) {
+        const JS: &str = "(() => { try { const r = document.getElementById('root'); return [document.readyState, 'url=' + location.href, 'tippy=' + typeof window.tippy, 'ipc=' + typeof window.ipc, 'chrome.webview=' + typeof (window.chrome && window.chrome.webview), 'root=' + (r ? r.children.length : 'нет'), 'vis=' + document.visibilityState, 'h=' + document.body.getBoundingClientRect().height].join(' '); } catch (e) { return 'ошибка: ' + e; } })()";
+        let res = self.webview.evaluate_script_with_callback(JS, |r| {
+            vpn_monitor::info!("flyout", "состояние страницы меню: {r}");
+        });
+        if let Err(e) = res {
+            vpn_monitor::warn!("flyout", "не прочитать состояние страницы: {e}");
+        }
     }
 
     pub fn is_visible(&self) -> bool {

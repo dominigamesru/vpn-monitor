@@ -291,10 +291,12 @@ pub fn run(replace: bool, first_run: bool) {
                     }
                     UserEvent::FlyoutIpc(msg) => {
                         static FIRST: std::sync::Once = std::sync::Once::new();
-                        FIRST.call_once(|| {
-                            let m: String = msg.chars().take(40).collect();
-                            info!("flyout", "страница меню на связи (первое сообщение: {m})");
-                        });
+                        if msg != "loaded" && msg != "probe" {
+                            FIRST.call_once(|| {
+                                let m: String = msg.chars().take(40).collect();
+                                info!("flyout", "страница меню на связи (первое сообщение: {m})");
+                            });
+                        }
                         if let Some(h) = msg.strip_prefix("h:").and_then(|v| v.parse::<f64>().ok())
                         {
                             static DRAWN: std::sync::Once = std::sync::Once::new();
@@ -303,6 +305,20 @@ pub fn run(replace: bool, first_run: bool) {
                             });
                             if let Some(f) = flyout.as_mut() {
                                 f.resize(h);
+                            }
+                        } else if msg == "loaded" {
+                            // страница загрузилась — через 0 с и ещё раз, когда скрипт точно отработал
+                            if let Some(f) = flyout.as_ref() {
+                                f.probe();
+                            }
+                            let p = fly_proxy.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(Duration::from_secs(5));
+                                let _ = p.send_event(UserEvent::FlyoutIpc("probe".into()));
+                            });
+                        } else if msg == "probe" {
+                            if let Some(f) = flyout.as_ref() {
+                                f.probe();
                             }
                         } else if let Some(e) = msg.strip_prefix("err:") {
                             let e: String = e.chars().take(300).collect();

@@ -131,6 +131,9 @@ fn handle(
         return Ok(());
     }
 
+    if path == "/flyout" || path.starts_with("/vendor/") {
+        info!("api", "{method} {path}");
+    }
     let resp = match (&method, path) {
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             Response::from_string(PAGE).with_header(ctype("text/html; charset=utf-8"))
