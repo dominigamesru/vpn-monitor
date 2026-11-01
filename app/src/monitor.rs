@@ -21,6 +21,10 @@ pub struct Snapshot {
     pub internet_fresh: bool,
     /// Клиент и профиль VPN, через который идут цели светофора (v0.4).
     pub client: Option<crate::vpn::Client>,
+    /// После сна: провалы первых 2 минут не считаются (сеть поднимается), v0.5.
+    pub waking: bool,
+    /// Проверка без скачивания и почему («экономия заряда», «лимитная сеть»), v0.5.
+    pub lite: Option<String>,
     /// v0.5: канал и туннель — задержка до интернета, надбавка VPN (медиана), доля канала (медиана).
     pub internet_latency_ms: Option<f64>,
     pub overhead_ms: Option<f64>,
@@ -49,6 +53,8 @@ pub struct Monitor {
     pub baseline: Option<crate::score::Baseline>,
     /// Клиент и профиль VPN прошлой проверки — по нему трей выбирает норму (v0.5).
     pub last_client: Option<String>,
+    /// До этого момента — льготные минуты после сна (ставит трей), v0.5.
+    pub grace_until: Option<Instant>,
 }
 
 /// Сколько последних проверок сглаживает оценку.
@@ -93,6 +99,7 @@ impl Monitor {
             shares: VecDeque::new(),
             baseline: None,
             last_client: None,
+            grace_until: None,
         }
     }
 
@@ -106,9 +113,12 @@ impl Monitor {
         let full_due = self
             .last_full
             .is_none_or(|t| t.elapsed() >= Duration::from_secs(s.full_probe_interval_min * 60));
-        let internet_due = self
-            .last_internet_at
-            .is_none_or(|t| t.elapsed() >= Duration::from_secs(s.internet_interval_min * 60));
+        let lite = crate::diag::lite_reason();
+        let waking = self.grace_until.is_some_and(|g| Instant::now() < g);
+        let internet_due = lite.is_none()
+            && self
+                .last_internet_at
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(s.internet_interval_min * 60));
         info!(
             "check",
             "проверка #{} ({}), полная проба: {}, интернет: {}",
@@ -127,7 +137,7 @@ impl Monitor {
             let handles: Vec<_> = s
                 .targets
                 .iter()
-                .filter(|t| t.enabled)
+                .filter(|t| t.enabled && (lite.is_none() || t.role == Role::Light))
                 .map(|t| {
                     let secrets = &secrets;
                     sc.spawn(move || {
@@ -197,13 +207,30 @@ impl Monitor {
         let internet_latency = online_hint;
         let online =
             online_hint.is_some() || results.iter().any(|r| r.reachable) || internet_reachable;
+        if let Some(why) = lite {
+            info!("check", "проверка без скачивания: {why}");
+        }
+        // Wi‑Fi со страницей входа: интернета «нет», но сеть отдаёт свою страницу вместо проверки Windows
+        let captive = !online && captive_portal();
+        // после сна провалы не считаем: туннель и Wi‑Fi поднимаются не сразу
+        let light_down = results
+            .iter()
+            .filter(|r| r.role == Some(Role::Light))
+            .all(|r| !r.reachable);
+        let skip_history = waking && (!online || light_down);
+        if skip_history {
+            info!(
+                "check",
+                "после сна: провалы не считаю — сеть ещё поднимается"
+            );
+        }
         if !online {
             warn!(
                 "check",
                 "нет интернета: проверочные адреса и цели не отвечают — VPN не оцениваю"
             );
         }
-        if !light_results.is_empty() && online {
+        if !light_results.is_empty() && online && !skip_history {
             let reachable = light_results.iter().any(|r| r.reachable);
             self.history.push_check(now, reachable);
             if reachable {
@@ -304,7 +331,7 @@ impl Monitor {
             overhead_ms: median(&self.overheads),
             share: median(&self.shares),
         };
-        let verdict = score::evaluate_tunnel(
+        let mut verdict = score::evaluate_tunnel(
             &light,
             &speeds,
             inet_mbps,
@@ -316,6 +343,15 @@ impl Monitor {
             online,
             tunnel,
         );
+        if captive {
+            verdict.badge = score::Badge::Captive;
+            verdict.color = score::Color::Gray;
+            verdict.explain = "Wi‑Fi требует входа на своей странице".into();
+        } else if skip_history {
+            verdict.badge = score::Badge::Unknown;
+            verdict.color = score::Color::Gray;
+            verdict.explain = "проверяю после сна — сеть ещё поднимается".into();
+        }
         self.weak_internet = matches!(verdict.badge, score::Badge::WeakInternet(_));
         info!(
             "score",
@@ -335,11 +371,34 @@ impl Monitor {
             internet: self.last_internet.clone(),
             internet_fresh,
             client,
+            waking: skip_history,
+            lite: lite.map(str::to_string),
             internet_latency_ms: internet_latency,
             overhead_ms: tunnel.overhead_ms,
             share: tunnel.share,
             verdict,
         }
+    }
+}
+
+/// Wi‑Fi со страницей входа: проверка Windows (`connecttest.txt`) вернула не свой текст или перенаправила.
+fn captive_portal() -> bool {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    match agent
+        .get("http://www.msftconnecttest.com/connecttest.txt")
+        .call()
+    {
+        Ok(mut r) => {
+            let st = r.status().as_u16();
+            let body = r.body_mut().read_to_string().unwrap_or_default();
+            (300..400).contains(&st) || (st == 200 && body.trim() != "Microsoft Connect Test")
+        }
+        Err(_) => false,
     }
 }
 

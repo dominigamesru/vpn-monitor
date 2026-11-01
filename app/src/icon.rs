@@ -122,6 +122,8 @@ fn glyph_rows(ch: char) -> [u8; 5] {
         '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
         'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
         'x' => [0b101, 0b101, 0b010, 0b101, 0b101],
+        '?' => [0b111, 0b001, 0b011, 0b000, 0b010],
+        '|' => [0b101, 0b101, 0b101, 0b101, 0b101],
         _ => [0; 5],
     }
 }
@@ -221,6 +223,14 @@ pub fn render(badge: Badge, color: Color, checking: bool) -> Vec<u8> {
                 c.ring_arc(cx, cy, 11.0, 2.4, 220.0, 320.0, WHITE);
             }
         }
+        Badge::Captive => {
+            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
+            c.glyph('?', 17, 13, 3, WHITE);
+        }
+        Badge::Paused => {
+            c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
+            c.glyph('|', 17, 13, 3, WHITE);
+        }
         Badge::NoInternet => {
             c.round_rect(12.0, 10.0, 20.0, 22.0, 5.0, GRAY);
             c.glyph('x', 17, 13, 3, WHITE);
@@ -257,6 +267,8 @@ mod tests {
             (Badge::WeakInternet(2), Color::Yellow),
             (Badge::Unknown, Color::Red),
             (Badge::NoInternet, Color::Gray),
+            (Badge::Captive, Color::Gray),
+            (Badge::Paused, Color::Gray),
         ] {
             let px = render(b, c, false);
             assert_eq!(px.len(), (SIZE * SIZE * 4) as usize);

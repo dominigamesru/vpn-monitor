@@ -2711,6 +2711,7 @@ dependencies = [
  "tiny_http",
  "tray-icon",
  "ureq",
+ "windows",
  "windows-sys 0.61.2",
  "winreg",
  "winresource",

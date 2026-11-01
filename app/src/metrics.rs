@@ -104,6 +104,8 @@ impl Record {
             Badge::WeakInternet(_) => "weak",
             Badge::Unknown => "unknown",
             Badge::NoInternet => "offline",
+            Badge::Captive => "captive",
+            Badge::Paused => "paused",
         };
         let tg = s
             .targets

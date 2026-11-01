@@ -156,6 +156,70 @@ fn handle(
             json_resp(&json!({"started": true}), 202)
         }
         (Method::Get, "/api/credentials") => json_resp(&credentials(), 200),
+        (Method::Get, "/api/prefs") => json_resp(
+            &serde_json::to_value(&lock(shared).prefs).unwrap_or(Value::Null),
+            200,
+        ),
+        (Method::Post, "/api/prefs") => {
+            // меняем только известные поля и только допустимыми значениями
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let mut sh = lock(shared);
+            if let Some(view) = v["view"]
+                .as_str()
+                .filter(|x| vpn_monitor::prefs::VIEWS.contains(x))
+            {
+                sh.prefs.view = view.into();
+            }
+            if let Some(ch) = v["channel"]
+                .as_str()
+                .filter(|x| vpn_monitor::prefs::CHANNELS.contains(x))
+            {
+                sh.prefs.channel = ch.into();
+                info!("api", "канал обновлений: {ch}");
+            }
+            for (k, slot) in [("vpn", 0), ("auth", 1), ("update", 2), ("slow", 3)] {
+                if let Some(b) = v["notify"][k].as_bool() {
+                    match slot {
+                        0 => sh.prefs.notify.vpn = b,
+                        1 => sh.prefs.notify.auth = b,
+                        2 => sh.prefs.notify.update = b,
+                        _ => sh.prefs.notify.slow = b,
+                    }
+                }
+            }
+            if let Some(seen) = v["last_seen_version"].as_str() {
+                sh.prefs.last_seen_version = Some(seen.chars().take(20).collect());
+            }
+            let dir = sh.dir.clone();
+            match sh.prefs.save(&dir) {
+                Ok(()) => json_resp(&serde_json::to_value(&sh.prefs).unwrap_or(Value::Null), 200),
+                Err(e) => json_resp(&json!({"error": e}), 500),
+            }
+        }
+        (Method::Post, "/api/pause") => {
+            // {"minutes": 30 | 60 | 0 (до конца дня)} или {"resume": true}
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let mut sh = lock(shared);
+            let now = vpn_monitor::metrics::now_ms();
+            if v["resume"].as_bool() == Some(true) {
+                sh.prefs.pause_until_ms = None;
+                info!("api", "пауза снята");
+            } else {
+                let min = v["minutes"].as_i64().unwrap_or(30).clamp(0, 24 * 60);
+                let until = vpn_monitor::prefs::pause_until(now, min);
+                sh.prefs.pause_until_ms = Some(until);
+                info!(
+                    "api",
+                    "пауза до {}",
+                    log::hhmm(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_millis(until as u64)
+                    )
+                );
+            }
+            let dir = sh.dir.clone();
+            let _ = sh.prefs.save(&dir);
+            json_resp(&json!({"pause_until_ms": sh.prefs.pause_until_ms}), 200)
+        }
         (Method::Delete, "/api/credentials") => match vpn_monitor::creds::delete_ad() {
             Ok(()) => {
                 info!("login", "вход AD удалён из Диспетчера учётных данных");
@@ -300,11 +364,15 @@ fn state(shared: &SharedRef) -> Value {
                 vpn_monitor::score::Badge::WeakInternet(_) => "weak",
                 vpn_monitor::score::Badge::Unknown => "unknown",
                 vpn_monitor::score::Badge::NoInternet => "offline",
+                vpn_monitor::score::Badge::Captive => "captive",
+                vpn_monitor::score::Badge::Paused => "paused",
             },
             "score": v.score, "latency": v.latency, "speed": v.speed, "stability": v.stability,
             "explain": v.explain,
             "parts": v.parts, "baseline": v.baseline,
             "client": sn.client,
+            "waking": sn.waking, "lite": sn.lite,
+            "internet_latency": sn.internet_latency_ms, "overhead": sn.overhead_ms, "share": sn.share,
             "targets": sn.targets.iter().map(probe_json).collect::<Vec<_>>(),
             "internet": sn.internet.as_ref().map(probe_json),
         })
@@ -327,6 +395,8 @@ fn state(shared: &SharedRef) -> Value {
         "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
         "login": vpn_monitor::creds::load_ad().map(|c| c.login),
+        "prefs": sh.prefs,
+        "paused": sh.prefs.paused(vpn_monitor::metrics::now_ms()),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
     })
 }

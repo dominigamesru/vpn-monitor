@@ -44,6 +44,8 @@ pub struct Shared {
     pub api_error: Option<String>,
     pub diag: Option<serde_json::Value>,
     pub diag_running: bool,
+    /// Выбор сотрудника: вид меню, канал, пауза, уведомления (prefs.json), v0.5.
+    pub prefs: vpn_monitor::prefs::Prefs,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -68,6 +70,7 @@ struct Ui {
     version: MenuItem,
     quit: MenuItem,
     checking: bool,
+    paused: bool,
     last: Option<Snapshot>,
     latest: Option<String>,
     update_error: Option<String>,
@@ -137,6 +140,7 @@ pub fn run(replace: bool, first_run: bool) {
         api_error: None,
         diag: None,
         diag_running: false,
+        prefs: vpn_monitor::prefs::Prefs::load(&dir),
     }));
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
@@ -175,7 +179,7 @@ pub fn run(replace: bool, first_run: bool) {
 
     let mut ui: Option<Ui> = None;
     event_loop.run(move |event, _, flow| {
-        *flow = ControlFlow::Wait;
+        *flow = ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_secs(5));
         match event {
             Event::NewEvents(StartCause::Init) => match build_ui(&settings, api_url.is_some()) {
                 Ok(u) => ui = Some(u),
@@ -263,6 +267,15 @@ pub fn run(replace: bool, first_run: bool) {
                     }
                 }
             }
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                if let Some(u) = ui.as_mut() {
+                    let paused = lock(&shared).prefs.paused(vpn_monitor::metrics::now_ms());
+                    if paused != u.paused {
+                        u.paused = paused;
+                        refresh(u);
+                    }
+                }
+            }
             Event::LoopDestroyed => {
                 info!("tray", "==== выход ====");
             }
@@ -286,11 +299,32 @@ fn spawn_checker(
         let mut m = Monitor::new(settings, secrets);
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
         let mut manual = false;
+        let mut last_check = std::time::SystemTime::now();
         loop {
             match rx.recv_timeout(wait) {
                 Ok(Cmd::CheckNow) => manual = true,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            // пауза: проверки по расписанию не идут (по кнопке «Проверить» — идут)
+            let now_ms = vpn_monitor::metrics::now_ms();
+            if !manual
+                && let Some(until) = lock(&shared).prefs.pause_until_ms.filter(|u| *u > now_ms)
+            {
+                wait = Duration::from_millis(((until - now_ms) as u64).min(60_000));
+                continue;
+            }
+            // сон: между проверками прошло намного больше интервала — первые 2 минуты провалы не считаем
+            let gap = std::time::SystemTime::now()
+                .duration_since(last_check)
+                .unwrap_or_default();
+            if gap > wait + Duration::from_secs(90) {
+                info!(
+                    "check",
+                    "перерыв {} с — похоже, ноутбук спал: 2 минуты провалы не считаю",
+                    gap.as_secs()
+                );
+                m.grace_until = Some(std::time::Instant::now() + Duration::from_secs(120));
             }
             let _ = proxy.send_event(UserEvent::Checking);
             {
@@ -302,12 +336,15 @@ fn spawn_checker(
             }
             let snap = m.run_check(manual);
             manual = false;
+            last_check = std::time::SystemTime::now();
             {
                 let mut sh = lock(&shared);
                 sh.checking = false;
-                if let Err(e) = sh
-                    .store
-                    .push(Record::from_snapshot(&snap, snap.internet_fresh))
+                // «после сна» в историю не пишем — это не данные о VPN
+                if !snap.waking
+                    && let Err(e) = sh
+                        .store
+                        .push(Record::from_snapshot(&snap, snap.internet_fresh))
                 {
                     error!("metrics", "не записать метрики: {e}");
                 }
@@ -509,6 +546,7 @@ fn build_ui(settings: &Settings, api_ok: bool) -> Result<Ui, String> {
         version,
         quit,
         checking: false,
+        paused: false,
         last: None,
         latest: None,
         update_error: None,
@@ -524,6 +562,11 @@ fn refresh(u: &mut Ui) {
     let (badge, color) = u.last.as_ref().map_or((Badge::Unknown, Color::Red), |s| {
         (s.verdict.badge, s.verdict.color)
     });
+    let (badge, color) = if u.paused {
+        (Badge::Paused, Color::Gray)
+    } else {
+        (badge, color)
+    };
     let _ = u.tray.set_icon(Some(make_icon(badge, color, u.checking)));
     u.check_now.set_enabled(!u.checking);
 
@@ -555,6 +598,8 @@ fn refresh(u: &mut Ui) {
             Badge::Score(n) => format!("Оценка VPN {n:02} · {}", v.color.ru()),
             Badge::Unknown => "Нет данных".to_string(),
             Badge::NoInternet => "Нет интернета — VPN не оценивается".to_string(),
+            Badge::Captive => "Wi‑Fi требует входа — откройте браузер".to_string(),
+            Badge::Paused => "Проверки на паузе".to_string(),
         }
     };
     u.status.set_text(&status);
