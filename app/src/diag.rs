@@ -36,8 +36,44 @@ pub struct Adapter {
     pub description: String,
     pub up: bool,
     pub ipv4: Vec<String>,
-    /// Похож на туннель VPN (tun/tap/openvpn/wireguard/happ…).
+    /// Похож на туннель VPN (tun/tap/openvpn/wireguard/happ… или тип интерфейса «туннель»).
     pub vpn_like: bool,
+    /// Тип по Windows словами: «Wi‑Fi», «кабель (Ethernet)», «туннель», … (v0.8.1). Имя адаптера пользователь или
+    /// программа VPN может задать любое — тип и описание говорят, что это на самом деле.
+    pub kind: String,
+}
+
+/// Тип интерфейса Windows (`IfType`, IANA ifType) словами.
+pub fn kind_of(if_type: u32) -> &'static str {
+    match if_type {
+        71 => "Wi‑Fi",
+        6 => "кабель (Ethernet)",
+        131 => "туннель",
+        23 | 512 => "PPP/модем",
+        243 | 244 => "мобильная сеть",
+        24 => "петля (loopback)",
+        53 => "виртуальный адаптер",
+        _ => "сетевой адаптер",
+    }
+}
+
+/// Строка «Маршрут» для диагностики: тип, имя, описание и через VPN ли идёт трафик.
+pub fn route_line(a: &Adapter) -> String {
+    let desc = if a.description.is_empty() || a.description == a.name {
+        String::new()
+    } else {
+        format!(", {}", a.description)
+    };
+    format!(
+        "через {} «{}»{desc} — {}",
+        a.kind,
+        a.name,
+        if a.vpn_like {
+            "это VPN, трафик идёт через туннель"
+        } else {
+            "не VPN, трафик идёт напрямую"
+        }
+    )
 }
 
 #[derive(Debug, Serialize)]
@@ -237,18 +273,7 @@ fn diag_url(
 
     // Маршрут
     match route_adapter(&addr.ip(), adapters) {
-        Some((a, vpn)) => d.steps.push(step(
-            "Маршрут",
-            "ok",
-            format!(
-                "через адаптер «{a}»{}",
-                if vpn {
-                    " (похож на VPN)"
-                } else {
-                    " (не VPN — трафик идёт напрямую)"
-                }
-            ),
-        )),
+        Some(a) => d.steps.push(step("Маршрут", "ok", route_line(&a))),
         None => d.steps.push(step("Маршрут", "skip", "не определён")),
     }
 
@@ -361,13 +386,13 @@ pub fn adapters() -> Vec<Adapter> {
 }
 
 #[cfg(windows)]
-fn route_adapter(ip: &IpAddr, _adapters: &[Adapter]) -> Option<(String, bool)> {
+fn route_adapter(ip: &IpAddr, _adapters: &[Adapter]) -> Option<Adapter> {
     let IpAddr::V4(v4) = ip else { return None };
     let idx = win::best_interface(*v4)?;
     win::adapters()
         .into_iter()
         .find(|(i, _)| *i == idx)
-        .map(|(_, a)| (a.name.clone(), a.vpn_like))
+        .map(|(_, a)| a)
 }
 
 #[cfg(windows)]
@@ -416,7 +441,7 @@ pub fn adapters() -> Vec<Adapter> {
     vec![]
 }
 #[cfg(not(windows))]
-fn route_adapter(_ip: &IpAddr, _adapters: &[Adapter]) -> Option<(String, bool)> {
+fn route_adapter(_ip: &IpAddr, _adapters: &[Adapter]) -> Option<Adapter> {
     None
 }
 #[cfg(not(windows))]
@@ -490,7 +515,8 @@ pub(crate) mod win {
                     u = (*u).Next;
                 }
                 let up = a.OperStatus == 1; // IfOperStatusUp
-                let vpn = vpn_like(&name, &description);
+                // туннель по типу интерфейса — VPN, как бы его ни назвали (OpenVPN DCO берёт имя профиля)
+                let vpn = vpn_like(&name, &description) || a.IfType == 131;
                 out.push((
                     a.Anonymous1.Anonymous.IfIndex,
                     Adapter {
@@ -499,6 +525,7 @@ pub(crate) mod win {
                         up,
                         ipv4,
                         vpn_like: vpn,
+                        kind: crate::diag::kind_of(a.IfType).to_string(),
                     },
                 ));
                 p = a.Next;
@@ -585,6 +612,24 @@ mod tests {
             "TAP-Windows Adapter V9 for OpenVPN Connect"
         ));
         assert!(!vpn_like("Wi-Fi", "Intel(R) Wi-Fi 6 AX201 160MHz"));
+    }
+
+    #[test]
+    fn route_line_says_kind_and_description() {
+        // имя адаптера задал не Windows (заказчик: «через Type-C - Local Cable - Sergio», а кабеля нет)
+        let a = Adapter {
+            name: "Type-C - Local Cable - Sergio".into(),
+            description: "Intel(R) Wi-Fi 6 AX201 160MHz".into(),
+            up: true,
+            ipv4: vec![],
+            vpn_like: false,
+            kind: kind_of(71).into(),
+        };
+        assert_eq!(
+            route_line(&a),
+            "через Wi‑Fi «Type-C - Local Cable - Sergio», Intel(R) Wi-Fi 6 AX201 160MHz — не VPN, трафик идёт напрямую"
+        );
+        assert_eq!(kind_of(131), "туннель");
     }
 
     #[test]
