@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": ["Bash(cargo test:*)", "Bash(cargo fmt:*)", "Bash(cargo clippy:*)", "Bash(cargo build:*)",
+              "Bash(python scripts/screens.py:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"],
+    "deny": ["Read(./.env)"]
+  }
+}
