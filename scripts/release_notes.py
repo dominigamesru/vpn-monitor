@@ -54,10 +54,12 @@ def sections(md):
 def build(md, version, prev, asset):
     """Текст релиза: версия `version` и все невыпущенные между `prev` и ней."""
     all_ = sections(md)
-    lo, hi = vkey(prev) if prev else None, vkey(version)
-    picked = [s for s in all_ if vkey(s[0]) <= hi and (lo is None or vkey(s[0]) > lo)] or [
-        s for s in all_ if s[0] == version
-    ]
+    hi = vkey(version)
+    if prev:
+        lo = vkey(prev)
+        picked = [s for s in all_ if lo < vkey(s[0]) <= hi]
+    else:  # без последней опубликованной — только раздел этой версии
+        picked = [s for s in all_ if s[0] == version]
     if not picked:
         raise SystemExit(f"в app/CHANGELOG.md нет раздела «## {version}» — допишите заметки и запустите снова")
     ver, title, user, _ = picked[0]
@@ -71,8 +73,9 @@ def build(md, version, prev, asset):
         parts.append(f"<details>\n<summary>Технически — для разработчиков и админов</summary>\n\n{body}\n\n</details>")
     parts.append(
         "### Как установить\n"
-        f"Уже стоит — обновится само за несколько минут, ничего делать не нужно. Первый раз — скачайте **`{asset}`** "
-        "ниже и запустите двойным кликом (Windows 10 и 11, без прав администратора). Контрольные суммы — в `sha256`."
+        "Уже стоит — обновится само до последней версии за несколько минут, ничего делать не нужно. Первый раз — "
+        f"скачайте **`{asset}`** ниже и запустите двойным кликом (Windows 10 и 11, без прав администратора). "
+        "Контрольные суммы — в файлах релиза."
     )
     return "\n\n".join(p for p in parts if p) + "\n"
 

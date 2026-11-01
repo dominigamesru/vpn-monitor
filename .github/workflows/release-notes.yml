@@ -1,0 +1,50 @@
+# Переписать тексты уже опубликованных релизов из app/CHANGELOG.md в формате scripts/release_notes.py (вручную).
+# Меняется только текст релиза (notes); файлы релиза, теги и latest.version не трогаются — установленные копии этого не
+# видят. Версии без раздела в CHANGELOG и без релиза пропускаются.
+name: release-notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: "версии через пробел; пусто — все из CHANGELOG, у которых есть релиз"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSIONS: ${{ inputs.versions }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Тексты релизов из CHANGELOG
+        shell: python
+        run: |
+          import os, re, subprocess, sys
+          md = open("app/CHANGELOG.md", encoding="utf-8").read()
+          known = [h.split()[0] for h in re.findall(r"^## (.+)$", md, flags=re.M)]
+          want = os.environ.get("VERSIONS", "").split() or known
+          done, skipped = [], []
+          for v in want:
+              if v not in known:
+                  skipped.append(f"{v} (нет в CHANGELOG)")
+                  continue
+              tag = f"v{v}"
+              if subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode != 0:
+                  skipped.append(f"{v} (нет релиза)")
+                  continue
+              key = tuple(int(x) for x in re.findall(r"\d+", v.split("-")[0]))
+              # до 0.5.4 exe в релизе назывался vpn-monitor.exe
+              asset = "vpn-monitor.exe" if key < (0, 5, 4) else "domini-vpn-monitor-beta.exe" if "-" in v else "domini-vpn-monitor.exe"
+              out = f"dist/notes-{v}.md"
+              subprocess.run([sys.executable, "scripts/release_notes.py", "--version", v, "--asset", asset, "--out", out], check=True)
+              subprocess.run(["gh", "release", "edit", tag, "--notes-file", out], check=True)
+              done.append(v)
+          print("переписаны:", ", ".join(done) or "—")
+          print("пропущены:", ", ".join(skipped) or "—")
