@@ -3,121 +3,447 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VPN Monitor</title>
+<title>Как устроен VPN Monitor</title>
+<meta name="description" content="Domini VPN Monitor: что проверяет, как называет причину, где что лежит. Схема — сверху, подробности — по клику.">
 <style>
-:root{--bg:#f7f8fa;--fg:#1c2230;--muted:#667085;--card:#fff;--line:#d7dce5;--app:#2f6fdc;--app-bg:#eaf1fd;--srv:#1f8a4c;--srv-bg:#e8f6ee;--ext:#9a5b00;--ext-bg:#fdf3e2;--mon:#7a3fb8;--mon-bg:#f3ecfb;--arrow:#5b6476}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12151b;--fg:#e6e9f0;--muted:#98a2b3;--card:#1a1e26;--line:#2d3340;--app:#7aa7ff;--app-bg:#1a2740;--srv:#4fd18b;--srv-bg:#16291f;--ext:#ffbe5c;--ext-bg:#2e2414;--mon:#c7a2ff;--mon-bg:#261c35;--arrow:#9aa3b5}}
-:root[data-theme="dark"]{--bg:#12151b;--fg:#e6e9f0;--muted:#98a2b3;--card:#1a1e26;--line:#2d3340;--app:#7aa7ff;--app-bg:#1a2740;--srv:#4fd18b;--srv-bg:#16291f;--ext:#ffbe5c;--ext-bg:#2e2414;--mon:#c7a2ff;--mon-bg:#261c35;--arrow:#9aa3b5}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
-main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}h1{font-size:24px;margin:0 0 4px}h2{font-size:18px;margin:32px 0 8px}
-p{max-width:820px}.muted{color:var(--muted)}
-.diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;overflow-x:auto}
-svg{display:block;min-width:900px;width:100%;height:auto}
-svg text{fill:var(--fg);font-family:"Segoe UI",system-ui,sans-serif}
-.box{stroke-width:1.5;rx:10}.a{fill:var(--app-bg);stroke:var(--app)}.s{fill:var(--srv-bg);stroke:var(--srv)}.e{fill:var(--ext-bg);stroke:var(--ext)}.m{fill:var(--mon-bg);stroke:var(--mon)}
-.zone{fill:none;stroke:var(--line);stroke-dasharray:6 5;stroke-width:1.2}
-.ttl{font-weight:700;font-size:14px}.sub{font-size:12px;fill:var(--muted)}.lbl{font-size:11.5px;fill:var(--muted)}
-.ar{stroke:var(--arrow);stroke-width:1.6;fill:none;marker-end:url(#arr)}
-table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:14px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{background:var(--bg)}
-code{font-family:Consolas,monospace;font-size:13px}
-.seq{display:grid;gap:6px}.seq div{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--app);border-radius:6px;padding:8px 12px}
-.seq div.r{border-left-color:var(--srv)}
+/* Токены — палитра окна приложения (скилл web-ui): холодные чернила, статусы норма / так себе / плохо. */
+:root{--bg:#eef1f5;--surface:#fff;--surface-2:#f3f5f8;--ink:#15202e;--muted:#5a6b80;--line:#e2e7ee;--axis:#c9d2dd;--accent:#2f5bea;
+  --good:#1f9d55;--warn:#c98a00;--bad:#d6453d;--idle:#8b9bb0;--good-bg:#e6f5ec;--warn-bg:#fbf2dc;--bad-bg:#fbe7e5;
+  --tip-bg:#15202e;--tip-ink:#f3f6fa;--shadow:0 18px 50px rgba(21,32,46,.18);--font:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;--mono:"Cascadia Mono",Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d131b;--surface:#161f2a;--surface-2:#1f2935;--ink:#e6edf5;--muted:#8d9db2;--line:#263342;--axis:#34445a;--accent:#6f93ff;
+  --good:#3cc274;--warn:#e8b23a;--bad:#f0675e;--idle:#7d8ca0;--good-bg:#173226;--warn-bg:#352a12;--bad-bg:#3a1d1c;--tip-bg:#e6edf5;--tip-ink:#0d131b;--shadow:0 18px 50px rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--bg:#0d131b;--surface:#161f2a;--surface-2:#1f2935;--ink:#e6edf5;--muted:#8d9db2;--line:#263342;--axis:#34445a;--accent:#6f93ff;
+  --good:#3cc274;--warn:#e8b23a;--bad:#f0675e;--idle:#7d8ca0;--good-bg:#173226;--warn-bg:#352a12;--bad-bg:#3a1d1c;--tip-bg:#e6edf5;--tip-ink:#0d131b;--shadow:0 18px 50px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--font)}
+main{max-width:1120px;margin:0 auto;padding:28px 16px 64px}
+h1{font-size:28px;line-height:1.2;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+h2{font-size:19px;margin:44px 0 6px;font-weight:650}
+h3{font-size:15px;margin:18px 0 6px}
+p{max-width:72ch;margin:6px 0}
+.lead{color:var(--muted);font-size:16px;max-width:66ch}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
+a{color:var(--accent)}
+.muted{color:var(--muted)}
+.top{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.ib{width:36px;height:36px;border-radius:10px;border:0;background:var(--surface-2);color:var(--muted);display:grid;place-items:center;cursor:pointer;flex:none}
+.ib:hover{color:var(--ink)}
+.ib svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- схема ---------- */
+.board{margin-top:22px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px}
+.layer{display:grid;gap:10px;align-items:stretch}
+.layer-name{font-size:12.5px;color:var(--muted);margin:0 0 8px}
+.see{grid-template-columns:repeat(4,1fr)}
+.core{margin:14px 0}
+.links{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr}
+.node{font:inherit;color:inherit;text-align:left;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;position:relative;
+  transition:border-color .15s,background-color .15s}
+.node:hover{border-color:var(--axis)}
+.node b{display:block;font-size:15px}
+.node span{display:block;font-size:13px;color:var(--muted);margin-top:2px}
+.node::after{content:"";position:absolute;right:12px;top:14px;width:7px;height:7px;border-right:1.6px solid var(--muted);border-bottom:1.6px solid var(--muted);transform:rotate(-45deg);opacity:.7}
+.node.core-node{background:transparent;border-style:dashed;border-color:var(--axis);text-align:center}
+.node.core-node::after{display:none}
+.node.core-node b{font-size:16px}
+.down{display:flex;justify-content:space-around;color:var(--axis);font-size:18px;line-height:1;margin:6px 0;user-select:none}
+.arrow{align-self:center;color:var(--axis);font-size:20px;user-select:none}
+.side{margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+/* статус звена в примере */
+.node[data-st]{border-width:1.5px}
+.node[data-st="good"]{border-color:var(--good);background:var(--good-bg)}
+.node[data-st="warn"]{border-color:var(--warn);background:var(--warn-bg)}
+.node[data-st="bad"]{border-color:var(--bad);background:var(--bad-bg)}
+.node .st{display:none;margin-top:6px;font-size:12.5px;font-weight:600}
+.node[data-st] .st{display:block}
+.node[data-st="good"] .st{color:var(--good)}.node[data-st="warn"] .st{color:var(--warn)}.node[data-st="bad"] .st{color:var(--bad)}
+
+.try{margin-top:16px;border-top:1px solid var(--line);padding-top:14px;display:grid;gap:10px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:13.5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:5px 12px;cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);font-weight:600}
+.verdict{display:flex;gap:12px;align-items:center;background:var(--surface-2);border-radius:12px;padding:10px 14px}
+.score{min-width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-weight:700;font-variant-numeric:tabular-nums;color:#fff;background:var(--idle)}
+.score.good{background:var(--good)}.score.warn{background:var(--warn)}.score.bad{background:var(--bad)}
+.verdict b{display:block}.verdict span{font-size:13px;color:var(--muted)}
+
+/* ---------- шаги, раскрывашки ---------- */
+ol.steps{list-style:none;padding:0;margin:12px 0 0;counter-reset:s;display:grid;gap:8px}
+ol.steps>li{counter-increment:s}
+details{background:var(--surface);border:1px solid var(--line);border-radius:12px}
+details>summary{list-style:none;cursor:pointer;padding:12px 44px 12px 16px;position:relative}
+details>summary::-webkit-details-marker{display:none}
+details>summary::after{content:"";position:absolute;right:18px;top:19px;width:7px;height:7px;border-right:1.6px solid var(--muted);border-bottom:1.6px solid var(--muted);transform:rotate(45deg);transition:transform .15s}
+details[open]>summary::after{transform:rotate(-135deg);top:22px}
+ol.steps summary{padding-left:52px}
+ol.steps summary::before{content:counter(s);position:absolute;left:14px;top:11px;width:26px;height:26px;border-radius:50%;background:var(--surface-2);display:grid;place-items:center;font-size:13px;font-weight:650;color:var(--muted)}
+summary b{font-weight:600}
+summary .muted{display:block;font-size:13.5px}
+.inner{padding:0 16px 14px;border-top:1px solid var(--line)}
+ol.steps .inner{padding-left:52px}
+.inner ul{padding-left:18px;margin:8px 0}.inner li{margin:4px 0}
+
+table{border-collapse:collapse;width:100%;font-size:14px;margin:8px 0}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:13px}
+td:first-child{white-space:nowrap}
+.tbl{overflow-x:auto}
+.num{font-variant-numeric:tabular-nums}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+
+/* ---------- расширенные подсказки к терминам ---------- */
+.term{border-bottom:1px dotted var(--muted);cursor:help;position:relative}
+.term .tip{position:absolute;left:0;bottom:calc(100% + 8px);width:min(300px,80vw);background:var(--tip-bg);color:var(--tip-ink);font-size:13px;line-height:1.45;padding:9px 11px;border-radius:10px;
+  box-shadow:var(--shadow);opacity:0;visibility:hidden;transition:opacity .12s;z-index:5;pointer-events:none;font-weight:400}
+.term:hover .tip,.term:focus .tip,.term:focus-within .tip{opacity:1;visibility:visible}
+
+/* ---------- модальное окно ---------- */
+dialog{border:0;padding:0;border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:var(--shadow);width:min(640px,calc(100vw - 32px));max-height:calc(100vh - 48px)}
+dialog::backdrop{background:rgba(13,19,27,.45)}
+.dlg-head{display:flex;align-items:flex-start;gap:12px;padding:18px 18px 8px 20px;position:sticky;top:0;background:var(--surface)}
+.dlg-head h3{margin:0;font-size:18px;flex:1}
+.dlg-body{padding:0 20px 20px}
+.dlg-body ul{padding-left:18px}.dlg-body li{margin:4px 0}
+.adr{font-size:13px;color:var(--muted);margin-top:12px}
+
+@media (max-width:820px){.see{grid-template-columns:1fr 1fr}.links{grid-template-columns:1fr}.links .arrow{transform:rotate(90deg);justify-self:center;margin:-4px 0}.side,.grid2{grid-template-columns:1fr}.down{display:none}}
+@media (max-width:420px){.see{grid-template-columns:1fr}td:first-child{white-space:normal}h1{font-size:24px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <main>
-<h1>VPN Monitor — как устроено</h1>
-<p class="muted">Черновик схемы (до первой версии). Приложение в трее Windows регулярно запускает пробы: скачивает пробные
-данные с GitLab и SVN офиса через VPN и, для сравнения, из интернета. По итогу красит иконку-светофор и шлёт метрики в
-Prometheus. Прототип замера — <code>scripts/net_speed.py</code>.</p>
-
-<h2>Компоненты</h2>
-<div class="diagram">
-<svg viewBox="0 0 1120 470" role="img" aria-label="Схема компонентов">
-<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/></marker></defs>
-
-<rect class="zone" x="20" y="20" width="560" height="430" rx="14"/>
-<text class="sub" x="36" y="44">Ноутбук сотрудника (Windows)</text>
-
-<rect class="box a" x="40" y="62" width="250" height="96"/>
-<text class="ttl" x="56" y="88">Трей · светофор</text>
-<text class="sub" x="56" y="108">зелёный / жёлтый / красный</text>
-<text class="sub" x="56" y="126">меню: «Проверить сейчас», последние</text>
-<text class="sub" x="56" y="144">пробы, выход</text>
-
-<rect class="box a" x="40" y="190" width="250" height="96"/>
-<text class="ttl" x="56" y="216">Планировщик</text>
-<text class="sub" x="56" y="236">проба раз в N минут</text>
-<text class="sub" x="56" y="254">и по кнопке; одна проба за раз</text>
-
-<rect class="box a" x="310" y="190" width="250" height="118"/>
-<text class="ttl" x="326" y="216">Проба (из net_speed.py)</text>
-<text class="sub" x="326" y="236">задержка: DNS + TCP connect</text>
-<text class="sub" x="326" y="254">скорость: поток N секунд</text>
-<text class="sub" x="326" y="272">успех / ошибка по каждой цели</text>
-<text class="sub" x="326" y="290">креды — из .env</text>
-
-<rect class="box a" x="40" y="330" width="250" height="96"/>
-<text class="ttl" x="56" y="356">Оценка → светофор</text>
-<text class="sub" x="56" y="376">пороги задержки и скорости</text>
-<text class="sub" x="56" y="394">(уточнить: GLOSSARY → Неясное)</text>
-
-<rect class="box a" x="310" y="330" width="250" height="96"/>
-<text class="ttl" x="326" y="356">Метрики</text>
-<text class="sub" x="326" y="376">задержка, скорость, успех</text>
-<text class="sub" x="326" y="394">с меткой цели и машины</text>
-
-<rect class="box s" x="660" y="62" width="420" height="80"/>
-<text class="ttl" x="676" y="88">GitLab офиса · HTTPS 443</text>
-<text class="sub" x="676" y="108">архив ветки / git clone --depth 1</text>
-<text class="sub" x="676" y="126">токен read_repository</text>
-
-<rect class="box s" x="660" y="160" width="420" height="80"/>
-<text class="ttl" x="676" y="186">SVN офиса · HTTP 80</text>
-<text class="sub" x="676" y="206">большой файл + много мелких</text>
-<text class="sub" x="676" y="224">логин / пароль AD</text>
-
-<rect class="box e" x="660" y="258" width="420" height="62"/>
-<text class="ttl" x="676" y="284">Интернет (для сравнения)</text>
-<text class="sub" x="676" y="304">proof.ovh.net</text>
-
-<rect class="box m" x="660" y="346" width="420" height="80"/>
-<text class="ttl" x="676" y="372">Prometheus</text>
-<text class="sub" x="676" y="392">Pushgateway или экспортер /metrics</text>
-<text class="sub" x="676" y="410">(уточнить) → дашборд, алерты</text>
-
-<path class="ar" d="M165 188 L165 160"/>
-<text class="lbl" x="172" y="180">статус</text>
-<path class="ar" d="M290 238 L308 238"/>
-<path class="ar" d="M560 220 C 610 200, 620 110, 658 102"/>
-<text class="lbl" x="590" y="150">через VPN</text>
-<path class="ar" d="M560 240 C 610 230, 630 200, 658 200"/>
-<path class="ar" d="M560 270 C 610 280, 630 289, 658 289"/>
-<path class="ar" d="M435 308 L435 328"/>
-<path class="ar" d="M400 308 C 360 320, 320 340, 292 370"/>
-<path class="ar" d="M165 328 C 120 300, 120 200, 140 160"/>
-<path class="ar" d="M560 386 L658 386"/>
-<text class="lbl" x="580" y="378">метрики</text>
-</svg>
+<div class="top">
+  <div>
+    <h1>Как устроен VPN Monitor</h1>
+    <p class="lead">Приложение в трее Windows раз в 1–3 минуты проверяет путь от ноутбука до офиса и в мир. Если работать
+    нельзя, оно называет причину: интернет, VPN или сервис. Схема — ниже, подробности — по клику на любой блок.</p>
+  </div>
+  <button class="ib" id="themeBtn" type="button" aria-label="Тема"></button>
 </div>
 
-<h2>Один цикл</h2>
-<div class="seq">
-<div><b>Планировщик</b>: пришло время (или нажали «Проверить сейчас») — запускает пробу, если предыдущая закончилась</div>
-<div class="r"><b>Проба</b>: по каждой цели — задержка (DNS, TCP), затем пробное скачивание до N секунд; ошибка — тоже результат</div>
-<div><b>Оценка</b>: сравнивает с порогами → зелёный / жёлтый / красный; иконка и подсказка трея обновляются</div>
-<div class="r"><b>Метрики</b>: задержка, скорость и успех по целям уходят в Prometheus</div>
+<!-- ======================= СХЕМА ======================= -->
+<section class="board" aria-label="Схема">
+  <p class="layer-name">Что видит сотрудник</p>
+  <div class="layer see">
+    <button class="node" data-open="tray"><b>Иконка в трее</b><span>оценка 1–99 и цвет; подсказка при наведении</span></button>
+    <button class="node" data-open="flyout"><b>Меню у иконки</b><span>маршрут, цифры, советы — по клику</span></button>
+    <button class="node" data-open="window"><b>Окно в браузере</b><span>Сейчас, История, Настройки, AI-агент</span></button>
+    <button class="node" data-open="agent"><b>AI-агент</b><span>Claude спрашивает «что с VPN?»</span></button>
+  </div>
+  <div class="down" aria-hidden="true"><span>↕</span><span>↕</span><span>↕</span><span>↕</span></div>
+  <div class="layer core">
+    <button class="node core-node" data-open="core"><b>Приложение на ноутбуке</b><span>проверка → маршрут → причина → оценка; общее состояние и локальный API <code>127.0.0.1:5151</code></span></button>
+  </div>
+  <p class="layer-name">Куда ходит проверка — звенья по порядку</p>
+  <div class="layer links" id="route">
+    <button class="node" data-open="inet" data-link="inet"><b>Интернет</b><span>скорость и задержка канала</span><span class="st"></span></button>
+    <span class="arrow" aria-hidden="true">→</span>
+    <button class="node" data-open="vpn" data-link="vpn"><b>VPN</b><span>клиент, профиль, задержка до офиса</span><span class="st"></span></button>
+    <span class="arrow" aria-hidden="true">→</span>
+    <button class="node" data-open="office" data-link="office"><b>Офис</b><span>Confluence, Jira, SVN, GitLab</span><span class="st"></span></button>
+    <span class="arrow" aria-hidden="true">→</span>
+    <button class="node" data-open="world" data-link="world"><b>Мир</b><span>ChatGPT, Claude, Luma</span><span class="st"></span></button>
+  </div>
+  <div class="side">
+    <button class="node" data-open="releases"><b>GitHub Releases</b><span>новые версии и настройки офиса — раз в 5 минут</span></button>
+    <button class="node" data-open="secrets"><b>Учётная запись AD</b><span>Диспетчер учётных данных Windows, не в файлах</span></button>
+  </div>
+
+  <div class="try">
+    <p class="layer-name" style="margin:0">Попробуйте: как приложение называет причину</p>
+    <div class="chips" role="group" aria-label="Ситуация">
+      <button class="chip" data-case="ok" aria-pressed="true">Всё хорошо</button>
+      <button class="chip" data-case="inet">Плохой интернет</button>
+      <button class="chip" data-case="vpnspeed">VPN режет скорость</button>
+      <button class="chip" data-case="vpnoff">VPN выключен</button>
+      <button class="chip" data-case="auth">Сменился пароль AD</button>
+      <button class="chip" data-case="jira">Jira не отвечает</button>
+    </div>
+    <div class="verdict" aria-live="polite"><div class="score" id="vScore">–</div><div><b id="vHead"></b><span id="vWhy"></span></div></div>
+  </div>
+</section>
+
+<!-- ======================= ЦИКЛ ======================= -->
+<h2>Одна проверка</h2>
+<p class="muted">Каждые 3 минуты, когда всё хорошо, и каждую минуту, когда нет. Ещё — по кнопке «Проверить», после
+сна и при смене сети. Раскройте шаг, чтобы увидеть, что внутри.</p>
+<ol class="steps">
+  <li><details><summary><b>Найти VPN</b><span class="muted">какой клиент и профиль ведут в офис</span></summary><div class="inner">
+    <ul>
+      <li>По маршруту до адреса офиса выясняем сетевой адаптер, по адаптеру и процессу — клиента: Happ, OpenVPN Connect и
+        другие из списка <code>vpn_clients</code> в настройках.</li>
+      <li>Профиль читаем из конфигов клиента, <b>только название</b>. Адреса и ключи профиля не читаем и не пишем.</li>
+      <li>Tailscale, WSL, Hyper-V, VirtualBox и похожие — не VPN в офис (<code>ignore_adapters</code>).</li>
+      <li>Адаптера нет — «VPN выключен», но офис и мир всё равно проверяем: вдруг сотрудник в офисе.</li>
+    </ul></div></details></li>
+  <li><details><summary><b>Опросить сервисы — параллельно</b><span class="muted">лёгкие пробы, скорость, интернет, мир</span></summary><div class="inner">
+    <div class="tbl"><table>
+      <tr><th>Проба</th><th>Что делает</th><th>Как часто</th></tr>
+      <tr><td>Лёгкая: Confluence, Jira</td><td>DNS → TCP → HTTP → вход AD; проверка, что адрес DNS не подставной (клиент VPN отдаёт <code>1.2.3.4</code>)</td><td>каждая проверка</td></tr>
+      <tr><td><span class="term" tabindex="0">svn info<span class="tip" role="tooltip">Запрос PROPFIND с Depth 0 к репозиторию — ровно то, что делает команда <code>svn info</code>. Показывает, отвечает ли SVN как SVN и за сколько. Установленный svn не нужен.</span></span></td><td>PROPFIND к репозиторию SVN с тем же входом</td><td>каждая проверка</td></tr>
+      <tr><td>Скорость: SVN, GitLab</td><td>скачивание пробного файла, Мбит/с</td><td>каждая проверка; большой файл — раз в 30 мин</td></tr>
+      <tr><td>Интернет</td><td>TCP до <code>1.1.1.1</code>, <code>8.8.8.8</code>; скачивание с <code>proof.ovh.net</code> до 8 с</td><td>задержка — всегда, скорость — раз в 15 мин</td></tr>
+      <tr><td>Мир: ChatGPT, Claude, Luma</td><td>открывается ли и каким путём: через VPN или напрямую; HTTP 403 — «закрыт для вашей страны»</td><td>каждая проверка</td></tr>
+    </table></div>
+    <p class="muted">Ошибка — тоже результат: таймаут, отказ, 401, подставной DNS записываются как причина пробы.</p></div></details></li>
+  <li><details><summary><b>Посчитать статусы звеньев</b><span class="muted">медиана трёх последних проверок против порогов</span></summary><div class="inner">
+    <p>Каждое звено сравнивается с порогами по <span class="term" tabindex="0">медиане трёх<span class="tip" role="tooltip">Средняя из трёх последних проверок по величине. Один случайный выпад не перекрашивает иконку, а держащаяся проблема видна со второй проверки. В истории цифры хранятся как есть.</span></span> последних проверок:</p>
+    <div class="tbl"><table class="num">
+      <tr><th>Звено</th><th>Норма</th><th>Так себе</th><th>Плохо</th></tr>
+      <tr><td>Интернет, скорость</td><td>≥ 8 Мбит/с</td><td>2–8</td><td>&lt; 2</td></tr>
+      <tr><td>Интернет, задержка</td><td>≤ 1000 мс</td><td>1000–3000</td><td>&gt; 3000</td></tr>
+      <tr><td>VPN, задержка до офиса</td><td>≤ 300 мс</td><td>300–700</td><td>&gt; 700</td></tr>
+      <tr><td>SVN, скорость</td><td>≥ 8 Мбит/с</td><td>2–8</td><td>&lt; 2</td></tr>
+    </table></div>
+    <p class="muted">Пороги — в <code>settings.json</code> (<code>thresholds</code>); офис может поменять их без релиза через удалённые
+    настройки. Нижняя граница нормы интернета равна норме SVN, иначе «SVN в норме, интернет плохой» было бы противоречием.</p></div></details></li>
+  <li><details><summary><b>Назвать причину</b><span class="muted">первое звено не в норме; что ниже — «из‑за него»</span></summary><div class="inner">
+    <ul>
+      <li>Идём по маршруту <b>интернет → VPN → офис</b>. Причина — первое звено, которое не в норме.</li>
+      <li>Звенья ниже, которые хуже из‑за него, помечаются «из‑за интернета» или «из‑за VPN» и в причину не попадают:
+        медленный SVN при медленном интернете — не вина VPN.</li>
+      <li>Вывод — одна фраза с действием: «VPN медленный — переподключите Happ», «Пароль AD не подошёл — войдите заново».</li>
+      <li>Цвет иконки — по худшему звену.</li>
+    </ul></div></details></li>
+  <li><details><summary><b>Оценка 1–99 и своя норма</b><span class="muted">одно число и «обычно X» рядом с цифрами</span></summary><div class="inner">
+    <ul>
+      <li><b>Оценка</b> складывается из звеньев, каждое учитывается один раз. Медленный SVN не роняет её трижды:
+        через скорость, долю канала и стабильность.</li>
+      <li><b>Своя норма</b> — медианы за неделю для этого клиента и профиля VPN: «VPN 240 мс — обычно 205». Число без сравнения
+        ничего не говорит.</li>
+      <li><b>Советы</b> — по известным причинам: подставной DNS → переподключить профиль, 401 → войти заново, Wi‑Fi со входом →
+        открыть браузер, мир закрыт напрямую → включить весь трафик через VPN.</li>
+    </ul></div></details></li>
+  <li><details><summary><b>Показать и записать</b><span class="muted">иконка, подсказка, уведомление, история, лог</span></summary><div class="inner">
+    <ul>
+      <li>Иконка и многострочная подсказка трея (Windows режет её до 127 символов).</li>
+      <li><b>Уведомление</b> — только при смене состояния, которое держится; одно и то же — не чаще раза в 30 минут.
+        Сон ноутбука, пауза и смена сети не дают ложной тревоги: после сна 2 минуты тишины.</li>
+      <li>История — <code>metrics_1d.json</code> (сутки) и <code>metrics_7d.json</code> (неделя): одна запись — одна проверка.</li>
+      <li>Лог <code>vpn-monitor.log</code>: каждое решение, которое не видно снаружи, — одной строкой; без секретов. Больше 5 МБ — в <code>.log.1</code>.</li>
+    </ul></div></details></li>
+</ol>
+
+<!-- ======================= ФОН ======================= -->
+<h2>В фоне, отдельно от проверки</h2>
+<div class="grid2">
+  <details><summary><b>Обновление</b><span class="muted">раз в 5 минут, ставится само</span></summary><div class="inner">
+    <ul>
+      <li>Читает <code>latest/latest.version</code> (бета-канал — <code>beta/latest.version</code>). Версия другая — скачивает exe,
+        сверяет <code>sha256</code>.</li>
+      <li>Запущенный exe переименовывает в <code>.old.exe</code>, новый кладёт на его место — путь не меняется, иконка в трее остаётся
+        на виду.</li>
+      <li>Последняя версия старше своей — это откат, его тоже ставим.</li>
+    </ul></div></details>
+  <details><summary><b>Удалённые настройки</b><span class="muted">office.json раз в 5 минут, без перезапуска</span></summary><div class="inner">
+    <ul>
+      <li><code>office.json</code> в релизе <code>latest</code> накладывается поверх своих настроек: объекты — по ключам,
+        сервисы (<code>targets</code>) — по <code>id</code>.</li>
+      <li>Применяется к следующей проверке; в «Настройках» видно, какие ключи и когда пришли.</li>
+      <li>Файла нет (404) — работаем на своих настройках, в лог пишем только смену ошибки.</li>
+    </ul></div></details>
+  <details><summary><b>Город</b><span class="muted">раз в 6 часов, когда есть интернет</span></summary><div class="inner">
+    <p>Город в шапке меню и в сводке для поддержки — по внешнему адресу. Отдельный поток, проверку не задерживает.</p></div></details>
+  <details><summary><b>Диагностика подключения</b><span class="muted">по запросу из «Настроек» или агента</span></summary><div class="inner">
+    <p>Для каждого сервиса: все адреса DNS, подставной ли адрес, через какой адаптер идёт маршрут, TCP, HTTP-код, вход —
+    и что сделать. Отчёт уходит в сводку для поддержки.</p></div></details>
 </div>
 
-<h2>Что откуда берётся</h2>
-<table>
-<tr><th>Вопрос</th><th>Источник</th></tr>
-<tr><td>Есть ли VPN до офиса</td><td>TCP connect до GitLab и SVN: успех и время</td></tr>
-<tr><td>Насколько он быстрый</td><td>скорость пробного скачивания с GitLab и SVN, рядом — интернет</td></tr>
-<tr><td>Виноват VPN или сервер</td><td>задержка до офиса ≫ до интернета — VPN; задержка норма, скорость низкая — сервер или канал офиса (<a href="net_speed.md">net_speed.md</a>)</td></tr>
-<tr><td>История и алерты</td><td>Prometheus</td></tr>
-</table>
+<!-- ======================= ФАЙЛЫ ======================= -->
+<h2>Где что лежит</h2>
+<p class="muted">Папка установки — <code>%LOCALAPPDATA%\DominiVPNMonitor</code>. Права администратора не нужны.</p>
+<div class="tbl"><table>
+  <tr><th>Файл</th><th>Что в нём</th></tr>
+  <tr><td><code>domini-vpn-monitor.exe</code></td><td>приложение; путь не меняется никогда — по нему Windows помнит иконку в трее</td></tr>
+  <tr><td><code>settings.json</code></td><td>настройки версии: сервисы, пороги, интервалы, клиенты VPN</td></tr>
+  <tr><td><code>user.json</code></td><td>выбор сотрудника: вид меню, тема меню и окна, канал обновлений, пауза, уведомления</td></tr>
+  <tr><td><code>metrics_1d.json</code>, <code>metrics_7d.json</code></td><td>история проверок за сутки и неделю</td></tr>
+  <tr><td><code>vpn-monitor.log</code></td><td>лог для поддержки, без паролей и токенов</td></tr>
+  <tr><td><code>WebView2\</code></td><td>служебная папка браузера меню; кода в ней нет, страницы встроены в exe</td></tr>
+  <tr><td><span class="term" tabindex="0">Диспетчер учётных данных<span class="tip" role="tooltip">Хранилище Windows с шифрованием DPAPI, привязанное к пользователю Windows. Там логин и пароль AD и токен GitLab. В файлы и в лог они не попадают.</span></span></td><td>логин и пароль AD, токен GitLab — не в папке установки</td></tr>
+</table></div>
+<p class="muted">Все JSON обратно совместимы: поля только добавляются, незнакомые терпятся — файл от новой версии читает старая,
+и наоборот.</p>
+
+<!-- ======================= РЕШЕНИЯ ======================= -->
+<h2>Почему так</h2>
+<details><summary><b>Решения (ADR)</b><span class="muted">11 записей: что выбрали и почему — для разработчиков</span></summary><div class="inner">
+<div class="tbl"><table>
+  <tr><td><a href="adr/0001-rust.md">0001</a></td><td>Rust: один exe без рантайма, запускается без прав администратора</td></tr>
+  <tr><td><a href="adr/0002-metrics-log-and-replay.md">0002</a></td><td>метрики в файлах рядом с exe, их можно переиграть</td></tr>
+  <tr><td><a href="adr/0004-delivery-github-releases.md">0004</a></td><td>поставка через GitHub Releases, публикует CI</td></tr>
+  <tr><td><a href="adr/0005-window-in-browser.md">0005</a></td><td>окно — страница в браузере на локальном порту</td></tr>
+  <tr><td><a href="adr/0006-ad-login-credential-manager.md">0006</a></td><td>вход логином AD, пароль — в Диспетчере учётных данных</td></tr>
+  <tr><td><a href="adr/0007-stable-exe-path-and-release-assets.md">0007</a></td><td>постоянный путь exe и имена файлов в релизе</td></tr>
+  <tr><td><a href="adr/0008-semver-channels.md">0008</a></td><td>semver: стабильный и бета-канал</td></tr>
+  <tr><td><a href="adr/0009-route-model-median-of-three.md">0009</a></td><td>модель маршрута, медиана трёх, причина — первое звено</td></tr>
+  <tr><td><a href="adr/0010-tray-menu-webview2.md">0010</a></td><td>меню у иконки на WebView2</td></tr>
+  <tr><td><a href="adr/0011-remote-settings-office-json.md">0011</a></td><td>удалённые настройки <code>office.json</code></td></tr>
+  <tr><td><a href="adr/0012-local-mcp-server.md">0012</a></td><td>локальный MCP-сервер для AI-агента</td></tr>
+</table></div></div></details>
+<p class="muted" style="margin-top:16px">Ещё: <a href="app.md">docs/app.md</a> — что умеет каждая версия;
+<a href="ux/scenarios.md">сценарии и состояния</a>; <a href="screens.html">галерея экранов</a>.</p>
 </main>
+
+<!-- ======================= ОКНА «ПОД КАПОТОМ» ======================= -->
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <div class="dlg-head"><h3 id="dlgTitle"></h3><button class="ib" id="dlgClose" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="dlg-body" id="dlgBody"></div>
+</dialog>
+
+<template id="t-tray" data-title="Иконка в трее">
+  <ul>
+    <li>Собачка Domini слева снизу, плашка статуса справа сверху: оценка числом, «!» — VPN выключен, синяя точка — идёт проверка.</li>
+    <li>Подсказка при наведении — несколько строк: вывод, цифры звеньев, время проверки. Windows режет её до 127 символов.</li>
+    <li>Уведомления Windows — по правилам: только смена состояния, которое держится; одно и то же — не чаще раза в 30 минут.</li>
+    <li>Одна копия на пользователя: новая просит старую закрыться.</li>
+  </ul>
+  <p class="adr">Код: <code>icon.rs</code>, <code>notify.rs</code>, <code>win.rs</code></p>
+</template>
+<template id="t-flyout" data-title="Меню у иконки">
+  <ul>
+    <li>Своё окно на WebView2 вместо системного списка — открывается левым и правым кликом, как панель Wi‑Fi, и прячется, когда теряет фокус.</li>
+    <li>Шапка: город, версия (клик — проверить обновления), время проверки (клик — проверить сейчас), вид меню, тема.</li>
+    <li>Три вида: маршрут, приборная панель, лента. Ниже — советы, учётная запись и кнопки.</li>
+    <li>Страница встроена в exe и отдаётся локальным API с <code>no-store</code> — новая версия видна сразу.</li>
+  </ul>
+  <p class="adr">Решение: <a href="adr/0010-tray-menu-webview2.md">ADR 0010</a>. Код: <code>flyout.rs</code>, <code>app/web/flyout.html</code></p>
+</template>
+<template id="t-window" data-title="Окно в браузере">
+  <ul>
+    <li>Адрес <code>http://127.0.0.1:5151</code>; если порт занят — следующий, до 5160. Слушает только этот компьютер.</li>
+    <li>Вкладки: <b>Сейчас</b> (вывод, каналы, сервисы), <b>История</b> (сутки и неделя, итог недели), <b>Настройки</b> (вход AD,
+      диагностика, лог, запрос в поддержку), <b>AI-агент</b>, <b>Что нового</b> (клик по версии).</li>
+    <li>Тема окна своя, отдельно от меню.</li>
+    <li>Работает без сети: всё встроено, ничего не грузится из интернета — окно нужно именно когда сеть лежит.</li>
+  </ul>
+  <p class="adr">Решение: <a href="adr/0005-window-in-browser.md">ADR 0005</a>. Код: <code>api.rs</code>, <code>app/web/index.html</code></p>
+</template>
+<template id="t-agent" data-title="AI-агент (MCP)">
+  <ul>
+    <li><code>POST /mcp</code> на том же порту — MCP поверх HTTP, JSON-RPC 2.0. Подключение: <code>claude mcp add --transport http vpn-monitor http://127.0.0.1:5151/mcp</code>.</li>
+    <li>Инструменты: <code>vpn_status</code>, <code>vpn_history</code>, <code>vpn_check</code>, <code>vpn_report</code>, <code>vpn_diagnostics</code>; ресурсы <code>vpn://status</code>, <code>vpn://report.html</code>.</li>
+    <li>Запросы со сторонних сайтов не принимаются: <code>Origin</code> — только локальный. Паролей и токенов в ответах нет.</li>
+  </ul>
+  <p class="adr">Решение: <a href="adr/0012-local-mcp-server.md">ADR 0012</a>. Код: <code>mcp.rs</code></p>
+</template>
+<template id="t-core" data-title="Приложение на ноутбуке">
+  <p>Один exe на Rust. Внутри несколько потоков вокруг общего состояния:</p>
+  <ul>
+    <li><b>Проверка</b> — цикл раз в 1–3 минуты: пробы → маршрут → причина → оценка → запись. Первая — через 2 секунды после запуска.</li>
+    <li><b>Трей</b> — иконка, подсказка, уведомления, меню.</li>
+    <li><b>Локальный API</b> — окно, меню и AI-агент читают одно и то же состояние. Меняющие запросы — <code>POST</code> с заголовком
+      <code>X-VPN-Monitor: 1</code>, чужой <code>Host</code> не принимается.</li>
+    <li><b>Фон</b> — обновление, удалённые настройки, город.</li>
+  </ul>
+  <div class="tbl"><table>
+    <tr><th>Адрес</th><th>Что</th></tr>
+    <tr><td><code>GET /api/state</code></td><td>всё состояние: вывод, звенья, сервисы, пороги</td></tr>
+    <tr><td><code>GET /api/history</code></td><td>история за час, сутки, неделю</td></tr>
+    <tr><td><code>GET /api/summary</code></td><td>сводка для поддержки текстом</td></tr>
+    <tr><td><code>POST /api/check</code></td><td>проверить сейчас</td></tr>
+    <tr><td><code>GET /api/help</code></td><td>все адреса с примерами</td></tr>
+  </table></div>
+  <p class="adr">Код: <code>app.rs</code>, <code>monitor.rs</code>, <code>route.rs</code>, <code>api.rs</code></p>
+</template>
+<template id="t-inet" data-title="Интернет">
+  <ul>
+    <li>Задержка — TCP до <code>1.1.1.1:443</code> и <code>8.8.8.8:443</code>, каждая проверка.</li>
+    <li>Скорость — скачивание <code>proof.ovh.net/files/10Mb.dat</code> до 8 секунд, раз в 15 минут.</li>
+    <li>Норма: скорость ≥ 8 Мбит/с, задержка ≤ 1000 мс. Плохо: &lt; 2 Мбит/с или &gt; 3000 мс.</li>
+    <li>Интернет плохой — вывод «Медленный интернет — VPN в порядке», а VPN и офис ниже помечаются «из‑за интернета».</li>
+    <li>Wi‑Fi со входом (отель, кафе) распознаётся отдельно: совет — открыть браузер и войти.</li>
+  </ul>
+</template>
+<template id="t-vpn" data-title="VPN">
+  <ul>
+    <li>Клиент — по адаптеру и процессу; профиль — только название из конфигов клиента.</li>
+    <li>Задержка до офиса через туннель: норма ≤ 300 мс, плохо &gt; 700 мс. Отдельный статус «задержка VPN» — только по задержке.</li>
+    <li>VPN режет скорость, если SVN медленный при нормальном интернете: «SVN качает медленно — режет VPN».</li>
+    <li>Подставной адрес DNS (клиент VPN отдаёт <code>1.2.3.4</code>) — туннель не пропускает трафик; совет — переподключить профиль.</li>
+  </ul>
+  <p class="adr">Код: <code>vpn.rs</code>, <code>route.rs</code></p>
+</template>
+<template id="t-office" data-title="Офис">
+  <div class="tbl"><table>
+    <tr><th>Сервис</th><th>Проба</th><th>Вход</th></tr>
+    <tr><td>Confluence</td><td>лёгкая: страница</td><td>AD</td></tr>
+    <tr><td>Jira</td><td>лёгкая: <code>/rest/api/2/myself</code></td><td>AD</td></tr>
+    <tr><td>SVN</td><td>скорость: файл + <code>svn info</code></td><td>AD</td></tr>
+    <tr><td>GitLab</td><td>скорость: файл через API</td><td>токен только на чтение</td></tr>
+  </table></div>
+  <ul>
+    <li>401 — «Пароль AD не подошёл — войдите заново»; в «Настройках» видно, какой сервис принял вход, какой нет.</li>
+    <li>Один сервис не отвечает, остальные работают — причина в сервисе, не в VPN: «Jira не отвечает — остальное работает».</li>
+  </ul>
+</template>
+<template id="t-world" data-title="Мир">
+  <ul>
+    <li>ChatGPT, Claude, Luma: открывается ли и каким путём — через VPN или напрямую.</li>
+    <li>HTTP 403 напрямую — «закрыт для вашей страны»; совет — включить в клиенте VPN весь трафик через туннель.</li>
+    <li>В офисе VPN тоже нужен — для доступа в мир; офисные сервисы изнутри работают без него.</li>
+  </ul>
+</template>
+<template id="t-releases" data-title="GitHub Releases">
+  <ul>
+    <li>Релиз «Domini VPN Monitor vX.Y.Z»: <code>domini-vpn-monitor.exe</code> (бета — <code>-beta.exe</code>), <code>settings.json</code>, <code>sha256</code> и
+      <code>vpn-monitor.exe</code> для копий до 0.5.4.</li>
+    <li>Релиз <code>latest</code> хранит <code>latest.version</code> и <code>office.json</code>; релиз <code>beta</code> — версию для бета-канала.</li>
+    <li>Публикует CI, когда в <code>main</code> приходит новая версия; опубликованный релиз не перезаписывается. Откат — workflow <code>promote</code>.</li>
+    <li>Версии: <code>0.7.1</code> — стабильная (оба канала), <code>0.7.1-beta.1</code> — только бета.</li>
+  </ul>
+  <p class="adr">Решения: <a href="adr/0004-delivery-github-releases.md">ADR 0004</a>, <a href="adr/0008-semver-channels.md">0008</a>, <a href="adr/0011-remote-settings-office-json.md">0011</a></p>
+</template>
+<template id="t-secrets" data-title="Учётная запись AD">
+  <ul>
+    <li>Сотрудник входит логином и паролем AD в «Настройках». Приложение проверяет их на Jira, Confluence и SVN и только при успехе сохраняет.</li>
+    <li>Хранилище — Диспетчер учётных данных Windows (шифрование DPAPI, привязка к пользователю Windows).</li>
+    <li>Токен GitLab — только на чтение, выдаётся по тому же входу.</li>
+    <li>Пароли и токены не попадают ни в файлы, ни в лог, ни в сводку, ни в ответы агенту.</li>
+  </ul>
+  <p class="adr">Решение: <a href="adr/0006-ad-login-credential-manager.md">ADR 0006</a>. Код: <code>login.rs</code>, <code>creds.rs</code></p>
+</template>
+
+<script>
+// Тема: как в системе → светлая → тёмная; выбор помнит браузер
+const THEMES = [["", "как в системе", "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18"], ["light", "светлая", "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"], ["dark", "тёмная", "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"]];
+const NS = "http://www.w3.org/2000/svg", root = document.documentElement, tb = document.getElementById("themeBtn");
+let theme = ""; try { theme = localStorage.getItem("arch-theme") || ""; } catch {}
+function applyTheme() { if (theme) root.setAttribute("data-theme", theme); else root.removeAttribute("data-theme");
+  const i = Math.max(0, THEMES.findIndex(([k]) => k === theme)); tb.title = `Тема: ${THEMES[i][1]}`; tb.setAttribute("aria-label", `Тема: ${THEMES[i][1]}`);
+  const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("aria-hidden", "true"); const p = document.createElementNS(NS, "path"); p.setAttribute("d", THEMES[i][2]); s.append(p); tb.replaceChildren(s); }
+tb.addEventListener("click", () => { const i = THEMES.findIndex(([k]) => k === theme); theme = THEMES[(i + 1) % THEMES.length][0]; try { localStorage.setItem("arch-theme", theme); } catch {} applyTheme(); });
+applyTheme();
+
+// Окна «под капотом»
+const dlg = document.getElementById("dlg");
+document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => {
+  const t = document.getElementById("t-" + b.dataset.open); if (!t) return;
+  document.getElementById("dlgTitle").textContent = t.dataset.title; document.getElementById("dlgBody").replaceChildren(t.content.cloneNode(true));
+  dlg.showModal(); }));
+document.getElementById("dlgClose").addEventListener("click", () => dlg.close());
+dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+
+// Пример: ситуация → статусы звеньев и вывод (тексты — как в приложении, route.rs)
+const CASES = {
+  ok:       { st: { inet: ["good", "8,4 Мбит/с · 60 мс"], vpn: ["good", "205 мс"], office: ["good", "SVN 12,6 Мбит/с"], world: ["good", "через VPN"] }, score: 92, c: "good", head: "Можно работать", why: "Все звенья в норме." },
+  inet:     { st: { inet: ["bad", "1,4 Мбит/с"], vpn: ["warn", "из‑за интернета"], office: ["warn", "из‑за интернета"], world: ["warn", "из‑за интернета"] }, score: 31, c: "bad", head: "Медленный интернет — VPN в порядке", why: "Первое звено не в норме — интернет; ниже всё хуже из‑за него." },
+  vpnspeed: { st: { inet: ["good", "15 Мбит/с"], vpn: ["bad", "режет скорость"], office: ["warn", "SVN 1,9 · из‑за VPN"], world: ["good", "через VPN"] }, score: 47, c: "warn", head: "SVN качает медленно — режет VPN", why: "Интернет 15 Мбит/с, а SVN 1,9 — теряется в туннеле. Совет: переподключить, затем другой сервер." },
+  vpnoff:   { st: { inet: ["good", "15 Мбит/с"], vpn: ["bad", "выключен"], office: ["bad", "недоступен"], world: ["warn", "напрямую"] }, score: 1, c: "bad", head: "VPN выключен — включите Happ", why: "Адаптера VPN нет; на иконке «!»." },
+  auth:     { st: { inet: ["good", "15 Мбит/с"], vpn: ["good", "210 мс"], office: ["bad", "401 · вход AD"], world: ["good", "через VPN"] }, score: 40, c: "bad", head: "Пароль AD не подошёл — войдите заново", why: "Сеть в порядке, сервисы отвечают 401. Вход — во вкладке «Настройки»." },
+  jira:     { st: { inet: ["good", "15 Мбит/с"], vpn: ["good", "205 мс"], office: ["warn", "Jira молчит"], world: ["good", "через VPN"] }, score: 68, c: "warn", head: "Jira не отвечает — остальное работает", why: "Confluence и SVN в порядке — причина в сервисе, не в VPN." },
+};
+const vScore = document.getElementById("vScore");
+function show(k) { const c = CASES[k];
+  document.querySelectorAll("#route [data-link]").forEach((n) => { const [st, txt] = c.st[n.dataset.link]; n.dataset.st = st; n.querySelector(".st").textContent = txt; });
+  vScore.textContent = c.score; vScore.className = "score " + c.c;
+  document.getElementById("vHead").textContent = c.head; document.getElementById("vWhy").textContent = c.why;
+  document.querySelectorAll(".chip").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.case === k))); }
+document.querySelectorAll(".chip").forEach((b) => b.addEventListener("click", () => show(b.dataset.case)));
+show("ok");
+</script>
 </body>
 </html>

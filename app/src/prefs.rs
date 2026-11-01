@@ -60,6 +60,10 @@ pub struct Prefs {
     /// Тема меню у иконки и окна: `""` — как в системе, `light`, `dark` (v0.6).
     #[serde(default)]
     pub theme: String,
+    /// Тема окна в браузере, отдельно от меню (v0.7.1): нет поля — как `theme` (до 0.7.1 тема была общей);
+    /// `auto` — как в системе, `light`, `dark`.
+    #[serde(default)]
+    pub window_theme: Option<String>,
 }
 
 impl Default for Prefs {
@@ -71,6 +75,7 @@ impl Default for Prefs {
             notify: Notify::default(),
             last_seen_version: None,
             theme: String::new(),
+            window_theme: None,
         }
     }
 }
@@ -79,6 +84,8 @@ impl Default for Prefs {
 /// их как `dash` (файл может прийти от прошлой версии или откатиться к ней).
 pub const VIEWS: &[&str] = &["route", "dash", "strip", "gauge", "panel"];
 pub const THEMES: &[&str] = &["", "light", "dark"];
+/// Темы окна: `auto` — как в системе (пустая строка занята смыслом «как у меню»).
+pub const WINDOW_THEMES: &[&str] = &["auto", "light", "dark"];
 pub const CHANNELS: &[&str] = &["latest", "beta"];
 
 fn path(dir: &Path) -> PathBuf {
@@ -131,6 +138,12 @@ mod tests {
     fn old_and_future_prefs_files_load() {
         let p: Prefs = serde_json::from_str("{}").unwrap();
         assert_eq!(p.view, "route");
+        assert_eq!(p.window_theme, None); // до 0.7.1 — окно как меню
+        let p: Prefs = serde_json::from_str(r#"{"theme":"dark","window_theme":"light"}"#).unwrap();
+        assert_eq!(
+            (p.theme.as_str(), p.window_theme.as_deref()),
+            ("dark", Some("light"))
+        );
         assert_eq!(p.channel, "latest");
         assert!(p.notify.vpn && !p.notify.slow);
         let p: Prefs =

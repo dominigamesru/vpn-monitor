@@ -3,6 +3,15 @@
 Rust, один exe без рантаймов ([ADR 0001](adr/0001-rust.md)). Требования — [requirements.md](requirements.md), поставка —
 [ADR 0004](adr/0004-delivery-github-releases.md).
 
+## v0.7.1
+- **Локальный MCP** ([ADR 0012](adr/0012-local-mcp-server.md), `src/mcp.rs`): `POST /mcp`, инструменты `vpn_status`,
+  `vpn_history`, `vpn_check`, `vpn_report`, `vpn_diagnostics`, ресурсы `vpn://status`, `vpn://report.html`. Вкладка
+  «AI-агент» (`#agent`) — команда для Claude Code и настройки для Claude Desktop с адресом этого компьютера.
+- **Заметки релизов** — из `app/CHANGELOG.md` (формат — скилл `release`): страница `#release-notes` (клик по версии в
+  шапке окна), баннер «Что нового» (только пункты для сотрудников), текст релиза на GitHub (технически — под спойлером).
+- **Тема окна — своя:** иконка в шапке окна, `user.json` → `window_theme` (`auto` / `light` / `dark`); без поля — как
+  `theme` меню у иконки.
+
 ## v0.7
 - **Удалённые настройки** ([ADR 0011](adr/0011-remote-settings-office-json.md), `src/office.rs`): `office.json` в
   релизе `latest` (workflow `office` при изменении `app/config/office.json`), раз в 5 минут, наложение поверх своих

@@ -108,9 +108,21 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 /* строка уведомлений — над разделителем, место под неё есть всегда: текст появляется, ничего не сдвигается */
 .toast { font-size: 11.5px; line-height: 16px; height: 16px; color: var(--muted); padding: 8px 16px 4px; box-sizing: content-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* панель «Пауза» — вместо содержимого, как у Wi‑Fi */
-.pop { margin: 10px 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+/* панель «Пауза» — поверх содержимого над нижней строкой: окно не меняет высоту, ничего не прыгает */
+.scrim { position: fixed; inset: 0; background: rgba(13,19,27,.28); }
+.scrim[hidden] { display: none; }
+.pop { position: fixed; left: 12px; right: 12px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: 0 12px 32px rgba(0,0,0,.22); max-height: calc(100vh - 80px); overflow: auto; }
 .pop[hidden] { display: none; }
+.menu .head { display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px 4px 10px; }
+.menu .head div { flex: 1; }
+.menu .head b { display: block; font-size: 13px; }
+.menu .head span { display: block; font-size: 11.5px; color: var(--muted); }
+.menu .head .ib { width: 26px; height: 26px; padding: 0; justify-content: center; }
+/* время в шапке во время проверки — мерцает и не нажимается; ширина не меняется (шапка не уезжает) */
+.lnk.busy { pointer-events: none; animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+.ib.busy svg { animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .menu { display: grid; }
 .menu button { border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .menu button:hover, .menu button:focus-visible { background: var(--bg); }
@@ -135,7 +147,8 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 <body>
 <div class="hd" id="hd"></div>
 <div id="root"></div>
-<div id="pop" class="pop" hidden></div>
+<div id="scrim" class="scrim" hidden></div>
+<div id="pop" class="pop" hidden role="dialog" aria-modal="true"></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="bottom"><div class="ft" id="ft"></div></div>
 <script>
@@ -185,6 +198,7 @@ const B = () => S?.snapshot?.baseline || null;
 const ICON = {
   refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
   pause: "M9 5v14M15 5v14",
+  close: "M6 6l12 12M18 6L6 18",
   play: "M8 5l11 7-11 7z",
   history: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2",
   gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
@@ -320,8 +334,9 @@ function viewDash() {
   return [verdictBlock(), ...notes(), h("div", { class: "tiles" },
     tile("Скорость SVN", P(r?.st_svn), svn == null ? "—" : num(svn, 1), "Мбит/с", gauge(svn, Math.max(16, th.svn_good_mbps * 2), th.svn_good_mbps, P(r?.st_svn), B()?.speed_mbps), r?.because_office ? `${r.because_office} · норма от ${num(th.svn_good_mbps)}` : `норма от ${num(th.svn_good_mbps)}`, tipSvn),
     tile("Задержка VPN", P(r?.st_vpn_lat ?? r?.st_vpn), vpn == null ? "нет" : vpn >= 1000 ? num(vpn / 1000, 1) : num(vpn), vpn == null ? "" : vpn >= 1000 ? "с" : "мс", gauge(vpn == null ? 0 : Math.min(vpn, th.vpn_bad_ms * 1.15), th.vpn_bad_ms * 1.15, th.vpn_good_ms, P(r?.st_vpn_lat ?? r?.st_vpn), B()?.latency_ms != null ? Math.min(B().latency_ms, th.vpn_bad_ms * 1.15) : null), vpn == null ? "не подключён" : r?.because_vpn ? `${r.because_vpn} · норма до ${ms(th.vpn_good_ms)}` : `норма до ${ms(th.vpn_good_ms)}`, tipVpn),
-    tile("Интернет", P(r?.st_inet), r?.inet.value == null ? "—" : num(r.inet.value, r.inet.value < 10 ? 1 : 0), "Мбит/с", null, `задержка ${ms(r?.inet_ms.value)}${r && r.st_inet_lat !== "good" ? " — медленно" : ""}`, tipInet),
-    h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${P(r?.st_office)}` }), "Сервисы"), h("div", { class: "svc" }, ...office().map(svcChip), ...worldT().map(worldChip)))
+    // приборная панель: мир — под интернетом (ChatGPT и др. идут напрямую или через VPN), справа — только офис
+    tile("Интернет", P(r?.st_inet), r?.inet.value == null ? "—" : num(r.inet.value, r.inet.value < 10 ? 1 : 0), "Мбит/с", worldT().length ? h("div", { class: "svc" }, ...worldT().map(worldChip)) : null, `задержка ${ms(r?.inet_ms.value)}${r && r.st_inet_lat !== "good" ? " — медленно" : ""}`, tipInet),
+    h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${P(r?.st_office)}` }), "Сервисы в офисе"), h("div", { class: "svc" }, ...office().map(svcChip)))
   )];
 }
 function viewStrip() {
@@ -364,7 +379,7 @@ function header() {
   const sn = S?.snapshot, beta = S?.prefs?.channel === "beta" || /-/.test(S?.version || "");
   const ver = tip(h("span", { class: "lnk", role: "button", tabindex: "0", text: `v${(S?.version || "").replace(/-.*/, "")}`, onclick: checkUpdates, onkeydown: (e) => e.key === "Enter" && checkUpdates() }), () =>
     tipBox(h("div", { class: "big", text: `Версия ${S?.version}${beta ? ", канал «Бета»" : ""}` }), kv([["обновлено", day(S?.updated_ms)], S?.latest && S.latest !== S.version ? ["доступна", S.latest] : null]), h("span", { class: "tm", text: "Нажмите — проверить обновления" })));
-  const when = sn ? tip(h("span", { class: "lnk", role: "button", tabindex: "0", text: S?.checking ? "проверяю…" : hhmm(sn.at), onclick: checkNow, onkeydown: (e) => e.key === "Enter" && checkNow() }), () =>
+  const when = sn ? tip(h("span", { class: S?.checking ? "lnk busy" : "lnk", role: "button", tabindex: "0", "aria-busy": S?.checking ? "true" : "false", text: hhmm(sn.at), onclick: checkNow, onkeydown: (e) => e.key === "Enter" && checkNow() }), () =>
     tipBox(h("div", { class: "big", text: `Проверено в ${hms(sn.at)}` }), kv([["вид", sn.full ? "полная, со скачиванием" : sn.lite ? "без скачивания" : "лёгкая"], sn.took_ms ? ["заняла", `${num(sn.took_ms / 1000, 1)} с`] : null]), h("span", { class: "tm", text: "Нажмите — проверить сейчас" }))) : null;
   const ti = Math.max(0, THEMES.findIndex(([k]) => k === (S?.prefs?.theme || "")));
   const themeBtn = h("button", { class: "ib", type: "button", "aria-label": `Тема: ${THEMES[ti][1]}`, title: `Тема: ${THEMES[ti][1]} — нажмите, чтобы сменить`, onclick: async () => { const next = THEMES[(ti + 1) % THEMES.length][0]; S.prefs.theme = next; applyTheme(); render(); await api("/api/prefs", { method: "POST", body: JSON.stringify({ theme: next }) }); } }, icon(THEMES[ti][2]));
@@ -376,7 +391,8 @@ function header() {
 function pauseItems(m) {
   const set = async (body) => { await api("/api/pause", { method: "POST", body: JSON.stringify(body) }); closePop(); refresh(); };
   if (S?.paused) m.append(h("button", { type: "button", onclick: () => set({ resume: true }) }, h("span", { text: "Продолжить проверки" })));
-  else m.append(h("div", { class: "lbl", text: "Не проверять" }), ...[["30 минут", 30], ["1 час", 60], ["До конца дня", 0]].map(([n, v]) => h("button", { type: "button", onclick: () => set({ minutes: v }) }, h("span", { text: n }))));
+  else m.append(h("div", { class: "head" }, h("div", {}, h("b", { text: "Пауза проверок" }), h("span", { text: "VPN не проверяется, уведомлений нет. Продолжить можно в любой момент." })),
+      h("button", { class: "ib", type: "button", "aria-label": "Закрыть без паузы", title: "Закрыть без паузы", onclick: closePop }, icon("close"))), ...[["30 минут", 30], ["1 час", 60], ["До конца дня", 0]].map(([n, v]) => h("button", { type: "button", onclick: () => set({ minutes: v }) }, h("span", { text: n }))));
 }
 function footer() {
   const r = R(), login = S?.login;
@@ -389,18 +405,19 @@ function footer() {
   const pauseLabel = S?.paused ? (() => { const left = Math.max(0, S.prefs.pause_until_ms - Date.now()); const endOfDay = new Date(S.prefs.pause_until_ms).getHours() === 23 && new Date(S.prefs.pause_until_ms).getMinutes() === 59; return endOfDay ? "Пауза до конца дня — до 23:59. Нажмите — продолжить" : `Пауза: ещё ${Math.ceil(left / 60000)} мин, до ${hhmm(S.prefs.pause_until_ms)}. Нажмите — продолжить`; })() : "Пауза проверок: 30 минут, час или до конца дня";
   const pauseBtn = ib(S?.paused ? "play" : "pause", pauseLabel, !!S?.paused, (e) => S?.paused ? api("/api/pause", { method: "POST", body: JSON.stringify({ resume: true }) }).then(refresh) : openPop(e.currentTarget, pauseItems));
   $("#ft").replaceChildren(user, h("span", { class: "sp" }),
-    ib("refresh", S?.checking ? "Проверяю…" : "Проверить сейчас", false, checkNow), pauseBtn,
+    (() => { const b = ib("refresh", S?.checking ? "Проверяю…" : "Проверить сейчас", false, checkNow); if (S?.checking) { b.classList.add("busy"); b.disabled = true; } return b; })(), pauseBtn,
     ib("history", "История за сутки и неделю", false, () => toApp("open:history")),
     ib("gear", "Настройки: вид меню, уведомления, обновления, вход", false, () => toApp("open:settings")));
 }
 
 // ---------- панель «Пауза» вместо содержимого ----------
 let popFor = null;
-function closePop() { popFor = null; $("#pop").hidden = true; $("#pop").replaceChildren(); $("#root").hidden = false; fit(); }
+function closePop() { const a = popFor; popFor = null; $("#pop").hidden = true; $("#scrim").hidden = true; $("#pop").replaceChildren(); if (a && document.body.contains(a)) a.focus(); }
 function openPop(anchor, build) {
   if (popFor === anchor) { closePop(); return; }
   closePop(); popFor = anchor;
-  const m = h("div", { class: "menu" }); build(m); $("#pop").replaceChildren(m); $("#pop").hidden = false; $("#root").hidden = true; fit();
+  const m = h("div", { class: "menu" }); build(m); const pop = $("#pop"); pop.style.bottom = `${document.querySelector(".bottom").offsetHeight + 6}px`;
+  pop.replaceChildren(m); pop.hidden = false; $("#scrim").hidden = false;
   m.querySelector("button")?.focus();
 }
 
@@ -413,7 +430,6 @@ function render() {
   header();
   $("#root").replaceChildren(...({ route: viewRoute, dash: viewDash, strip: viewStrip }[view] || viewRoute)().filter(Boolean));
   footer();
-  if (popFor) $("#root").hidden = true;
   fit();
 }
 // Высота окна = высота содержимого (body без высоты), а не scrollHeight: тот не меньше окна, и окно только росло.
@@ -433,6 +449,7 @@ async function refresh() {
   timer = setTimeout(refresh, S?.checking ? 1000 : 5000);
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (popFor) closePop(); else toApp("hide"); } });
+$("#scrim").addEventListener("click", closePop);
 window.vpnmon = { shown: () => { closePop(); lastH = 0; refresh(); } };
 refresh();
 </script>
