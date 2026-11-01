@@ -122,6 +122,10 @@ svg text { font-family: var(--font); }
   <button class="ghost icon" id="more" aria-label="Ещё" aria-haspopup="menu" aria-expanded="false">⋯</button>
   <span class="when" id="when"></span>
 </div>
+<script>
+// Отдельным скриптом и первым: ловит и ошибки разбора основного скрипта (их не поймать изнутри него).
+window.addEventListener("error", (e) => { try { window.ipc.postMessage("err:" + String(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`).slice(0, 300)); } catch {} });
+</script>
 <script src="/vendor/popper.min.js"></script>
 <script src="/vendor/tippy.min.js"></script>
 <script>
@@ -135,16 +139,17 @@ const h = (tag, attrs = {}, ...kids) => {
 };
 const NS = "http://www.w3.org/2000/svg";
 const sv = (tag, attrs = {}) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
-const ipc = (msg) => { try { window.ipc.postMessage(msg); } catch {} };
+// Не «ipc»: wry объявляет window.ipc неконфигурируемым свойством, и `const ipc` на верхнем уровне —
+// SyntaxError при разборе: весь скрипт меню не запускался (v0.5.0–0.5.1).
+const toApp = (msg) => { try { window.ipc.postMessage(msg); } catch {} };
 // Ошибки страницы — в лог приложения (иначе в WebView2 их не видно).
-const report = (msg) => ipc("err:" + String(msg).slice(0, 300));
-window.addEventListener("error", (e) => report(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+const report = (msg) => toApp("err:" + String(msg).slice(0, 300));
 window.addEventListener("unhandledrejection", (e) => report(e.reason?.message || e.reason));
 // Подсказки — Tippy.js; не загрузился — меню работает без подсказок.
 const hasTippy = typeof window.tippy === "function";
 if (!hasTippy) report("Tippy.js не загрузился — подсказки выключены");
 const tippyOr = (el, o) => (hasTippy ? window.tippy(el, o) : null);
-ipc("ready"); // сразу, без requestAnimationFrame: в скрытом окне он не срабатывает
+toApp("ready"); // сразу, без requestAnimationFrame: в скрытом окне он не срабатывает
 const api = async (path, opts = {}) => {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
   if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
@@ -190,7 +195,7 @@ function notes() {
   const out = [];
   const sn = S?.snapshot;
   if (!S?.login && (sn?.targets || []).some((t) => t.note)) {
-    const b = h("button", { type: "button", text: "Войти" }); b.addEventListener("click", () => ipc("open:conn"));
+    const b = h("button", { type: "button", text: "Войти" }); b.addEventListener("click", () => toApp("open:conn"));
     out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", b));
   }
   if (sn?.lite) out.push(h("div", { class: "note", text: `${cap(sn.lite)} — проверяю без скачивания` }));
@@ -360,7 +365,7 @@ function moreItems(m) {
       else if (r.available) { res.replaceChildren(`Доступна ${r.latest}. `); const b = h("button", { type: "button", text: "Установить" }); b.addEventListener("click", () => api("/api/update", { method: "POST", body: JSON.stringify({ install: true }) })); res.append(b); }
       else res.textContent = `У вас последняя версия ${r.current}${r.channel === "beta" ? " (бета)" : ""}`;
     }), res);
-    m.append(menuButton("Подключение и вход", () => ipc("open:conn")), h("div", { class: "sep" }), menuButton("Выйти из VPN Monitor", () => ipc("quit")));
+    m.append(menuButton("Подключение и вход", () => toApp("open:conn")), h("div", { class: "sep" }), menuButton("Выйти из VPN Monitor", () => toApp("quit")));
 }
 $("#more").addEventListener("click", (e) => openPop(e.currentTarget, moreItems));
 
@@ -378,7 +383,7 @@ function render() {
 }
 // Высота окна = высота содержимого (body без высоты), а не scrollHeight: тот не меньше окна, и окно только росло.
 let lastH = 0;
-function fit() { requestAnimationFrame(() => { const v = Math.ceil(document.body.getBoundingClientRect().height); if (Math.abs(v - lastH) >= 2) { lastH = v; ipc(`h:${v}`); } }); }
+function fit() { requestAnimationFrame(() => { const v = Math.ceil(document.body.getBoundingClientRect().height); if (Math.abs(v - lastH) >= 2) { lastH = v; toApp(`h:${v}`); } }); }
 let timer = null, fails = 0;
 async function refresh() {
   clearTimeout(timer);
@@ -393,8 +398,8 @@ async function refresh() {
   timer = setTimeout(refresh, S?.checking ? 1000 : 5000);
 }
 $("#check").addEventListener("click", async () => { await api("/api/check", { method: "POST", body: "{}" }); setTimeout(refresh, 300); });
-$("#history").addEventListener("click", () => ipc("open:history"));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (popFor) closePop(); else ipc("hide"); } });
+$("#history").addEventListener("click", () => toApp("open:history"));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (popFor) closePop(); else toApp("hide"); } });
 tippyOr($("#when"), { content: "Время последней проверки", theme: "vpn", delay: [300, 0] });
 window.vpnmon = { shown: () => { closePop(); lastH = 0; refresh(); } };
 refresh();
