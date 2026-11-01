@@ -68,6 +68,24 @@ pub fn fetch_latest_version(base: &str) -> Result<String, String> {
     parse_version(&get_text(&latest_version_url(base))?)
 }
 
+/// Адрес последней версии канала: `latest` (стабильный) — `{base}/latest/latest.version`, `beta` —
+/// `{base}/beta/latest.version` (v0.5).
+pub fn channel_version_url(base: &str, channel: &str) -> String {
+    let ch = if channel == "beta" { "beta" } else { "latest" };
+    format!("{}/{ch}/latest.version", base.trim_end_matches('/'))
+}
+
+/// Последняя версия канала; если бета-канала ещё нет — стабильная.
+pub fn fetch_channel_version(base: &str, channel: &str) -> Result<String, String> {
+    if channel == "beta"
+        && let Ok(t) = get_text(&channel_version_url(base, "beta"))
+        && let Ok(v) = parse_version(&t)
+    {
+        return Ok(v);
+    }
+    fetch_latest_version(base)
+}
+
 /// Настройки версии `ver` (сырой текст и разобранные).
 /// Настройки версии `ver`: сырой текст и данные exe. Целиком их здесь не разбираем — это схема другой версии;
 /// нужен только блок `exe` (контракт: все JSON обратно совместимы, ADR 0004).
@@ -180,6 +198,23 @@ mod tests {
         let e = exe_info(text).unwrap();
         assert_eq!(e.version, "9.9.9");
         assert!(exe_info(r#"{"schema": 1}"#).is_err());
+    }
+
+    #[test]
+    fn channel_urls() {
+        let b = "https://github.com/o/r/releases/download";
+        assert_eq!(
+            channel_version_url(b, "beta"),
+            format!("{b}/beta/latest.version")
+        );
+        assert_eq!(
+            channel_version_url(b, "latest"),
+            format!("{b}/latest/latest.version")
+        );
+        assert_eq!(
+            channel_version_url(b, "что-то"),
+            format!("{b}/latest/latest.version")
+        );
     }
 
     #[test]

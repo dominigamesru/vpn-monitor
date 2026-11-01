@@ -8,6 +8,12 @@ on:
       version:
         description: "Версия, которую считать последней (X.Y.Z)"
         required: true
+      channel:
+        description: "Канал: latest (стабильный) или beta"
+        required: true
+        default: latest
+        type: choice
+        options: [latest, beta]
 
 permissions:
   contents: write
@@ -33,8 +39,10 @@ jobs:
           gh release view "v$v" --json assets --jq '.assets[].name' | grep -qx settings.json \
             || { echo "::error::В релизе v$v нет settings.json"; exit 1; }
           echo "$v" > latest.version
-      - name: Записать latest.version
+      - name: Записать latest.version в канал ${{ inputs.channel }}
+        env:
+          CHANNEL: ${{ inputs.channel }}
         run: |
-          gh release upload latest latest.version --clobber
-          gh release edit latest --latest
-          echo "latest.version = $(cat latest.version)"
+          gh release upload "$CHANNEL" latest.version --clobber
+          if [ "$CHANNEL" = "latest" ]; then gh release edit latest --latest; fi
+          echo "$CHANNEL = $(cat latest.version)"

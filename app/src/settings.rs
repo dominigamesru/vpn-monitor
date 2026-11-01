@@ -64,6 +64,36 @@ pub struct Thresholds {
     /// размер / эта скорость; 1 МБ при 50 КБ/с — 20 с), v0.4.1.
     #[serde(default = "d_min_kbps")]
     pub min_probe_kbps: f64,
+    // --- v0.5: туннель — надбавка VPN к задержке и доля канала ---
+    /// Надбавка VPN, мс: до этого — хорошо в любом случае / от этого — плохо в любом случае.
+    #[serde(default = "d_ovh_good")]
+    pub overhead_good_ms: f64,
+    #[serde(default = "d_ovh_bad")]
+    pub overhead_bad_ms: f64,
+    /// Доля канала: от этого — хорошо в любом случае / до этого — плохо в любом случае.
+    #[serde(default = "d_share_good")]
+    pub share_good: f64,
+    #[serde(default = "d_share_bad")]
+    pub share_bad: f64,
+    /// Замер канала годится для доли канала, пока он не старше стольких минут.
+    #[serde(default = "d_share_fresh")]
+    pub share_fresh_min: u64,
+}
+
+fn d_ovh_good() -> f64 {
+    60.0
+}
+fn d_ovh_bad() -> f64 {
+    400.0
+}
+fn d_share_good() -> f64 {
+    0.6
+}
+fn d_share_bad() -> f64 {
+    0.1
+}
+fn d_share_fresh() -> u64 {
+    20
 }
 
 fn d_min_kbps() -> f64 {
@@ -114,6 +144,12 @@ pub enum Role {
     Light,
     /// Цель для метрик скорости.
     Speed,
+    /// Сервис в мире (ChatGPT, Claude, Luma): доступен ли и через VPN ли (v0.5). В `settings.json` — только в
+    /// `role_kind`: старые версии значение `world` в `role` не поймут.
+    World,
+    /// Значение из будущих версий.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,7 +182,11 @@ pub struct GitlabOauth {
 pub struct Target {
     pub id: String,
     pub name: String,
+    /// Роль, понятная и старым версиям (`light` / `speed`).
     pub role: Role,
+    /// Роль для версий v0.5+; если задана — главнее `role` (подставляется при чтении настроек).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_kind: Option<Role>,
     pub url: String,
     /// Имя переменной (env или secrets.env), которая переопределяет `url`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -197,7 +237,13 @@ pub struct ExeInfo {
 
 impl Settings {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let s: Settings = serde_json::from_str(text).map_err(|e| format!("settings.json: {e}"))?;
+        let mut s: Settings =
+            serde_json::from_str(text).map_err(|e| format!("settings.json: {e}"))?;
+        for t in &mut s.targets {
+            if let Some(r) = t.role_kind {
+                t.role = r;
+            }
+        }
         s.validate()?;
         Ok(s)
     }

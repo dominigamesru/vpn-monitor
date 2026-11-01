@@ -41,6 +41,10 @@ pub enum Badge {
     WeakInternet(u8),
     /// Нет интернета вообще — серый знак; VPN тут ни при чём (v0.4.1).
     NoInternet,
+    /// Wi‑Fi требует входа на своей странице (гостиница, кафе), v0.5.
+    Captive,
+    /// Проверки на паузе (ставит трей, не оценка), v0.5.
+    Paused,
 }
 
 #[derive(Debug, Clone)]
@@ -67,11 +71,82 @@ pub struct Part {
 }
 
 /// Своя норма: медианы за последние дни, когда VPN работал (v0.4).
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Baseline {
     pub latency_ms: Option<f64>,
     pub speed_mbps: Option<f64>,
     pub samples: usize,
+    /// v0.5: обычная надбавка VPN, мс, и обычная доля канала (0..1).
+    #[serde(default)]
+    pub overhead_ms: Option<f64>,
+    #[serde(default)]
+    pub share: Option<f64>,
+    /// Для какого клиента и профиля норма («Happ / Lisbon»); `None` — общая.
+    #[serde(default)]
+    pub client: Option<String>,
+}
+
+/// Надбавка VPN → 0..1: абсолютные пороги по краям, между ними — во сколько раз хуже обычной.
+pub fn overhead_part(o: f64, th: &Thresholds, base: Option<f64>) -> (f64, String) {
+    if o <= th.overhead_good_ms {
+        return (1.0, format!("VPN добавляет {o:.0} мс — немного"));
+    }
+    if o >= th.overhead_bad_ms {
+        return (0.0, format!("VPN добавляет {o:.0} мс — очень много"));
+    }
+    match base {
+        Some(b) if b > 0.0 => {
+            let ratio = o / b;
+            let v = lerp_down(ratio, th.latency_ratio_ok, th.latency_ratio_bad);
+            (v, format!("VPN добавляет {o:.0} мс, обычно {b:.0} мс"))
+        }
+        _ => (
+            lerp_down(o, th.overhead_good_ms, th.overhead_bad_ms),
+            format!("VPN добавляет {o:.0} мс"),
+        ),
+    }
+}
+
+/// Доля канала → 0..1: сколько от своего интернета сотрудник получает до офиса.
+pub fn share_part(sh: f64, th: &Thresholds, base: Option<f64>) -> (f64, String) {
+    let pct = (sh * 100.0).round();
+    if sh >= th.share_good {
+        return (
+            1.0,
+            format!("до офиса доходит {pct:.0}% скорости интернета"),
+        );
+    }
+    if sh <= th.share_bad {
+        return (
+            0.0,
+            format!("до офиса доходит только {pct:.0}% скорости интернета"),
+        );
+    }
+    match base {
+        Some(b) if b > 0.0 => {
+            let rel = sh / b;
+            let v = ((rel - th.speed_ratio_bad) / (th.speed_ratio_ok - th.speed_ratio_bad))
+                .clamp(0.0, 1.0);
+            (
+                v,
+                format!(
+                    "до офиса доходит {pct:.0}% скорости интернета, обычно {:.0}%",
+                    b * 100.0
+                ),
+            )
+        }
+        _ => (
+            ((sh - th.share_bad) / (th.share_good - th.share_bad)).clamp(0.0, 1.0),
+            format!("до офиса доходит {pct:.0}% скорости интернета"),
+        ),
+    }
+}
+
+/// Туннель: надбавка VPN и доля канала (v0.5); если их нет — оценка по задержке и скорости, как раньше.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Tunnel {
+    pub overhead_ms: Option<f64>,
+    pub share: Option<f64>,
 }
 
 /// Задержка → 0..1: в пределах абсолютных порогов — по ним; между ними — относительно нормы (если есть).
@@ -221,6 +296,33 @@ pub fn evaluate(
     baseline: Option<Baseline>,
     online: bool,
 ) -> Verdict {
+    evaluate_tunnel(
+        light,
+        speeds,
+        internet,
+        weak_before,
+        history,
+        th,
+        now,
+        baseline,
+        online,
+        Tunnel::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_tunnel(
+    light: &[ProbeResult],
+    speeds: &[f64],
+    internet: Option<f64>,
+    weak_before: bool,
+    history: &History,
+    th: &Thresholds,
+    now: SystemTime,
+    baseline: Option<Baseline>,
+    online: bool,
+    tunnel: Tunnel,
+) -> Verdict {
     let light: Vec<&ProbeResult> = light
         .iter()
         .filter(|r| r.role == Some(Role::Light))
@@ -283,8 +385,16 @@ pub fn evaluate(
 
     let mut parts: Vec<(f64, f64, &str)> = vec![]; // (значение, вес, имя)
     let mut detail: Vec<Part> = vec![];
-    if let Some(l) = latency {
-        let (v, d) = latency_part(l, th, baseline.and_then(|b| b.latency_ms));
+    if let Some(o) = tunnel.overhead_ms {
+        let (v, d) = overhead_part(o, th, baseline.as_ref().and_then(|b| b.overhead_ms));
+        parts.push((v, 1.0, "надбавка VPN"));
+        detail.push(Part {
+            name: "Надбавка VPN".into(),
+            value: v,
+            detail: d,
+        });
+    } else if let Some(l) = latency {
+        let (v, d) = latency_part(l, th, baseline.as_ref().and_then(|b| b.latency_ms));
         parts.push((v, 1.0, "задержка"));
         detail.push(Part {
             name: "Задержка".into(),
@@ -292,8 +402,16 @@ pub fn evaluate(
             detail: d,
         });
     }
-    if let Some(s) = speed {
-        let (v, d) = speed_part(s, th, baseline.and_then(|b| b.speed_mbps));
+    if let Some(sh) = tunnel.share {
+        let (v, d) = share_part(sh, th, baseline.as_ref().and_then(|b| b.share));
+        parts.push((v, 1.0, "доля канала"));
+        detail.push(Part {
+            name: "Доля канала".into(),
+            value: v,
+            detail: d,
+        });
+    } else if let Some(s) = speed {
+        let (v, d) = speed_part(s, th, baseline.as_ref().and_then(|b| b.speed_mbps));
         parts.push((v, 1.0, "скорость"));
         detail.push(Part {
             name: "Скорость".into(),
@@ -447,6 +565,53 @@ mod tests {
             true,
         );
         assert_eq!(slow.color, Color::Red, "{slow:?}");
+    }
+
+    #[test]
+    fn channel_share_judges_vpn_not_absolute_speed() {
+        let th = Settings::embedded().thresholds;
+        let now = SystemTime::now();
+        let mut h = History::default();
+        h.push_check(now, true);
+        // 3 Мбит/с до офиса при канале 4 Мбит/с — VPN отдаёт 75% канала: хорошо, хоть скорость и мала
+        let v = evaluate_tunnel(
+            &[light(true, 200.0)],
+            &[3.0],
+            Some(4.0),
+            false,
+            &h,
+            &th,
+            now,
+            None,
+            true,
+            Tunnel {
+                overhead_ms: Some(40.0),
+                share: Some(0.75),
+            },
+        );
+        assert_eq!(v.color, Color::Green, "{v:?}");
+        assert!(
+            v.parts
+                .iter()
+                .any(|p| p.name == "Доля канала" && p.value == 1.0)
+        );
+        // те же 3 Мбит/с при канале 100 — доля 3%: VPN — узкое место
+        let v = evaluate_tunnel(
+            &[light(true, 200.0)],
+            &[3.0],
+            Some(100.0),
+            false,
+            &h,
+            &th,
+            now,
+            None,
+            true,
+            Tunnel {
+                overhead_ms: Some(40.0),
+                share: Some(0.03),
+            },
+        );
+        assert_ne!(v.color, Color::Green, "{v:?}");
     }
 
     #[test]

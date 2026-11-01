@@ -394,6 +394,23 @@ fn system_proxy() -> String {
     }
 }
 
+/// Почему проверять без скачивания: экономия заряда или лимитная сеть (v0.5); `None` — проверять как обычно.
+#[cfg(windows)]
+pub fn lite_reason() -> Option<&'static str> {
+    if win::battery_saver() {
+        Some("экономия заряда")
+    } else if win::metered() {
+        Some("лимитная сеть")
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+pub fn lite_reason() -> Option<&'static str> {
+    None
+}
+
 #[cfg(not(windows))]
 pub fn adapters() -> Vec<Adapter> {
     vec![]
@@ -523,6 +540,29 @@ pub(crate) mod win {
             CloseHandle(snap);
         }
         out
+    }
+
+    /// Включена экономия заряда Windows.
+    pub fn battery_saver() -> bool {
+        use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        let mut st: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+        unsafe { GetSystemPowerStatus(&mut st) != 0 && st.SystemStatusFlag == 1 }
+    }
+
+    /// Текущая сеть лимитная (тариф с ограничением, роуминг или превышен лимит) — по данным Windows.
+    pub fn metered() -> bool {
+        use windows::Networking::Connectivity::{NetworkCostType, NetworkInformation};
+        let Ok(profile) = NetworkInformation::GetInternetConnectionProfile() else {
+            return false;
+        };
+        let Ok(cost) = profile.GetConnectionCost() else {
+            return false;
+        };
+        let kind = cost.NetworkCostType().unwrap_or(NetworkCostType::Unknown);
+        kind == NetworkCostType::Fixed
+            || kind == NetworkCostType::Variable
+            || cost.Roaming().unwrap_or(false)
+            || cost.OverDataLimit().unwrap_or(false)
     }
 
     pub fn best_interface(ip: Ipv4Addr) -> Option<u32> {

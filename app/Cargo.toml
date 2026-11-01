@@ -1,6 +1,6 @@
 [package]
 name = "vpn-monitor"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "Domini VPN Monitor — приложение в трее"
 publish = false
@@ -14,10 +14,13 @@ tiny_http = "0.12.0"
 ureq = { version = "3.5.0", features = ["platform-verifier"] }
 
 [target."cfg(windows)".dependencies]
+wry = "0.57.1"
 tao = "0.37.2"
+tauri-winrt-notification = "0.8.1"
 tray-icon = "0.26.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Time", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Security_Credentials", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Time", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Security_Credentials", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Power", "Win32_Graphics_Dwm"] }
 winreg = "0.56.0"
+windows = { version = "0.62.2", features = ["Networking_Connectivity"] }
 
 [build-dependencies]
 winresource = "0.1.34"

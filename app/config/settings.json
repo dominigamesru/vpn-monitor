@@ -22,7 +22,12 @@
     "latency_ratio_bad": 3.0,
     "speed_ratio_ok": 0.75,
     "speed_ratio_bad": 0.3,
-    "min_probe_kbps": 50
+    "min_probe_kbps": 50,
+    "overhead_good_ms": 60,
+    "overhead_bad_ms": 400,
+    "share_good": 0.6,
+    "share_bad": 0.1,
+    "share_fresh_min": 20
   },
   "targets": [
     {
@@ -64,6 +69,33 @@
       "auth": "gitlab",
       "timeout_sec": 30,
       "enabled": false
+    },
+    {
+      "id": "chatgpt",
+      "name": "ChatGPT",
+      "role": "speed",
+      "role_kind": "world",
+      "url": "https://chatgpt.com/",
+      "auth": "none",
+      "timeout_sec": 10
+    },
+    {
+      "id": "claude",
+      "name": "Claude",
+      "role": "speed",
+      "role_kind": "world",
+      "url": "https://claude.ai/",
+      "auth": "none",
+      "timeout_sec": 10
+    },
+    {
+      "id": "luma",
+      "name": "Luma",
+      "role": "speed",
+      "role_kind": "world",
+      "url": "https://lumalabs.ai/",
+      "auth": "none",
+      "timeout_sec": 10
     }
   ],
   "internet": {

@@ -16,6 +16,11 @@ use vpn_monitor::{VERSION, diag, error, info, log};
 
 const PAGE: &str = include_str!("../web/index.html");
 const HELP: &str = include_str!("../web/api-help.md");
+const FLYOUT: &str = include_str!("../web/flyout.html");
+const POPPER: &str = include_str!("../web/vendor/popper.min.js");
+const TIPPY: &str = include_str!("../web/vendor/tippy.min.js");
+const TIPPY_CSS: &str = include_str!("../web/vendor/tippy.css");
+const CHANGELOG: &str = include_str!("../CHANGELOG.md");
 pub const BASE_PORT: u16 = 5151;
 
 /// Поднимает сервер в фоне; возвращает адрес окна.
@@ -130,6 +135,18 @@ fn handle(
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             Response::from_string(PAGE).with_header(ctype("text/html; charset=utf-8"))
         }
+        (Method::Get, "/flyout") => {
+            Response::from_string(FLYOUT).with_header(ctype("text/html; charset=utf-8"))
+        }
+        (Method::Get, "/vendor/popper.min.js") => {
+            Response::from_string(POPPER).with_header(ctype("text/javascript; charset=utf-8"))
+        }
+        (Method::Get, "/vendor/tippy.min.js") => {
+            Response::from_string(TIPPY).with_header(ctype("text/javascript; charset=utf-8"))
+        }
+        (Method::Get, "/vendor/tippy.css") => {
+            Response::from_string(TIPPY_CSS).with_header(ctype("text/css; charset=utf-8"))
+        }
         (Method::Get, "/api/help") => {
             Response::from_string(HELP.replace("{port}", &port.to_string()))
                 .with_header(ctype("text/markdown; charset=utf-8"))
@@ -151,11 +168,127 @@ fn handle(
             json_resp(&json!({"started": !busy, "checking": true}), 202)
         }
         (Method::Post, "/api/update") => {
-            info!("api", "проверка обновления по запросу");
-            let _ = update_now.send(());
-            json_resp(&json!({"started": true}), 202)
+            // {"install": true} — поставить сейчас; без него — только узнать, есть ли обновление (ответ на месте)
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let (base, channel) = {
+                let sh = lock(shared);
+                (
+                    sh.settings.release_base_url.clone(),
+                    sh.prefs.channel.clone(),
+                )
+            };
+            if v["install"].as_bool() == Some(true) {
+                info!("api", "установка обновления по запросу");
+                let _ = update_now.send(());
+                json_resp(&json!({"installing": true}), 202)
+            } else {
+                match vpn_monitor::update::fetch_channel_version(&base, &channel) {
+                    Ok(latest) => {
+                        info!(
+                            "api",
+                            "проверка обновления: канал {channel}, последняя {latest}"
+                        );
+                        lock(shared).latest = Some(latest.clone());
+                        json_resp(
+                            &json!({"current": VERSION, "latest": latest, "channel": channel,
+                            "available": vpn_monitor::update::needs_update(VERSION, &latest)}),
+                            200,
+                        )
+                    }
+                    Err(e) => json_resp(
+                        &json!({"current": VERSION, "channel": channel, "error": e}),
+                        200,
+                    ),
+                }
+            }
+        }
+        (Method::Get, "/api/summary") => {
+            Response::from_string(summary(shared)).with_header(ctype("text/plain; charset=utf-8"))
+        }
+        (Method::Post, "/api/uninstall") => {
+            // убрать автозапуск, вход AD и токен, папку — после выхода (cmd ждёт 3 с и удаляет папку)
+            let dir = lock(shared).dir.clone();
+            info!("api", "удаление VPN Monitor с этого компьютера");
+            let _ = win::autostart_remove();
+            let _ = vpn_monitor::creds::delete_ad();
+            let script = format!(
+                "ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"",
+                dir.display()
+            );
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", &script])
+                .spawn();
+            win::signal_quit();
+            json_resp(&json!({"ok": true}), 200)
+        }
+        (Method::Get, "/api/changes") => {
+            Response::from_string(CHANGELOG).with_header(ctype("text/markdown; charset=utf-8"))
         }
         (Method::Get, "/api/credentials") => json_resp(&credentials(), 200),
+        (Method::Get, "/api/prefs") => json_resp(
+            &serde_json::to_value(&lock(shared).prefs).unwrap_or(Value::Null),
+            200,
+        ),
+        (Method::Post, "/api/prefs") => {
+            // меняем только известные поля и только допустимыми значениями
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let mut sh = lock(shared);
+            if let Some(view) = v["view"]
+                .as_str()
+                .filter(|x| vpn_monitor::prefs::VIEWS.contains(x))
+            {
+                sh.prefs.view = view.into();
+            }
+            if let Some(ch) = v["channel"]
+                .as_str()
+                .filter(|x| vpn_monitor::prefs::CHANNELS.contains(x))
+            {
+                sh.prefs.channel = ch.into();
+                info!("api", "канал обновлений: {ch}");
+            }
+            for (k, slot) in [("vpn", 0), ("auth", 1), ("update", 2), ("slow", 3)] {
+                if let Some(b) = v["notify"][k].as_bool() {
+                    match slot {
+                        0 => sh.prefs.notify.vpn = b,
+                        1 => sh.prefs.notify.auth = b,
+                        2 => sh.prefs.notify.update = b,
+                        _ => sh.prefs.notify.slow = b,
+                    }
+                }
+            }
+            if let Some(seen) = v["last_seen_version"].as_str() {
+                sh.prefs.last_seen_version = Some(seen.chars().take(20).collect());
+            }
+            let dir = sh.dir.clone();
+            match sh.prefs.save(&dir) {
+                Ok(()) => json_resp(&serde_json::to_value(&sh.prefs).unwrap_or(Value::Null), 200),
+                Err(e) => json_resp(&json!({"error": e}), 500),
+            }
+        }
+        (Method::Post, "/api/pause") => {
+            // {"minutes": 30 | 60 | 0 (до конца дня)} или {"resume": true}
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let mut sh = lock(shared);
+            let now = vpn_monitor::metrics::now_ms();
+            if v["resume"].as_bool() == Some(true) {
+                sh.prefs.pause_until_ms = None;
+                info!("api", "пауза снята");
+            } else {
+                let min = v["minutes"].as_i64().unwrap_or(30).clamp(0, 24 * 60);
+                let until = vpn_monitor::prefs::pause_until(now, min);
+                sh.prefs.pause_until_ms = Some(until);
+                info!(
+                    "api",
+                    "пауза до {}",
+                    log::hhmm(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_millis(until as u64)
+                    )
+                );
+            }
+            let dir = sh.dir.clone();
+            let _ = sh.prefs.save(&dir);
+            json_resp(&json!({"pause_until_ms": sh.prefs.pause_until_ms}), 200)
+        }
         (Method::Delete, "/api/credentials") => match vpn_monitor::creds::delete_ad() {
             Ok(()) => {
                 info!("login", "вход AD удалён из Диспетчера учётных данных");
@@ -258,6 +391,77 @@ fn start_diag(shared: &SharedRef) -> bool {
     true
 }
 
+/// Один абзац для чата с поддержкой: состояние, клиент и профиль, канал, туннель, с какого времени, версия.
+fn summary(shared: &SharedRef) -> String {
+    let sh = lock(shared);
+    let Some(sn) = &sh.snapshot else {
+        return format!("VPN Monitor {VERSION}: проверок ещё не было.");
+    };
+    let v = &sn.verdict;
+    let state = match v.badge {
+        vpn_monitor::score::Badge::NoVpn => "VPN в офис выключен".to_string(),
+        vpn_monitor::score::Badge::NoInternet => "нет интернета".to_string(),
+        vpn_monitor::score::Badge::Captive => "Wi‑Fi требует входа".to_string(),
+        _ => format!(
+            "оценка VPN {} ({})",
+            v.score.map(|x| x.to_string()).unwrap_or("—".into()),
+            v.color.ru()
+        ),
+    };
+    let client = sn
+        .client
+        .as_ref()
+        .map(|c| c.key())
+        .unwrap_or_else(|| "клиент не определён".into());
+    let f1 = |x: Option<f64>, u: &str| {
+        x.map(|v| format!("{v:.0} {u}"))
+            .unwrap_or_else(|| "—".into())
+    };
+    let since = sh
+        .store
+        .records
+        .iter()
+        .rev()
+        .take_while(|r| {
+            r.c == sh
+                .store
+                .records
+                .last()
+                .map(|l| l.c.clone())
+                .unwrap_or_default()
+        })
+        .last()
+        .map(|r| log::hhmm(UNIX_EPOCH + std::time::Duration::from_millis(r.t as u64)))
+        .unwrap_or_default();
+    let down: Vec<&str> = sn
+        .targets
+        .iter()
+        .filter(|t| !t.ok)
+        .map(|t| t.name.as_str())
+        .collect();
+    format!(
+        "VPN Monitor {VERSION}, {}: {state} с {since}. Клиент: {client}. Интернет: {} Мбит/с, задержка до интернета {}. \
+         Надбавка VPN: {}, доля канала: {}. Не отвечают: {}. Проверено в {}.",
+        std::env::var("COMPUTERNAME").unwrap_or_default(),
+        sn.internet
+            .as_ref()
+            .and_then(|i| i.mbps)
+            .map(|m| format!("{m:.1}"))
+            .unwrap_or("—".into()),
+        f1(sn.internet_latency_ms, "мс"),
+        f1(sn.overhead_ms, "мс"),
+        sn.share
+            .map(|s| format!("{:.0}%", s * 100.0))
+            .unwrap_or("—".into()),
+        if down.is_empty() {
+            "ничего".into()
+        } else {
+            down.join(", ")
+        },
+        log::hhmm(sn.at),
+    )
+}
+
 /// Кто вошёл — без пароля и токенов.
 fn credentials() -> Value {
     let ad = vpn_monitor::creds::load_ad();
@@ -300,11 +504,15 @@ fn state(shared: &SharedRef) -> Value {
                 vpn_monitor::score::Badge::WeakInternet(_) => "weak",
                 vpn_monitor::score::Badge::Unknown => "unknown",
                 vpn_monitor::score::Badge::NoInternet => "offline",
+                vpn_monitor::score::Badge::Captive => "captive",
+                vpn_monitor::score::Badge::Paused => "paused",
             },
             "score": v.score, "latency": v.latency, "speed": v.speed, "stability": v.stability,
             "explain": v.explain,
             "parts": v.parts, "baseline": v.baseline,
             "client": sn.client,
+            "waking": sn.waking, "lite": sn.lite,
+            "internet_latency": sn.internet_latency_ms, "overhead": sn.overhead_ms, "share": sn.share,
             "targets": sn.targets.iter().map(probe_json).collect::<Vec<_>>(),
             "internet": sn.internet.as_ref().map(probe_json),
         })
@@ -327,6 +535,8 @@ fn state(shared: &SharedRef) -> Value {
         "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
         "login": vpn_monitor::creds::load_ad().map(|c| c.login),
+        "prefs": sh.prefs,
+        "paused": sh.prefs.paused(vpn_monitor::metrics::now_ms()),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
     })
 }
@@ -334,7 +544,9 @@ fn state(shared: &SharedRef) -> Value {
 fn history(shared: &SharedRef, range: &str) -> Value {
     let sh = lock(shared);
     let now = vpn_monitor::metrics::now_ms();
-    let from = if range == "week" {
+    let from = if range == "hour" {
+        now - 3_600_000
+    } else if range == "week" {
         local_day_start(now) - 7 * 86_400_000
     } else {
         now - 86_400_000

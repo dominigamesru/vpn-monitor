@@ -10,6 +10,8 @@ pub mod login;
 pub mod metrics;
 pub mod monitor;
 pub mod net;
+pub mod notify;
+pub mod prefs;
 pub mod probe;
 pub mod score;
 pub mod secrets;

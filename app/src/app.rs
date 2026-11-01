@@ -25,6 +25,8 @@ enum UserEvent {
     UpdateError(String),
     RestartInto(PathBuf),
     Quit,
+    /// Сообщение страницы меню (`h:520`, `hide`, `history`, `quit`), v0.5.
+    FlyoutIpc(String),
 }
 
 pub enum Cmd {
@@ -44,6 +46,8 @@ pub struct Shared {
     pub api_error: Option<String>,
     pub diag: Option<serde_json::Value>,
     pub diag_running: bool,
+    /// Выбор сотрудника: вид меню, канал, пауза, уведомления (prefs.json), v0.5.
+    pub prefs: vpn_monitor::prefs::Prefs,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -68,6 +72,7 @@ struct Ui {
     version: MenuItem,
     quit: MenuItem,
     checking: bool,
+    paused: bool,
     last: Option<Snapshot>,
     latest: Option<String>,
     update_error: Option<String>,
@@ -120,6 +125,9 @@ pub fn run(replace: bool, first_run: bool) {
         period: String::new(),
     };
     let store = Store::open(&dir, meta);
+    if let Err(e) = win::register_notifications(&dir) {
+        warn!("notify", "уведомления не зарегистрированы: {e}");
+    }
     info!(
         "metrics",
         "история: {} проверок из metrics_7d.json",
@@ -137,6 +145,7 @@ pub fn run(replace: bool, first_run: bool) {
         api_error: None,
         diag: None,
         diag_running: false,
+        prefs: vpn_monitor::prefs::Prefs::load(&dir),
     }));
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
@@ -174,11 +183,33 @@ pub fn run(replace: bool, first_run: bool) {
     let api_url = lock(&shared).api_url.clone();
 
     let mut ui: Option<Ui> = None;
-    event_loop.run(move |event, _, flow| {
-        *flow = ControlFlow::Wait;
+    let mut flyout: Option<crate::flyout::Flyout> = None;
+    let fly_proxy = proxy.clone();
+    event_loop.run(move |event, target, flow| {
+        *flow = ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_secs(5));
         match event {
             Event::NewEvents(StartCause::Init) => match build_ui(&settings, api_url.is_some()) {
-                Ok(u) => ui = Some(u),
+                Ok(u) => {
+                    // меню у иконки на WebView2; не вышло — остаётся системное меню и левый клик = «Проверить»
+                    if let Some(url) = &api_url {
+                        match crate::flyout::Flyout::new(
+                            target,
+                            &format!("{url}flyout"),
+                            fly_proxy.clone(),
+                            UserEvent::FlyoutIpc,
+                        ) {
+                            Ok(f) => {
+                                info!("tray", "меню у иконки — WebView2");
+                                u.tray.set_show_menu_on_right_click(false);
+                                flyout = Some(f);
+                            }
+                            Err(e) => {
+                                warn!("tray", "меню на WebView2 не создано ({e}) — системное меню")
+                            }
+                        }
+                    }
+                    ui = Some(u);
+                }
                 Err(e) => {
                     error!("tray", "не создать иконку в трее: {e}");
                     *flow = ControlFlow::Exit;
@@ -187,6 +218,18 @@ pub fn run(replace: bool, first_run: bool) {
             Event::UserEvent(ev) => {
                 let Some(u) = ui.as_mut() else { return };
                 match ev {
+                    UserEvent::Tray(TrayIconEvent::Click {
+                        button,
+                        button_state: MouseButtonState::Up,
+                        rect,
+                        ..
+                    }) if flyout.is_some()
+                        && matches!(button, MouseButton::Left | MouseButton::Right) =>
+                    {
+                        if let Some(f) = flyout.as_mut() {
+                            f.toggle(rect);
+                        }
+                    }
                     UserEvent::Tray(TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -202,7 +245,7 @@ pub fn run(replace: bool, first_run: bool) {
                     UserEvent::Tray(TrayIconEvent::DoubleClick {
                         button: MouseButton::Left,
                         ..
-                    }) => {
+                    }) if flyout.is_none() => {
                         if let Some(url) = &api_url {
                             info!("tray", "двойной клик — открываю окно");
                             win::open_url(url);
@@ -226,6 +269,31 @@ pub fn run(replace: bool, first_run: bool) {
                             toggle_autostart(u);
                         } else if m.id == *u.quit.id() {
                             info!("tray", "выход по меню");
+                            *flow = ControlFlow::Exit;
+                        }
+                    }
+                    UserEvent::FlyoutIpc(msg) => {
+                        if let Some(h) = msg.strip_prefix("h:").and_then(|v| v.parse::<f64>().ok())
+                        {
+                            if let Some(f) = flyout.as_mut() {
+                                f.resize(h);
+                            }
+                        } else if msg == "hide" {
+                            if let Some(f) = flyout.as_mut() {
+                                f.hide();
+                            }
+                        } else if let Some(tab) = msg.strip_prefix("open:") {
+                            // окно в браузере на нужной вкладке: history, conn
+                            if let Some(f) = flyout.as_mut() {
+                                f.hide();
+                            }
+                            if let Some(url) = &api_url {
+                                let tab: String =
+                                    tab.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                                win::open_url(&format!("{url}#{tab}"));
+                            }
+                        } else if msg == "quit" {
+                            info!("tray", "выход из меню");
                             *flow = ControlFlow::Exit;
                         }
                     }
@@ -263,6 +331,24 @@ pub fn run(replace: bool, first_run: bool) {
                     }
                 }
             }
+            Event::WindowEvent {
+                window_id,
+                event: tao::event::WindowEvent::Focused(false),
+                ..
+            } if flyout.as_ref().is_some_and(|f| f.id() == window_id) => {
+                if let Some(f) = flyout.as_mut() {
+                    f.hide();
+                }
+            }
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                if let Some(u) = ui.as_mut() {
+                    let paused = lock(&shared).prefs.paused(vpn_monitor::metrics::now_ms());
+                    if paused != u.paused {
+                        u.paused = paused;
+                        refresh(u);
+                    }
+                }
+            }
             Event::LoopDestroyed => {
                 info!("tray", "==== выход ====");
             }
@@ -284,28 +370,55 @@ fn spawn_checker(
             settings.check_interval_alert_sec,
         );
         let mut m = Monitor::new(settings, secrets);
+        let mut notifier = vpn_monitor::notify::Notifier::default();
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
         let mut manual = false;
+        let mut last_check = std::time::SystemTime::now();
         loop {
             match rx.recv_timeout(wait) {
                 Ok(Cmd::CheckNow) => manual = true,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
+            // пауза: проверки по расписанию не идут (по кнопке «Проверить» — идут)
+            let now_ms = vpn_monitor::metrics::now_ms();
+            if !manual
+                && let Some(until) = lock(&shared).prefs.pause_until_ms.filter(|u| *u > now_ms)
+            {
+                wait = Duration::from_millis(((until - now_ms) as u64).min(60_000));
+                continue;
+            }
+            // сон: между проверками прошло намного больше интервала — первые 2 минуты провалы не считаем
+            let gap = std::time::SystemTime::now()
+                .duration_since(last_check)
+                .unwrap_or_default();
+            if gap > wait + Duration::from_secs(90) {
+                info!(
+                    "check",
+                    "перерыв {} с — похоже, ноутбук спал: 2 минуты провалы не считаю",
+                    gap.as_secs()
+                );
+                m.grace_until = Some(std::time::Instant::now() + Duration::from_secs(120));
+            }
             let _ = proxy.send_event(UserEvent::Checking);
             {
                 let mut sh = lock(&shared);
                 sh.checking = true;
-                m.baseline = sh.store.baseline(&sh.settings.thresholds);
+                m.baseline = sh
+                    .store
+                    .baseline(&sh.settings.thresholds, m.last_client.as_deref());
             }
             let snap = m.run_check(manual);
             manual = false;
+            last_check = std::time::SystemTime::now();
             {
                 let mut sh = lock(&shared);
                 sh.checking = false;
-                if let Err(e) = sh
-                    .store
-                    .push(Record::from_snapshot(&snap, snap.internet_fresh))
+                // «после сна» в историю не пишем — это не данные о VPN
+                if !snap.waking
+                    && let Err(e) = sh
+                        .store
+                        .push(Record::from_snapshot(&snap, snap.internet_fresh))
                 {
                     error!("metrics", "не записать метрики: {e}");
                 }
@@ -317,6 +430,22 @@ fn spawn_checker(
             } else {
                 alert
             });
+            // уведомления: только о подтверждённой смене состояния и с лимитами (notify.rs)
+            let (prefs, paused) = {
+                let sh = lock(&shared);
+                (
+                    sh.prefs.notify.clone(),
+                    sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+                )
+            };
+            if !paused {
+                for n in notifier.observe(&observation(&snap), &prefs, std::time::Instant::now()) {
+                    info!("notify", "{}: {}", n.title, n.body);
+                    if let Err(e) = win::toast(&n.title, &n.body) {
+                        warn!("notify", "{e}");
+                    }
+                }
+            }
             if proxy
                 .send_event(UserEvent::Snapshot(Box::new(snap)))
                 .is_err()
@@ -326,6 +455,41 @@ fn spawn_checker(
             while rx.try_recv().is_ok() {} // клики, пришедшие во время проверки, не копим
         }
     });
+}
+
+/// Что видно в проверке — для решения об уведомлениях. Нет интернета, Wi‑Fi со входом, после сна — «неизвестно».
+fn observation(s: &Snapshot) -> vpn_monitor::notify::Observation {
+    use vpn_monitor::probe::Fail;
+    let unknown = s.waking
+        || matches!(
+            s.verdict.badge,
+            Badge::NoInternet | Badge::Captive | Badge::Unknown
+        );
+    let light: Vec<&ProbeResult> = s
+        .targets
+        .iter()
+        .filter(|r| r.role == Some(Role::Light))
+        .collect();
+    let world: Vec<&ProbeResult> = s
+        .targets
+        .iter()
+        .filter(|r| r.role == Some(Role::World))
+        .collect();
+    vpn_monitor::notify::Observation {
+        office_up: (!unknown && !light.is_empty()).then(|| light.iter().any(|r| r.reachable)),
+        world_up: (!unknown && !world.is_empty()).then(|| world.iter().any(|r| r.ok)),
+        world_down_names: world
+            .iter()
+            .filter(|r| !r.ok)
+            .map(|r| r.name.clone())
+            .collect(),
+        auth_failed: !unknown
+            && s.targets
+                .iter()
+                .any(|r| r.fail == Some(Fail::Auth) && r.auth_used.contains("AD")),
+        slow: s.verdict.color == Color::Yellow,
+        client: s.client.as_ref().map(|c| c.name.clone()),
+    }
 }
 
 fn spawn_updater(
@@ -341,7 +505,14 @@ fn spawn_updater(
         let mut failed: Option<(String, u32)> = None;
         std::thread::sleep(Duration::from_secs(10));
         loop {
-            match update::fetch_latest_version(&base) {
+            let (channel, paused) = {
+                let sh = lock(&shared);
+                (
+                    sh.prefs.channel.clone(),
+                    sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+                )
+            };
+            match update::fetch_channel_version(&base, &channel) {
                 Ok(latest) => {
                     info!("update", "последняя версия {latest}, своя {VERSION}");
                     let _ = proxy.send_event(UserEvent::LatestVersion(latest.clone()));
@@ -354,7 +525,8 @@ fn spawn_updater(
                         .as_ref()
                         .filter(|(v, _)| *v == latest)
                         .map_or(0, |(_, n)| *n);
-                    if update::needs_update(VERSION, &latest) && tries < 3 {
+                    // во время паузы не обновляемся: сотрудник, скорее всего, на звонке
+                    if update::needs_update(VERSION, &latest) && tries < 3 && !paused {
                         match apply_update(&base, &latest, &dir) {
                             Ok(exe) => {
                                 let _ = proxy.send_event(UserEvent::RestartInto(exe));
@@ -507,6 +679,7 @@ fn build_ui(settings: &Settings, api_ok: bool) -> Result<Ui, String> {
         version,
         quit,
         checking: false,
+        paused: false,
         last: None,
         latest: None,
         update_error: None,
@@ -522,6 +695,11 @@ fn refresh(u: &mut Ui) {
     let (badge, color) = u.last.as_ref().map_or((Badge::Unknown, Color::Red), |s| {
         (s.verdict.badge, s.verdict.color)
     });
+    let (badge, color) = if u.paused {
+        (Badge::Paused, Color::Gray)
+    } else {
+        (badge, color)
+    };
     let _ = u.tray.set_icon(Some(make_icon(badge, color, u.checking)));
     u.check_now.set_enabled(!u.checking);
 
@@ -553,6 +731,8 @@ fn refresh(u: &mut Ui) {
             Badge::Score(n) => format!("Оценка VPN {n:02} · {}", v.color.ru()),
             Badge::Unknown => "Нет данных".to_string(),
             Badge::NoInternet => "Нет интернета — VPN не оценивается".to_string(),
+            Badge::Captive => "Wi‑Fi требует входа — откройте браузер".to_string(),
+            Badge::Paused => "Проверки на паузе".to_string(),
         }
     };
     u.status.set_text(&status);
