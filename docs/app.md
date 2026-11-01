@@ -3,6 +3,12 @@
 Rust, один exe без рантаймов ([ADR 0001](adr/0001-rust.md)). Требования — [requirements.md](requirements.md), поставка —
 [ADR 0004](adr/0004-delivery-github-releases.md).
 
+## v0.8.0
+- **Статус запросов в Jira** (`src/jsm.rs`: `parse_status`, `with_status`, `refresh_statuses`): поток раз в 15 минут
+  (`spawn_tickets`), уведомление о смене (`notify.tickets`), плашки и «Обновить статусы» в «Настройках», отметки
+  запросов на графиках «Истории», просмотр вложений в окне запроса.
+- **Проверки:** `serve_each` и тест «медленный запрос не держит быстрый»; CI на Windows собирает заметки релиза.
+
 ## v0.7.2
 - **Запрос в Jira Service Desk** ([ADR 0013](adr/0013-jira-service-desk-requests.md), `src/jsm.rs`): черновик
   (`GET /api/support`), отправка от имени сотрудника входом AD (`POST /api/support`, вложения — сводка, диагностика,

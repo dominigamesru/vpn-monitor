@@ -51,6 +51,20 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      - name: Заметки релиза собираются (как в release.yml, в консоли Windows)
+        working-directory: .
+        shell: python
+        run: |
+          # шаги release.yml в PR не запускаются — 0.7.1 упал на сборке заметок уже после слияния
+          import subprocess, sys, tomllib, urllib.request
+          ver = tomllib.load(open("app/Cargo.toml", "rb"))["package"]["version"]
+          try:
+              prev = urllib.request.urlopen("https://github.com/${{ github.repository }}/releases/download/latest/latest.version", timeout=20).read().decode().strip()
+          except Exception:
+              prev = ""
+          if prev == ver:
+              prev = ""
+          subprocess.run([sys.executable, "scripts/release_notes.py", "--version", ver, "--prev", prev, "--stdout"], check=True)
       - name: Обновление «последний релиз → эта сборка»
         working-directory: .
         run: python .github/scripts/upgrade_test.py --exe app/target/release/vpn-monitor.exe
