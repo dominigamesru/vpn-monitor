@@ -6,6 +6,7 @@ use crate::secrets::Secrets;
 use crate::settings::{Role, Settings};
 use crate::{info, warn};
 use std::collections::{HashMap, VecDeque};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -88,6 +89,7 @@ impl Monitor {
     pub fn run_check(&mut self, manual: bool) -> Snapshot {
         self.check_no += 1;
         crate::gitlab::ensure_fresh(self.settings.gitlab_oauth.as_ref());
+        crate::probe::set_min_probe_kbps(self.settings.thresholds.min_probe_kbps);
         let secrets = Secrets::load(&self.secrets_path);
         let s = &self.settings;
         let full_due = self
@@ -110,7 +112,7 @@ impl Monitor {
         );
 
         let t0 = Instant::now();
-        let (results, internet) = std::thread::scope(|sc| {
+        let (results, internet, online_hint) = std::thread::scope(|sc| {
             let handles: Vec<_> = s
                 .targets
                 .iter()
@@ -127,12 +129,14 @@ impl Monitor {
                 })
                 .collect();
             let inet = internet_due.then(|| sc.spawn(|| probe::probe_internet(&s.internet)));
+            let conn = sc.spawn(|| connectivity(&s.internet.check_hosts));
             let results: Vec<ProbeResult> = handles
                 .into_iter()
                 .flat_map(|h| h.join().unwrap_or_default())
                 .collect();
             let internet = inet.and_then(|h| h.join().ok());
-            (results, internet)
+            let online_hint = conn.join().unwrap_or(true);
+            (results, internet, online_hint)
         });
 
         let mut results = results;
@@ -168,6 +172,7 @@ impl Monitor {
             self.last_full = Some(Instant::now());
         }
         let internet_fresh = internet.is_some();
+        let internet_reachable = internet.as_ref().is_some_and(|i| i.reachable);
         if let Some(i) = internet {
             self.last_internet_at = Some(Instant::now());
             self.last_internet = Some(i);
@@ -177,7 +182,15 @@ impl Monitor {
             .iter()
             .filter(|r| r.role == Some(Role::Light))
             .collect();
-        if !light_results.is_empty() {
+        // нет интернета: не отвечают ни проверочные адреса, ни одна цель — VPN не оцениваем и в историю не пишем
+        let online = online_hint || results.iter().any(|r| r.reachable) || internet_reachable;
+        if !online {
+            warn!(
+                "check",
+                "нет интернета: проверочные адреса и цели не отвечают — VPN не оцениваю"
+            );
+        }
+        if !light_results.is_empty() && online {
             let reachable = light_results.iter().any(|r| r.reachable);
             self.history.push_check(now, reachable);
             if reachable {
@@ -197,8 +210,14 @@ impl Monitor {
         }
         if let Some(sp) = results
             .iter()
-            // «Без ВПН» — это скорость интернета, а не VPN: в оценку VPN не идёт
-            .filter(|r| r.role == Some(Role::Speed) && r.ok && r.via_vpn != Some(false))
+            // «Без ВПН» — это скорость интернета, а не VPN: в оценку VPN не идёт; прерванный медленный замер —
+            // идёт (это и есть «очень медленно»), но только когда интернет есть
+            .filter(|r| {
+                online
+                    && r.role == Some(Role::Speed)
+                    && (r.ok || r.slow_abort)
+                    && r.via_vpn != Some(false)
+            })
             .filter_map(|r| r.mbps)
             .reduce(f64::max)
         {
@@ -250,6 +269,7 @@ impl Monitor {
             &self.settings.thresholds,
             now,
             baseline,
+            online,
         );
         self.weak_internet = matches!(verdict.badge, score::Badge::WeakInternet(_));
         info!(
@@ -273,6 +293,29 @@ impl Monitor {
             verdict,
         }
     }
+}
+
+/// Есть ли интернет вообще: TCP до любого проверочного адреса за 3 с (без скачивания).
+fn connectivity(hosts: &[String]) -> bool {
+    if hosts.is_empty() {
+        return true;
+    }
+    std::thread::scope(|sc| {
+        let hs: Vec<_> = hosts
+            .iter()
+            .map(|h| {
+                sc.spawn(move || {
+                    h.to_socket_addrs()
+                        .ok()
+                        .and_then(|mut a| a.next())
+                        .is_some_and(|a| {
+                            TcpStream::connect_timeout(&a, Duration::from_secs(3)).is_ok()
+                        })
+                })
+            })
+            .collect();
+        hs.into_iter().any(|h| h.join().unwrap_or(false))
+    })
 }
 
 /// Маршрут до цели: адаптер и «через VPN ли» (по правилам клиентов из настроек).

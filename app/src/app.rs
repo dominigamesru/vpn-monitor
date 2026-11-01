@@ -552,6 +552,7 @@ fn refresh(u: &mut Ui) {
             }
             Badge::Score(n) => format!("Оценка VPN {n:02} · {}", v.color.ru()),
             Badge::Unknown => "Нет данных".to_string(),
+            Badge::NoInternet => "Нет интернета — VPN не оценивается".to_string(),
         }
     };
     u.status.set_text(&status);

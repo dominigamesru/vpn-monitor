@@ -299,6 +299,7 @@ fn state(shared: &SharedRef) -> Value {
                 vpn_monitor::score::Badge::NoVpn => "novpn",
                 vpn_monitor::score::Badge::WeakInternet(_) => "weak",
                 vpn_monitor::score::Badge::Unknown => "unknown",
+                vpn_monitor::score::Badge::NoInternet => "offline",
             },
             "score": v.score, "latency": v.latency, "speed": v.speed, "stability": v.stability,
             "explain": v.explain,

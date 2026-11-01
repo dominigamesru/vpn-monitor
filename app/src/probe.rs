@@ -50,6 +50,20 @@ pub struct ProbeResult {
     pub adapter_desc: Option<String>,
     /// `Some(false)` — «Без ВПН»: трафик к цели мимо туннеля.
     pub via_vpn: Option<bool>,
+    /// Замер прерван: качалось медленнее минимальной скорости (`min_probe_kbps`); `mbps` — сколько успело.
+    pub slow_abort: bool,
+}
+
+/// Минимальная скорость пробы, КБ/с (задаёт проверка из настроек; биты f64).
+static MIN_PROBE_KBPS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0x4049_0000_0000_0000); // 50.0
+
+pub fn set_min_probe_kbps(v: f64) {
+    MIN_PROBE_KBPS.store(v.max(1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn min_probe_kbps() -> f64 {
+    f64::from_bits(MIN_PROBE_KBPS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 impl ProbeResult {
@@ -77,6 +91,7 @@ impl ProbeResult {
             adapter: None,
             adapter_desc: None,
             via_vpn: None,
+            slow_abort: false,
         }
     }
 
@@ -439,15 +454,28 @@ fn probe_url(
     let final_uri = ureq::ResponseExt::get_uri(&resp).to_string();
     let looks_like_login = final_uri.contains("login.action") || final_uri.contains("/login");
 
+    // бюджет на скачивание: размер / минимальная скорость (1 МБ при 50 КБ/с — 20 с), не меньше 3 с
+    let kbps = min_probe_kbps();
+    let budget = resp
+        .headers()
+        .get("Content-Length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|len| Duration::from_secs_f64((len as f64 / (kbps * 1024.0)).max(3.0)));
     let mut buf = vec![0u8; 64 * 1024];
     let mut reader = resp.body_mut().as_reader();
     let mut read_err = None;
+    let mut slow = false;
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 r.bytes += n as u64;
                 if max_body_time.is_some_and(|max| t2.elapsed() >= max) {
+                    break;
+                }
+                if budget.is_some_and(|b| t2.elapsed() > b) {
+                    slow = true;
                     break;
                 }
             }
@@ -458,8 +486,23 @@ fn probe_url(
         }
     }
     r.secs = t2.elapsed().as_secs_f64();
-    if r.bytes >= 64 * 1024 && r.secs > 0.0 {
+    if (r.bytes >= 64 * 1024 || slow) && r.secs > 0.0 {
         r.mbps = Some(r.bytes as f64 * 8.0 / r.secs / 1_000_000.0);
+    }
+    if slow && (200..300).contains(&status) {
+        let got = fmt_bytes(r.bytes);
+        let secs = r.secs;
+        let mbps = r.mbps;
+        r = r.failed(
+            Fail::Timeout,
+            format!("медленнее {kbps:.0} КБ/с — замер прерван через {secs:.0} с (скачано {got})"),
+        );
+        r.mbps = mbps;
+        r.slow_abort = true;
+        return Raw {
+            r,
+            looks_like_login,
+        };
     }
 
     r.ok = (200..300).contains(&status);
@@ -583,6 +626,54 @@ mod tests {
         let a = auth(AuthKind::Jira, &Secrets::from_text("").with_ad("u", "p"));
         assert_eq!(a.label, "Basic (AD)");
         assert!(a.headers[0].1.starts_with("Basic "));
+    }
+
+    /// Сервер обещает 1 МБ и отдаёт по капле: при минимальной скорости 1000 КБ/с бюджет — 3 с, замер обрывается
+    /// по бюджету, а не по общему таймауту в 20 с.
+    #[test]
+    fn slow_download_is_aborted_by_budget() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // первое соединение — замер задержки (сразу закрывается), второе — сам GET
+        std::thread::spawn(move || {
+            for mut c in listener.incoming().flatten().take(2) {
+                std::thread::spawn(move || {
+                    let mut req = [0u8; 1024];
+                    if std::io::Read::read(&mut c, &mut req).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\n");
+                    for _ in 0..200 {
+                        if c.write_all(&[0u8; 1024]).is_err() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                });
+            }
+        });
+        set_min_probe_kbps(1000.0);
+        let t = Instant::now();
+        let r = probe_url(
+            "x",
+            "X",
+            None,
+            &format!("http://127.0.0.1:{port}/f"),
+            &[],
+            Duration::from_secs(20),
+            None,
+            false,
+        );
+        set_min_probe_kbps(50.0);
+        assert!(r.slow_abort, "{:?}", r.error);
+        assert_eq!(r.fail, Some(Fail::Timeout));
+        assert!(r.mbps.is_some_and(|m| m < 1.0));
+        assert!(
+            t.elapsed() < Duration::from_secs(8),
+            "оборвалось за {:?}",
+            t.elapsed()
+        );
     }
 
     #[test]

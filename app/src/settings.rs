@@ -60,6 +60,17 @@ pub struct Thresholds {
     pub speed_ratio_ok: f64,
     #[serde(default = "d_spd_bad")]
     pub speed_ratio_bad: f64,
+    /// Минимальная скорость пробы, КБ/с: файл, который качается медленнее, — замер обрывается (бюджет времени =
+    /// размер / эта скорость; 1 МБ при 50 КБ/с — 20 с), v0.4.1.
+    #[serde(default = "d_min_kbps")]
+    pub min_probe_kbps: f64,
+}
+
+fn d_min_kbps() -> f64 {
+    50.0
+}
+fn d_check_hosts() -> Vec<String> {
+    vec!["1.1.1.1:443".into(), "8.8.8.8:443".into()]
 }
 
 fn d_baseline_days() -> u64 {
@@ -165,6 +176,9 @@ impl Target {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Internet {
+    /// Куда стучаться TCP, чтобы понять «есть ли интернет вообще» (каждую проверку, без скачивания), v0.4.1.
+    #[serde(default = "d_check_hosts")]
+    pub check_hosts: Vec<String>,
     pub name: String,
     pub url: String,
     pub max_seconds: u64,
