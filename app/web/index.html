@@ -195,7 +195,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
 <body>
 <main>
   <header class="top">
-    <h1><span class="mini idle" id="mini" tabindex="0">…</span> Domini VPN Monitor <a class="ver" id="ver" href="#release-notes" title="Что нового во всех версиях"></a></h1>
+    <h1><span class="mini idle" id="mini" tabindex="0">…</span> Domini VPN Monitor <a class="ver" id="ver" href="#release-notes" target="_blank" rel="noopener" title="Что нового во всех версиях — откроется в новой вкладке"></a></h1>
     <nav class="tabs" aria-label="Разделы">
       <a href="#now">Сейчас</a><a href="#history">История</a><a href="#settings">Настройки</a><a href="#agent">AI-агент</a>
     </nav>
@@ -446,7 +446,7 @@ function verdict() {
 function renderHeader() {
   const v = verdict();
   const mini = $("#mini"); mini.className = `mini ${v.st}`; mini.textContent = v.idx; mini.setAttribute("aria-label", `${v.title}. ${v.sub}`);
-  $("#ver").textContent = `— версия ${S.version}`;
+  $("#ver").textContent = `версия ${S.version}`;
   const needLogin = !S?.login && (S?.snapshot?.targets || []).some((t) => /^нет входа/.test(t.note || ""));
   document.title = needLogin && !S?.paused ? "⚠️ Требуется вход — Domini VPN Monitor" : /^\d+$/.test(v.idx) ? `Domini VPN Monitor — ${v.idx}/99` : "Domini VPN Monitor";
 }
