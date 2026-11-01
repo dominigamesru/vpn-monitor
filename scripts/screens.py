@@ -146,7 +146,7 @@ def frames(now):
     for view, name in (("route", "Маршрут"), ("dash", "Приборная панель"), ("strip", "Лента часа")):
         out.append(("Меню у иконки — виды", name, "flyout", 372, 0, "", {"state": state_json("slowsvn", now, view), "hour": hour}))
     for key, name, tab in (("ok", "Окно — «Сейчас», всё в порядке", "now"), ("slowsvn", "Окно — «Сейчас», SVN медленный", "now"),
-                           ("slowsvn", "Окно — «История»", "history"), ("ok", "Окно — «Подключение»", "conn")):
+                           ("slowsvn", "Окно — «История»", "history"), ("ok", "Окно — «Настройки»", "settings")):
         out.append(("Окно в браузере", name, "index", 1100, 900, tab,
                     {"state": state_json(key, now), "hour": hour, "day": day, "week": week}))
     return out

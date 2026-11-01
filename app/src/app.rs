@@ -193,7 +193,7 @@ pub fn run(replace: bool, first_run: bool) {
             let creds = vpn_monitor::secrets::Secrets::load(&crate::secrets_path(&dir));
             if first_run && creds.ad_login().is_none() && creds.get("CONFLUENCE_TOKEN").is_none() {
                 info!("tray", "входа нет — открываю окно на вкладке «Подключение»");
-                win::open_url(&format!("{url}#conn"));
+                win::open_url(&format!("{url}#settings"));
             }
             lock(&shared).api_url = Some(url);
         }
