@@ -69,6 +69,8 @@ def main() -> int:
         "crc32": f"{zlib.crc32(exe) & 0xFFFFFFFF:08x}",
         "size": len(exe),
     }
+    # как в release.yml: новое имя и старое (его качают обновлятели версий до 0.5.4)
+    (srv / f"v{new_ver}/{'domini-vpn-monitor-beta.exe' if '-' in new_ver else 'domini-vpn-monitor.exe'}").write_bytes(exe)
     (srv / f"v{new_ver}/vpn-monitor.exe").write_bytes(exe)
     (srv / f"v{new_ver}/settings.json").write_text(json.dumps(new_settings, ensure_ascii=False, indent=2), encoding="utf-8")
     (srv / "latest/latest.version").write_text(new_ver + "\n", encoding="utf-8")
@@ -77,7 +79,9 @@ def main() -> int:
     install = pathlib.Path(os.environ["LOCALAPPDATA"]) / "DominiVPNMonitor"
     shutil.rmtree(install, ignore_errors=True)
     install.mkdir(parents=True)
-    old_exe = install / f"vpn-monitor-{old_ver}.exe"
+    # с 0.5.4 установка живёт в постоянном domini-vpn-monitor.exe (обновление — переименованием), до — по версиям
+    stable_era = tuple(int(x) for x in old_ver.split("-")[0].split(".")) >= (0, 5, 4)
+    old_exe = install / ("domini-vpn-monitor.exe" if stable_era else f"vpn-monitor-{old_ver}.exe")
     old_exe.write_bytes(fetch(f"{GH}/v{old_ver}/vpn-monitor.exe"))
     old_settings = json.loads(fetch(f"{GH}/v{old_ver}/settings.json"))
     old_settings["release_base_url"] = BASE
@@ -148,9 +152,18 @@ def main() -> int:
 
     print("---- vpn-monitor.log ----")
     print(log.read_text(encoding="utf-8", errors="replace") if log.exists() else "(лога нет)")
-    subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{old_ver}.exe"], capture_output=True)
+    subprocess.run(["taskkill", "/F", "/IM", old_exe.name], capture_output=True)
     subprocess.run(["taskkill", "/F", "/IM", f"vpn-monitor-{new_ver}.exe"], capture_output=True)
+    subprocess.run(["taskkill", "/F", "/IM", "domini-vpn-monitor.exe"], capture_output=True)
     httpd.shutdown()
+    # постоянный путь: Windows помнит иконку в трее по пути exe — новая версия должна работать из domini-vpn-monitor.exe
+    text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+    marker = f"VPN Monitor {new_ver}, режим трей"
+    tail = text[text.rfind(marker):] if marker in text else ""
+    stable_ok = (install / "domini-vpn-monitor.exe").exists() and "domini-vpn-monitor.exe" in tail.split("\n", 2)[1] if tail else False
+    if ok and not stable_ok:
+        print(f"::error::{new_ver} работает не из domini-vpn-monitor.exe — иконка в трее будет прятаться после обновлений")
+        return 1
     if ok and not flyout_ok:
         print(f"::error::{new_ver}: страница меню у иконки в WebView2 не ответила за 60 с — см. лог выше")
         return 1

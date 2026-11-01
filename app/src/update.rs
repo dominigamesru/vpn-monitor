@@ -4,7 +4,8 @@
 //! Раскладка (контракт со всеми установленными копиями):
 //! - `{base}/latest/latest.version` — строка `0.1.2`;
 //! - `{base}/v{ver}/settings.json` — настройки версии, в `exe.sha256` — контрольная сумма exe;
-//! - `{base}/v{ver}/vpn-monitor.exe`.
+//! - `{base}/v{ver}/domini-vpn-monitor.exe` (с 0.5.4; в релизах есть и `vpn-monitor.exe` — для обновлятелей
+//!   версий до 0.5.4, которые знают только это имя; у релизов до 0.5.4 — только `vpn-monitor.exe`).
 
 use crate::settings::ExeInfo;
 use sha2::{Digest, Sha256};
@@ -12,7 +13,11 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const EXE_ASSET: &str = "vpn-monitor.exe";
+pub const EXE_ASSET: &str = "domini-vpn-monitor.exe";
+/// Имя exe в бета-релизах (`vX.Y.Z-beta.N`).
+pub const EXE_ASSET_BETA: &str = "domini-vpn-monitor-beta.exe";
+/// Имя exe в релизах до 0.5.4 — запасное: откат на старую версию.
+pub const LEGACY_EXE_ASSET: &str = "vpn-monitor.exe";
 
 pub fn latest_version_url(base: &str) -> String {
     format!("{}/latest/latest.version", base.trim_end_matches('/'))
@@ -22,14 +27,22 @@ fn asset_url(base: &str, ver: &str, name: &str) -> String {
     format!("{}/v{ver}/{name}", base.trim_end_matches('/'))
 }
 
-/// `0.1.2` (с `v` или без) → нормализованная строка; иначе ошибка.
+/// Semver: `0.1.2` или бета `0.6.0-beta.1` (с `v` или без) → нормализованная строка; иначе ошибка.
+/// Версии до 0.5.4 бету не понимают — в стабильный канал (`latest.version`) бета не попадает никогда.
 pub fn parse_version(s: &str) -> Result<String, String> {
     let v = s
         .trim()
         .trim_start_matches('\u{feff}')
         .trim_start_matches('v');
-    let parts: Vec<&str> = v.split('.').collect();
+    let (core, pre) = v.split_once('-').unwrap_or((v, ""));
+    let parts: Vec<&str> = core.split('.').collect();
+    let pre_ok = !v.contains('-')
+        || (!pre.is_empty()
+            && pre
+                .split('.')
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric())));
     if parts.len() == 3
+        && pre_ok
         && parts
             .iter()
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
@@ -113,9 +126,22 @@ pub fn download_exe(
     expected_sha256: &str,
     dest: &Path,
 ) -> Result<u64, String> {
-    let url = asset_url(base, ver, EXE_ASSET);
     let agent = crate::net::agent(Duration::from_secs(600));
+    // имя exe в релизе: бета — `-beta`, стабильный — без; у релизов до 0.5.4 — `vpn-monitor.exe`
+    let names = if ver.contains('-') {
+        [EXE_ASSET_BETA, EXE_ASSET, LEGACY_EXE_ASSET]
+    } else {
+        [EXE_ASSET, EXE_ASSET_BETA, LEGACY_EXE_ASSET]
+    };
+    let mut url = asset_url(base, ver, names[0]);
     let mut resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
+    for name in &names[1..] {
+        if resp.status().as_u16() != 404 {
+            break;
+        }
+        url = asset_url(base, ver, name);
+        resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
+    }
     let st = resp.status().as_u16();
     if st != 200 {
         return Err(format!("{url}: HTTP {st}"));
@@ -181,6 +207,10 @@ mod tests {
 
     #[test]
     fn versions() {
+        assert_eq!(parse_version("v0.6.0-beta.1").unwrap(), "0.6.0-beta.1");
+        assert!(parse_version("0.6.0-").is_err());
+        assert!(parse_version("0.6.0-beta..1").is_err());
+        assert!(parse_version("0.6.0-beta 1").is_err());
         assert_eq!(parse_version("v0.1.2\n").unwrap(), "0.1.2");
         assert_eq!(parse_version("\u{feff}1.0.0").unwrap(), "1.0.0");
         assert!(parse_version("latest").is_err());
@@ -226,7 +256,7 @@ mod tests {
         );
         assert_eq!(
             asset_url(b, "0.1.0", EXE_ASSET),
-            "https://github.com/o/r/releases/download/v0.1.0/vpn-monitor.exe"
+            "https://github.com/o/r/releases/download/v0.1.0/domini-vpn-monitor.exe"
         );
     }
 }

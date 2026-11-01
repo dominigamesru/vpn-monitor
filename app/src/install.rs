@@ -5,7 +5,6 @@ use crate::win;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use vpn_monitor::settings::{EMBEDDED, Settings};
-use vpn_monitor::update::exe_name;
 use vpn_monitor::{VERSION, error, info, log, warn};
 
 const SECRETS_TEMPLATE: &str = include_str!("../config/secrets.example.env");
@@ -73,16 +72,7 @@ fn install(dir: &Path) -> Result<Done, String> {
     }
 
     let me = std::env::current_exe().map_err(|e| format!("не узнать свой путь: {e}"))?;
-    let target = dir.join(exe_name(VERSION));
-    if !same_file(&me, &target) {
-        copy_with_retry(&me, &target)?;
-        info!(
-            "install",
-            "скопирован {} → {}",
-            me.display(),
-            target.display()
-        );
-    }
+    let target = place_exe(&me, dir, Place::Copy)?;
 
     std::fs::write(dir.join("settings.json"), EMBEDDED)
         .map_err(|e| format!("settings.json: {e}"))?;
@@ -96,6 +86,9 @@ fn install(dir: &Path) -> Result<Done, String> {
     let secrets_empty = loaded.ad_login().is_none() && loaded.get("CONFLUENCE_TOKEN").is_none();
 
     cleanup_old_exes(dir, &target);
+    if let Err(e) = win::desktop_shortcut(&target) {
+        warn!("install", "ярлык на рабочем столе: {e}");
+    }
     win::autostart_set(&target)?;
     info!(
         "install",
@@ -129,6 +122,51 @@ fn copy_with_retry(from: &Path, to: &Path) -> Result<(), String> {
     Err(format!("не скопировать exe в {}: {last}", to.display()))
 }
 
+/// Постоянное имя exe в папке установки (то же, что у файла в релизе). Windows запоминает «показывать иконку в трее» по пути exe: до 0.5.4
+/// каждая версия жила в `vpn-monitor-X.Y.Z.exe`, и после обновления иконка пряталась под «^» как новая программа.
+pub const STABLE_EXE: &str = "domini-vpn-monitor.exe";
+/// Сюда переименовывается запущенный exe при обновлении (Windows разрешает переименовать запущенный exe, но не
+/// перезаписать); удаляется при следующем запуске.
+const OLD_EXE: &str = "domini-vpn-monitor.old.exe";
+
+pub enum Place {
+    /// Установка двойным кликом: скопировать себя.
+    Copy,
+    /// Обновление: переместить скачанный файл.
+    Move,
+}
+
+/// Кладёт exe в `<папка>/vpn-monitor.exe`. Занятый (запущенный) старый exe сначала переименовывается в
+/// `vpn-monitor.old.exe`.
+pub fn place_exe(src: &Path, dir: &Path, how: Place) -> Result<PathBuf, String> {
+    let target = dir.join(STABLE_EXE);
+    if same_file(src, &target) {
+        return Ok(target);
+    }
+    if target.exists() && std::fs::remove_file(&target).is_err() {
+        let old = dir.join(OLD_EXE);
+        let _ = std::fs::remove_file(&old);
+        std::fs::rename(&target, &old)
+            .map_err(|e| format!("не освободить {}: {e}", target.display()))?;
+        info!(
+            "install",
+            "запущенный {STABLE_EXE} переименован в {OLD_EXE}"
+        );
+    }
+    match how {
+        Place::Copy => copy_with_retry(src, &target)?,
+        Place::Move => std::fs::rename(src, &target).map_err(|e| {
+            format!(
+                "не переместить {} → {}: {e}",
+                src.display(),
+                target.display()
+            )
+        })?,
+    }
+    info!("install", "{} → {}", src.display(), target.display());
+    Ok(target)
+}
+
 /// Удаляет exe прошлых версий в папке установки и их папки WebView2 (`vpn-monitor-X.Y.Z.exe.WebView2`, до 0.5.3 —
 /// своя на каждую версию; теперь общая `WebView2`). Занятые — пропускает, удалятся в следующий раз.
 pub fn cleanup_old_exes(dir: &Path, keep: &Path) {
@@ -142,8 +180,9 @@ pub fn cleanup_old_exes(dir: &Path, keep: &Path) {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let ours = name.starts_with("vpn-monitor-")
-            && (name.ends_with(".exe") || name.ends_with(".exe.part"));
+        let ours = (name.starts_with("vpn-monitor-")
+            && (name.ends_with(".exe") || name.ends_with(".exe.part")))
+            || name == OLD_EXE;
         if name.starts_with("vpn-monitor-") && name.ends_with(".exe.WebView2") && p.is_dir() {
             match std::fs::remove_dir_all(&p) {
                 Ok(()) => info!("install", "удалена старая папка {name}"),

@@ -94,7 +94,38 @@ pub fn run(replace: bool, first_run: bool) {
         info!("tray", "уже запущена другая копия — выхожу");
         return;
     };
+    // Переход на постоянный путь: версии до 0.5.4 ставят обновление в `vpn-monitor-X.Y.Z.exe`. Запущены из папки
+    // установки под таким именем — копируем себя в `vpn-monitor.exe`, переносим автозапуск и перезапускаемся оттуда
+    // (иконка в трее у Windows привязана к пути exe).
     if let Ok(me) = std::env::current_exe() {
+        let name = me
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let in_install = me.parent().is_some_and(|p| p == dir.as_path());
+        if in_install && name != crate::install::STABLE_EXE {
+            match crate::install::place_exe(&me, &dir, crate::install::Place::Copy) {
+                Ok(stable) => {
+                    info!("tray", "перехожу на постоянный путь {}", stable.display());
+                    if let Err(e) = win::autostart_set(&stable) {
+                        error!("tray", "автозапуск: {e}");
+                    }
+                    if let Err(e) = win::desktop_shortcut(&stable) {
+                        warn!("tray", "ярлык на рабочем столе: {e}");
+                    }
+                    match win::spawn_detached(&stable, &["--tray", "--replace"]) {
+                        Ok(()) => return,
+                        Err(e) => error!(
+                            "tray",
+                            "не запустить {}: {e} — работаю отсюда",
+                            stable.display()
+                        ),
+                    }
+                }
+                Err(e) => error!("tray", "{e} — работаю из {name}"),
+            }
+        }
         crate::install::cleanup_old_exes(&dir, &me);
     }
 
@@ -613,7 +644,8 @@ fn apply_update(base: &str, ver: &str, dir: &std::path::Path) -> Result<PathBuf,
     let size = update::download_exe(base, ver, &exe_info.sha256, &dest)?;
     info!("update", "exe скачан ({size} байт), SHA-256 совпал");
     std::fs::write(dir.join("settings.json"), raw).map_err(|e| format!("settings.json: {e}"))?;
-    Ok(dest)
+    // на постоянное место `vpn-monitor.exe` (запущенный — в `vpn-monitor.old.exe`)
+    crate::install::place_exe(&dest, dir, crate::install::Place::Move)
 }
 
 fn toggle_autostart(u: &mut Ui) {

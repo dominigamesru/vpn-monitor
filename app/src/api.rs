@@ -213,6 +213,7 @@ fn handle(
             let dir = lock(shared).dir.clone();
             info!("api", "удаление VPN Monitor с этого компьютера");
             let _ = win::autostart_remove();
+            let _ = win::desktop_shortcut_remove();
             let _ = vpn_monitor::creds::delete_ad();
             let script = format!(
                 "ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"",

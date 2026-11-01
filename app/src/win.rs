@@ -143,6 +143,93 @@ pub fn spawn_detached(exe: &Path, args: &[&str]) -> Result<(), String> {
         .map_err(|e| format!("запуск {}: {e}", exe.display()))
 }
 
+const SHORTCUT: &str = "Domini VPN Monitor.lnk";
+
+/// PowerShell-строка в одинарных кавычках.
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+fn powershell(script: &str) -> Result<(), String> {
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("powershell: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr)
+            .trim()
+            .chars()
+            .take(300)
+            .collect())
+    }
+}
+
+/// Ярлык «Domini VPN Monitor» на рабочем столе: открывает окно (`--open`), а если приложение не запущено —
+/// запускает его. Рабочий стол — как его видит Windows (в т. ч. перенесённый в OneDrive).
+pub fn desktop_shortcut(exe: &Path) -> Result<(), String> {
+    let exe_s = exe.display().to_string();
+    let dir = exe
+        .parent()
+        .map(|d| d.display().to_string())
+        .unwrap_or_default();
+    let script = format!(
+        "$d=[Environment]::GetFolderPath('Desktop'); \
+         $s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d {lnk})); \
+         $s.TargetPath={exe}; $s.Arguments='--open'; $s.WorkingDirectory={dir}; \
+         $s.IconLocation={icon}; $s.Description='Состояние VPN в офис и в мир'; $s.Save()",
+        lnk = ps_quote(SHORTCUT),
+        exe = ps_quote(&exe_s),
+        dir = ps_quote(&dir),
+        icon = ps_quote(&format!("{exe_s},0")),
+    );
+    powershell(&script)
+}
+
+pub fn desktop_shortcut_remove() -> Result<(), String> {
+    powershell(&format!(
+        "$p=Join-Path ([Environment]::GetFolderPath('Desktop')) {}; if (Test-Path $p) {{ Remove-Item $p }}",
+        ps_quote(SHORTCUT)
+    ))
+}
+
+/// Ярлык и `--open`: открыть окно запущенного приложения; не запущено — запустить и открыть, когда ответит.
+pub fn open_or_start(exe: &Path) {
+    let find = || {
+        (crate::api::BASE_PORT..crate::api::BASE_PORT + 10).find(|p| {
+            use std::io::{Read, Write};
+            let Ok(mut s) = std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], *p)),
+                std::time::Duration::from_millis(300),
+            ) else {
+                return false;
+            };
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+            let req = format!("GET /api/state HTTP/1.0\r\nHost: 127.0.0.1:{p}\r\n\r\n");
+            let mut buf = String::new();
+            s.write_all(req.as_bytes()).is_ok()
+                && s.take(4096).read_to_string(&mut buf).is_ok()
+                && buf.contains("\"version\"")
+        })
+    };
+    if let Some(p) = find() {
+        open_url(&format!("http://127.0.0.1:{p}/#now"));
+        return;
+    }
+    if spawn_detached(exe, &["--tray"]).is_err() {
+        return;
+    }
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(p) = find() {
+            open_url(&format!("http://127.0.0.1:{p}/#now"));
+            return;
+        }
+    }
+}
+
 /// Открывает файл или папку программой по умолчанию.
 pub fn open(path: &Path) {
     let _ = std::process::Command::new("explorer")

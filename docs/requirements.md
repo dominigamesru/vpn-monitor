@@ -16,7 +16,7 @@
 
 ## 2. Поставка и обновление ([ADR 0004](adr/0004-delivery-github-releases.md))
 - R2.1 Релизы — GitHub Releases публичного репо `dominigamesru/vpn-monitor`: `vX.Y.Z` — exe, настройки этой версии,
-  `SHA256SUMS`; `latest` — только `latest.version`. Собирает и публикует CI (GitHub Actions), релиз не меняется.
+  `sha256` (до 0.5.4 — `SHA256SUMS`); `latest` — только `latest.version`. Собирает и публикует CI (GitHub Actions), релиз не меняется.
 - R2.2 Раз в 5 минут и при старте приложение читает `latest.version`; не совпадает со своей версией (новее или старше)
   — качает exe и настройки этой версии в папку установки, сверяет SHA-256, переписывает автозапуск, перезапускается.
 - R2.3 Откат — записать старую версию в `latest.version` (workflow `promote`), без пересборки.
