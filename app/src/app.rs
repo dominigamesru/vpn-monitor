@@ -435,7 +435,14 @@ fn spawn_updater(
         let mut failed: Option<(String, u32)> = None;
         std::thread::sleep(Duration::from_secs(10));
         loop {
-            match update::fetch_latest_version(&base) {
+            let (channel, paused) = {
+                let sh = lock(&shared);
+                (
+                    sh.prefs.channel.clone(),
+                    sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+                )
+            };
+            match update::fetch_channel_version(&base, &channel) {
                 Ok(latest) => {
                     info!("update", "последняя версия {latest}, своя {VERSION}");
                     let _ = proxy.send_event(UserEvent::LatestVersion(latest.clone()));
@@ -448,7 +455,8 @@ fn spawn_updater(
                         .as_ref()
                         .filter(|(v, _)| *v == latest)
                         .map_or(0, |(_, n)| *n);
-                    if update::needs_update(VERSION, &latest) && tries < 3 {
+                    // во время паузы не обновляемся: сотрудник, скорее всего, на звонке
+                    if update::needs_update(VERSION, &latest) && tries < 3 && !paused {
                         match apply_update(&base, &latest, &dir) {
                             Ok(exe) => {
                                 let _ = proxy.send_event(UserEvent::RestartInto(exe));

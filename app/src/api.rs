@@ -16,6 +16,7 @@ use vpn_monitor::{VERSION, diag, error, info, log};
 
 const PAGE: &str = include_str!("../web/index.html");
 const HELP: &str = include_str!("../web/api-help.md");
+const CHANGELOG: &str = include_str!("../CHANGELOG.md");
 pub const BASE_PORT: u16 = 5151;
 
 /// Поднимает сервер в фоне; возвращает адрес окна.
@@ -151,9 +152,42 @@ fn handle(
             json_resp(&json!({"started": !busy, "checking": true}), 202)
         }
         (Method::Post, "/api/update") => {
-            info!("api", "проверка обновления по запросу");
-            let _ = update_now.send(());
-            json_resp(&json!({"started": true}), 202)
+            // {"install": true} — поставить сейчас; без него — только узнать, есть ли обновление (ответ на месте)
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let (base, channel) = {
+                let sh = lock(shared);
+                (
+                    sh.settings.release_base_url.clone(),
+                    sh.prefs.channel.clone(),
+                )
+            };
+            if v["install"].as_bool() == Some(true) {
+                info!("api", "установка обновления по запросу");
+                let _ = update_now.send(());
+                json_resp(&json!({"installing": true}), 202)
+            } else {
+                match vpn_monitor::update::fetch_channel_version(&base, &channel) {
+                    Ok(latest) => {
+                        info!(
+                            "api",
+                            "проверка обновления: канал {channel}, последняя {latest}"
+                        );
+                        lock(shared).latest = Some(latest.clone());
+                        json_resp(
+                            &json!({"current": VERSION, "latest": latest, "channel": channel,
+                            "available": vpn_monitor::update::needs_update(VERSION, &latest)}),
+                            200,
+                        )
+                    }
+                    Err(e) => json_resp(
+                        &json!({"current": VERSION, "channel": channel, "error": e}),
+                        200,
+                    ),
+                }
+            }
+        }
+        (Method::Get, "/api/changes") => {
+            Response::from_string(CHANGELOG).with_header(ctype("text/markdown; charset=utf-8"))
         }
         (Method::Get, "/api/credentials") => json_resp(&credentials(), 200),
         (Method::Get, "/api/prefs") => json_resp(
