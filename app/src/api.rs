@@ -12,7 +12,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use vpn_monitor::metrics::local_day_start;
 use vpn_monitor::probe::ProbeResult;
 use vpn_monitor::secrets::Secrets;
-use vpn_monitor::{VERSION, diag, error, info, log};
+use vpn_monitor::{VERSION, diag, error, info, log, warn};
 
 const PAGE: &str = include_str!("../web/index.html");
 const HELP: &str = include_str!("../web/api-help.md");
@@ -139,6 +139,19 @@ fn handle(
     let mut body = String::new();
     if method == Method::Post {
         let _ = req.as_reader().take(64 * 1024).read_to_string(&mut body);
+    }
+    if method == Method::Post && path == "/api/support" {
+        // заявка в Jira Service Desk (ADR 0013): сеть до 30 с на запрос — отвечаем из своего потока
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let resp = match support_create(&shared, &v) {
+                Ok(c) => json_resp(&json!({"created": c}), 200),
+                Err(e) => json_resp(&json!({"error": e}), 200),
+            };
+            let _ = req.respond(resp);
+        });
+        return Ok(());
     }
     if method == Method::Post && path == "/api/credentials" {
         // проверка логина на сервисах — до ~15 с; отвечаем из своего потока, чтобы окно не замирало
@@ -376,6 +389,14 @@ fn handle(
             }
             Err(e) => json_resp(&json!({"error": e}), 500),
         },
+        (Method::Get, "/api/support") => json_resp(&support_draft(shared), 200),
+        (Method::Get, "/api/tickets") => {
+            let dir = lock(shared).dir.clone();
+            json_resp(
+                &json!({"tickets": vpn_monitor::jsm::load_tickets(&dir)}),
+                200,
+            )
+        }
         (Method::Get, "/api/diagnostics") => {
             let sh = lock(shared);
             json_resp(&json!({"running": sh.diag_running, "report": sh.diag}), 200)
@@ -902,4 +923,120 @@ impl vpn_monitor::mcp::Data for McpData {
     fn version(&self) -> String {
         VERSION.to_string()
     }
+}
+
+/// Файлы для заявки: сводка, диагностика (если запускали), хвост лога — без паролей и токенов.
+fn support_files(shared: &SharedRef, summary: &str) -> Vec<(String, Vec<u8>)> {
+    let mut files = vec![("svodka.txt".to_string(), summary.as_bytes().to_vec())];
+    if let Some(d) = lock(shared).diag.clone() {
+        files.push((
+            "diagnostika.json".into(),
+            serde_json::to_string_pretty(&d)
+                .unwrap_or_default()
+                .into_bytes(),
+        ));
+    }
+    let log = tail_log(2000);
+    if !log.is_empty() {
+        files.push(("vpn-monitor.log".into(), log.into_bytes()));
+    }
+    files
+}
+
+/// Черновик заявки для окна: можно ли отправить из приложения, тема, описание, какие файлы приложатся.
+fn support_draft(shared: &SharedRef) -> Value {
+    let url = lock(shared).settings.support_url.clone();
+    let portal = vpn_monitor::jsm::parse_portal(&url);
+    let login = vpn_monitor::creds::load_ad().map(|c| c.login);
+    let text = summary(shared);
+    let state = text
+        .lines()
+        .find_map(|l| l.strip_prefix("Состояние: "))
+        .and_then(|l| l.split(';').next())
+        .unwrap_or("нужна помощь с VPN");
+    let files = support_files(shared, &text);
+    json!({
+        "available": portal.is_some() && login.is_some(),
+        "reason": if portal.is_none() { "адрес поддержки — не портал Jira Service Desk" } else if login.is_none() { "войдите с учётной записью AD" } else { "" },
+        "portal_url": url,
+        "login": login,
+        "summary": format!("VPN Monitor: {state}"),
+        "description": text,
+        "priority": "Low",
+        "files": files.iter().map(|(n, c)| json!({"name": n, "bytes": c.len()})).collect::<Vec<_>>(),
+    })
+}
+
+fn support_create(shared: &SharedRef, v: &Value) -> Result<vpn_monitor::jsm::Created, String> {
+    let url = lock(shared).settings.support_url.clone();
+    let portal = vpn_monitor::jsm::parse_portal(&url)
+        .ok_or("адрес поддержки — не портал Jira Service Desk")?;
+    let ad = vpn_monitor::creds::load_ad().ok_or("войдите с учётной записью AD")?;
+    let title: String = v["summary"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(250)
+        .collect();
+    if title.is_empty() {
+        return Err("Напишите тему заявки.".into());
+    }
+    let description: String = v["description"]
+        .as_str()
+        .unwrap_or("")
+        .chars()
+        .take(30_000)
+        .collect();
+    let priority = v["priority"]
+        .as_str()
+        .filter(|p| ["Low", "Medium", "High"].contains(p));
+    let want: Vec<&str> = v["attach"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+        .unwrap_or_default();
+    let files: Vec<(String, Vec<u8>)> = support_files(shared, &summary(shared))
+        .into_iter()
+        .filter(|(n, _)| want.contains(&n.as_str()))
+        .collect();
+    let r = vpn_monitor::jsm::create(
+        &portal,
+        &ad.login,
+        &ad.password,
+        &title,
+        &description,
+        priority,
+        &files,
+    );
+    match &r {
+        Ok(c) => {
+            info!(
+                "support",
+                "заявка {} создана, вложений {} из {}",
+                c.key,
+                files.len() - c.attach_failed.len(),
+                files.len()
+            );
+            let dir = lock(shared).dir.clone();
+            let t = vpn_monitor::jsm::Ticket {
+                key: c.key.clone(),
+                url: c.url.clone(),
+                summary: title.clone(),
+                created_ms: vpn_monitor::metrics::now_ms() as i64,
+            };
+            if let Err(e) = vpn_monitor::jsm::save_ticket(&dir, t) {
+                warn!(
+                    "support",
+                    "не записать {}: {e}",
+                    vpn_monitor::jsm::TICKETS_FILE
+                );
+            }
+            // заявка открывается в браузере — сотрудник видит её в портале и может дописать
+            if c.url.starts_with("https://") {
+                win::open_url(&c.url);
+            }
+        }
+        Err(e) => warn!("support", "заявка не создана: {e}"),
+    }
+    r
 }

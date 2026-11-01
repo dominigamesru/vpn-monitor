@@ -3,6 +3,12 @@
 Rust, один exe без рантаймов ([ADR 0001](adr/0001-rust.md)). Требования — [requirements.md](requirements.md), поставка —
 [ADR 0004](adr/0004-delivery-github-releases.md).
 
+## v0.7.2
+- **Запрос в Jira Service Desk** ([ADR 0013](adr/0013-jira-service-desk-requests.md), `src/jsm.rs`): черновик
+  (`GET /api/support`), отправка от имени сотрудника входом AD (`POST /api/support`, вложения — сводка, диагностика,
+  лог), запрос открывается в браузере и пишется в `jira-tickets.json` (список «Мои запросы» в «Настройках»,
+  `GET /api/tickets`). Кнопка «Поддержка в Jira» в меню у иконки → окно `#settings/diagnostics`.
+
 ## v0.7.1
 - **Локальный MCP** ([ADR 0012](adr/0012-local-mcp-server.md), `src/mcp.rs`): `POST /mcp`, инструменты `vpn_status`,
   `vpn_history`, `vpn_check`, `vpn_report`, `vpn_diagnostics`, ресурсы `vpn://status`, `vpn://report.html`. Вкладка

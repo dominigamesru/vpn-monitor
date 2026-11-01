@@ -393,13 +393,15 @@ pub fn run(replace: bool, first_run: bool) {
                                 f.hide();
                             }
                         } else if let Some(tab) = msg.strip_prefix("open:") {
-                            // окно в браузере на нужной вкладке: history, conn
+                            // окно в браузере на нужной вкладке и разделе: history, settings, settings/diagnostics
                             if let Some(f) = flyout.as_mut() {
                                 f.hide();
                             }
                             if let Some(url) = &api_url {
-                                let tab: String =
-                                    tab.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                                let tab: String = tab
+                                    .chars()
+                                    .filter(|c| c.is_ascii_alphanumeric() || *c == '/' || *c == '-')
+                                    .collect();
                                 win::open_url(&format!("{url}#{tab}"));
                             }
                         } else if msg == "quit" {
