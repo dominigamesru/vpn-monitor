@@ -24,6 +24,8 @@ pub trait Data {
     /// Отчёт HTML (тёмная и светлая тема) — для показа агентом.
     fn report_html(&self) -> String;
     fn version(&self) -> String;
+    /// Уведомление Windows сотруднику (заголовок, текст, ссылка https) — агент привлекает внимание (v0.9).
+    fn notify(&self, title: &str, text: &str, link: Option<&str>) -> String;
 }
 
 fn tools() -> Value {
@@ -42,6 +44,14 @@ fn tools() -> Value {
         {"name": "vpn_report", "title": "Отчёт для поддержки",
          "description": "Полный отчёт для запроса в поддержку: сводка (пользователь, состояние, сервисы, клиенты VPN, профиль), советы, диагностика и хвост лога. Без паролей и токенов.",
          "inputSchema": no_args, "annotations": {"readOnlyHint": true}},
+        {"name": "vpn_notify", "title": "Уведомить сотрудника",
+         "description": "Показывает уведомление Windows на компьютере сотрудника: заголовок, текст и необязательная ссылка (https) — кнопка «Открыть». Чтобы привлечь внимание: задача готова, нужен ответ, что-то сломалось.",
+         "inputSchema": {"type": "object", "properties": {
+             "title": {"type": "string", "description": "заголовок, до 80 символов"},
+             "text": {"type": "string", "description": "текст, до 300 символов"},
+             "link": {"type": "string", "description": "ссылка https:// — откроется по кнопке «Открыть» или клику"}},
+           "required": ["title"], "additionalProperties": false},
+         "annotations": {"readOnlyHint": false, "idempotentHint": false, "destructiveHint": false}},
         {"name": "vpn_diagnostics", "title": "Диагностика подключения",
          "description": "Шаги проверки каждого сервиса: DNS, соединение, вход, что сделать.",
          "inputSchema": no_args, "annotations": {"readOnlyHint": true}},
@@ -133,6 +143,26 @@ pub fn handle(req: &Value, data: &dyn Data) -> Option<Value> {
                     )),
                 ),
                 "vpn_diagnostics" => ok(&id, text(pretty(&data.diagnostics()))),
+                "vpn_notify" => {
+                    let title: String = args["title"]
+                        .as_str()
+                        .unwrap_or("")
+                        .trim()
+                        .chars()
+                        .take(80)
+                        .collect();
+                    if title.is_empty() {
+                        return Some(err(&id, -32602, "нужен title"));
+                    }
+                    let body: String = args["text"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(300)
+                        .collect();
+                    let link = args["link"].as_str().filter(|l| l.starts_with("https://"));
+                    ok(&id, text(data.notify(&title, &body, link)))
+                }
                 _ => err(&id, -32602, &format!("неизвестный инструмент: {name}")),
             }
         }
@@ -194,6 +224,12 @@ mod tests {
         fn version(&self) -> String {
             "0.7.1".into()
         }
+        fn notify(&self, title: &str, _: &str, link: Option<&str>) -> String {
+            format!(
+                "показано: {title}{}",
+                link.map(|l| format!(" ({l})")).unwrap_or_default()
+            )
+        }
     }
 
     fn call(body: Value) -> Value {
@@ -221,6 +257,7 @@ mod tests {
                 "vpn_history",
                 "vpn_check",
                 "vpn_report",
+                "vpn_notify",
                 "vpn_diagnostics"
             ]
         );
@@ -260,6 +297,14 @@ mod tests {
             json!({"jsonrpc": "2.0", "id": 6, "method": "resources/read", "params": {"uri": "vpn://report.html"}}),
         );
         assert_eq!(r["result"]["contents"][0]["mimeType"], "text/html");
+        let r = call(
+            json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "vpn_notify", "arguments": {"title": "Сборка готова", "link": "http://bad"}}}),
+        );
+        assert_eq!(r["result"]["content"][0]["text"], "показано: Сборка готова"); // не https — без ссылки
+        let r = call(
+            json!({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "vpn_notify", "arguments": {}}}),
+        );
+        assert_eq!(r["error"]["code"], -32602);
     }
 
     #[test]

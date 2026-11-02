@@ -56,6 +56,9 @@ pub struct Shared {
     pub office_keys: Option<Vec<String>>,
     pub office_at: Option<i64>,
     pub city_at: Option<std::time::Instant>,
+    /// Сообщения админов к показу (v0.9) и последний разобранный файл (для пересчёта после «Закрыть»).
+    pub announce: Vec<vpn_monitor::announce::Shown>,
+    pub announce_file: vpn_monitor::announce::File,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -197,6 +200,8 @@ pub fn run(replace: bool, first_run: bool) {
         snapshot: None,
         city: None,
         city_at: None,
+        announce: vec![],
+        announce_file: Default::default(),
         checking: false,
         latest: None,
         update_error: None,
@@ -220,7 +225,7 @@ pub fn run(replace: bool, first_run: bool) {
             let creds = vpn_monitor::secrets::Secrets::load(&crate::secrets_path(&dir));
             if first_run && creds.ad_login().is_none() && creds.get("CONFLUENCE_TOKEN").is_none() {
                 info!("tray", "входа нет — открываю окно на вкладке «Подключение»");
-                win::open_url(&format!("{url}#settings"));
+                win::open_url(&format!("{url}#welcome")); // v0.9: три шага первого запуска
             }
             lock(&shared).api_url = Some(url);
         }
@@ -236,8 +241,10 @@ pub fn run(replace: bool, first_run: bool) {
         proxy.clone(),
         shared.clone(),
     );
+    let settings_base_url = base_settings.release_base_url.clone();
     spawn_office(base_settings, dir.clone(), shared.clone());
     spawn_tickets(dir.clone(), shared.clone());
+    spawn_announce(settings_base_url.clone(), dir.clone(), shared.clone());
     spawn_updater(
         settings.clone(),
         dir.clone(),
@@ -393,6 +400,14 @@ pub fn run(replace: bool, first_run: bool) {
                             if let Some(f) = flyout.as_mut() {
                                 f.hide();
                             }
+                        } else if let Some(u) = msg.strip_prefix("url:") {
+                            // ссылка из сообщения админов (v0.9) — только https
+                            if u.starts_with("https://") {
+                                if let Some(f) = flyout.as_mut() {
+                                    f.hide();
+                                }
+                                win::open_url(u);
+                            }
                         } else if let Some(tab) = msg.strip_prefix("open:") {
                             // окно в браузере на нужной вкладке и разделе: history, settings, settings/diagnostics
                             if let Some(f) = flyout.as_mut() {
@@ -515,12 +530,17 @@ fn spawn_checker(
                 m.grace_until = Some(std::time::Instant::now() + Duration::from_secs(120));
             }
             let _ = proxy.send_event(UserEvent::Checking);
+            // своя норма — для текущей сети (v0.9): дома, в отеле и через телефон нормы разные
+            let net_now = vpn_monitor::netctx::current().name;
             {
                 let mut sh = lock(&shared);
                 sh.checking = true;
-                m.baseline = sh
-                    .store
-                    .baseline(&sh.settings.thresholds, m.last_client.as_deref());
+                m.baseline = sh.store.baseline_for(
+                    &sh.settings.thresholds,
+                    m.last_client.as_deref(),
+                    (!net_now.is_empty()).then_some(net_now.as_str()),
+                    &sh.prefs.forgot_nets,
+                );
             }
             let snap = m.run_check(manual);
             manual = false;
@@ -623,6 +643,69 @@ fn observation(s: &Snapshot) -> vpn_monitor::notify::Observation {
 
 /// Удалённые настройки (v0.7): раз в 5 минут — office.json из релиза `latest`; поменялся — наложить на свои
 /// настройки, сохранить копию, отдать проверке и окну. Файла нет — свои настройки.
+/// Сообщения админов (v0.9, ADR 0014): `announce.json` из релиза `latest` раз в 5 минут; копия — в папке установки
+/// (показать сразу после запуска без сети). Новое и «решено» — уведомление Windows всем.
+fn spawn_announce(base_url: String, dir: PathBuf, shared: SharedRef) {
+    std::thread::spawn(move || {
+        let path = dir.join(vpn_monitor::announce::FILE);
+        let mut last_err = String::new();
+        let mut text = std::fs::read_to_string(&path).ok();
+        loop {
+            match vpn_monitor::announce::fetch(&base_url) {
+                Ok(Some(t)) => {
+                    if text.as_deref() != Some(t.as_str()) {
+                        let _ = std::fs::write(&path, &t);
+                    }
+                    text = Some(t);
+                    last_err.clear();
+                }
+                Ok(None) => {
+                    let _ = std::fs::remove_file(&path);
+                    text = None;
+                    last_err.clear();
+                }
+                Err(e) => {
+                    if e != last_err {
+                        warn!("announce", "сообщения админов не скачать: {e}");
+                        last_err = e;
+                    }
+                }
+            }
+            let file = match text.as_deref().map(vpn_monitor::announce::parse) {
+                Some(Ok(f)) => f,
+                Some(Err(e)) => {
+                    warn!("announce", "{e}");
+                    Default::default()
+                }
+                None => Default::default(),
+            };
+            let toasts = {
+                let mut sh = lock(&shared);
+                let before = sh.prefs.announce.clone();
+                let (shown, toasts) = vpn_monitor::announce::select(
+                    &file,
+                    &mut sh.prefs.announce,
+                    vpn_monitor::metrics::now_ms(),
+                );
+                if sh.prefs.announce != before {
+                    let d = sh.dir.clone();
+                    let _ = sh.prefs.save(&d);
+                }
+                sh.announce = shown;
+                sh.announce_file = file;
+                toasts
+            };
+            for t in toasts {
+                info!("announce", "сообщение админов: {}", t.title);
+                if let Err(e) = win::toast(&t.title, &t.body) {
+                    warn!("announce", "{e}");
+                }
+            }
+            std::thread::sleep(vpn_monitor::announce::PERIOD);
+        }
+    });
+}
+
 /// Статусы заявок в поддержку (v0.8): раз в 15 минут спрашиваем Jira о нерешённых, смена — уведомление.
 /// Заявок нет или все решены — сеть не трогаем.
 fn spawn_tickets(dir: PathBuf, shared: SharedRef) {

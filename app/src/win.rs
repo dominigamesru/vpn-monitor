@@ -315,6 +315,31 @@ pub fn register_notifications(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Уведомление Windows со ссылкой (v0.9): кнопка «Открыть» и клик по уведомлению открывают ссылку (только https).
+pub fn toast_link(title: &str, body: &str, link: Option<&str>) -> Result<(), String> {
+    let Some(url) = link
+        .filter(|u| u.starts_with("https://"))
+        .map(str::to_string)
+    else {
+        return toast(title, body);
+    };
+    let u2 = url.clone();
+    tauri_winrt_notification::Toast::new(AUMID)
+        .title(title)
+        .text1(body)
+        .add_button("Открыть", &url)
+        .on_activated(move |action| {
+            let target = action
+                .filter(|a| a.starts_with("https://"))
+                .unwrap_or_else(|| u2.clone());
+            open_url(&target);
+            Ok(())
+        })
+        .duration(tauri_winrt_notification::Duration::Long)
+        .show()
+        .map_err(|e| format!("уведомление: {e:?}"))
+}
+
 /// Показывает уведомление Windows.
 pub fn toast(title: &str, body: &str) -> Result<(), String> {
     tauri_winrt_notification::Toast::new(AUMID)

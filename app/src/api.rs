@@ -383,6 +383,9 @@ fn handle(
                     }
                 }
             }
+            if let Some(b) = v["onboarded"].as_bool() {
+                sh.prefs.onboarded = b;
+            }
             if let Some(seen) = v["last_seen_version"].as_str() {
                 sh.prefs.last_seen_version = Some(seen.chars().take(20).collect());
             }
@@ -427,6 +430,76 @@ fn handle(
             Err(e) => json_resp(&json!({"error": e}), 500),
         },
         (Method::Get, "/api/support") => json_resp(&support_draft(shared), 200),
+        (Method::Post, "/api/notify/test") => {
+            // «Показать тестовое уведомление» в «Настройках» (v0.9) — проверить, что Windows их не прячет
+            let r = win::toast_link(
+                "Domini VPN Monitor — тестовое уведомление",
+                "Так выглядят уведомления: о VPN, запросах в Jira и сообщениях админов.",
+                None,
+            );
+            info!(
+                "api",
+                "тестовое уведомление: {}",
+                if r.is_ok() {
+                    "показано"
+                } else {
+                    "не показано"
+                }
+            );
+            json_resp(&json!({"ok": r.is_ok(), "error": r.err()}), 200)
+        }
+        (Method::Get, "/api/networks") => {
+            // «Ваши сети» (v0.9): статистика за неделю, свежие первыми; забытые — с отметкой
+            let sh = lock(shared);
+            let week = sh
+                .store
+                .since(vpn_monitor::metrics::now_ms() - 7 * 86_400_000);
+            json_resp(
+                &json!({"networks": vpn_monitor::metrics::networks(&week), "forgot": sh.prefs.forgot_nets}),
+                200,
+            )
+        }
+        (Method::Post, "/api/networks/forget") => {
+            let name = serde_json::from_str::<Value>(&body).ok().and_then(|v| {
+                v["name"]
+                    .as_str()
+                    .map(|n| n.chars().take(64).collect::<String>())
+            });
+            let mut sh = lock(shared);
+            if let Some(n) = name.filter(|n| !n.is_empty()) {
+                info!("net", "забыть сеть: норма начнётся заново");
+                sh.prefs
+                    .forgot_nets
+                    .insert(n, vpn_monitor::metrics::now_ms());
+                let d = sh.dir.clone();
+                let _ = sh.prefs.save(&d);
+            }
+            json_resp(&json!({"forgot": sh.prefs.forgot_nets}), 200)
+        }
+        (Method::Post, "/api/announce/dismiss") => {
+            // крестик на плашке сообщения админов: ключ `id` или `id:resolved`
+            let key = serde_json::from_str::<Value>(&body).ok().and_then(|v| {
+                v["key"]
+                    .as_str()
+                    .map(|k| k.chars().take(200).collect::<String>())
+            });
+            let mut sh = lock(shared);
+            if let Some(k) = key
+                && !sh.prefs.announce.dismissed.contains(&k)
+            {
+                sh.prefs.announce.dismissed.push(k);
+                let file = sh.announce_file.clone();
+                let (shown, _) = vpn_monitor::announce::select(
+                    &file,
+                    &mut sh.prefs.announce,
+                    vpn_monitor::metrics::now_ms(),
+                );
+                sh.announce = shown;
+                let d = sh.dir.clone();
+                let _ = sh.prefs.save(&d);
+            }
+            json_resp(&json!({"announce": sh.announce}), 200)
+        }
         (Method::Get, "/api/tickets") => {
             let dir = lock(shared).dir.clone();
             json_resp(
@@ -772,6 +845,7 @@ fn state(shared: &SharedRef) -> Value {
             "waking": sn.waking, "lite": sn.lite,
             "internet_latency": sn.internet_latency_ms, "overhead": sn.overhead_ms, "share": sn.share,
             "route": sn.route, "full": sn.full, "took_ms": sn.took_ms,
+            "net": sn.net, "call": sn.call,
             "advice": vpn_monitor::advice::advice(sn.route.as_ref(), &sn.targets,
                 sn.client.as_ref().map(|c| c.name.as_str()).unwrap_or("клиент VPN"),
                 matches!(v.badge, vpn_monitor::score::Badge::Captive)),
@@ -817,6 +891,7 @@ fn state(shared: &SharedRef) -> Value {
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
         "city": sh.city,
         "support_url": s.support_url,
+        "announce": sh.announce,
         "office": {"keys": sh.office_keys, "at_ms": sh.office_at},
         "services": services,
         // когда поставлена эта версия: время файла exe (скачан при обновлении)
@@ -960,6 +1035,20 @@ impl vpn_monitor::mcp::Data for McpData {
     fn version(&self) -> String {
         VERSION.to_string()
     }
+    fn notify(&self, title: &str, text: &str, link: Option<&str>) -> String {
+        info!("mcp", "агент показал уведомление: {title}");
+        match win::toast_link(title, text, link) {
+            Ok(()) => format!(
+                "Уведомление показано: «{title}»{}",
+                if link.is_some() {
+                    " (со ссылкой)"
+                } else {
+                    ""
+                }
+            ),
+            Err(e) => format!("Не удалось показать уведомление: {e}"),
+        }
+    }
 }
 
 /// Файлы для заявки: сводка, диагностика (если запускали), хвост лога — без паролей и токенов.
@@ -977,6 +1066,14 @@ fn support_files(shared: &SharedRef, summary: &str) -> Vec<(String, Vec<u8>)> {
     if !log.is_empty() {
         files.push(("vpn-monitor.log".into(), log.into_bytes()));
     }
+    // история проверок за неделю (v0.9) — zip: в ней имена сетей, сотрудник видит это в окне запроса
+    let dir = lock(shared).dir.clone();
+    if let Ok(m) = std::fs::read(dir.join("metrics_7d.json")) {
+        files.push((
+            "metrics_7d.zip".into(),
+            vpn_monitor::zipfile::one("metrics_7d.json", &m),
+        ));
+    }
     files
 }
 
@@ -992,13 +1089,23 @@ fn support_draft(shared: &SharedRef) -> Value {
         .and_then(|l| l.split(';').next())
         .unwrap_or("нужна помощь с VPN");
     let files = support_files(shared, &text);
+    // описание = сводка + сети за неделю (v0.9)
+    let week = lock(shared)
+        .store
+        .since(vpn_monitor::metrics::now_ms() - 7 * 86_400_000);
+    let nets = vpn_monitor::metrics::networks(&week);
+    let description = if nets.is_empty() {
+        text.clone()
+    } else {
+        format!("{text}\n\n{}", vpn_monitor::metrics::networks_text(&nets))
+    };
     json!({
         "available": portal.is_some() && login.is_some(),
         "reason": if portal.is_none() { "адрес поддержки — не портал Jira Service Desk" } else if login.is_none() { "войдите с учётной записью AD" } else { "" },
         "portal_url": url,
         "login": login,
         "summary": format!("VPN Monitor: {state}"),
-        "description": text,
+        "description": description,
         "priority": "Low",
         "files": files.iter().map(|(n, c)| json!({"name": n, "bytes": c.len(), "preview": preview(n, c)})).collect::<Vec<_>>(),
     })
@@ -1081,6 +1188,12 @@ fn support_create(shared: &SharedRef, v: &Value) -> Result<vpn_monitor::jsm::Cre
 
 /// Кусок файла для просмотра в окне заявки: у лога — последние строки (там свежее), у остальных — начало.
 fn preview(name: &str, content: &[u8]) -> String {
+    if name.ends_with(".zip") {
+        return format!(
+            "архив: metrics_7d.json, {} КБ — история проверок за неделю",
+            content.len() / 1024
+        );
+    }
     let text = String::from_utf8_lossy(content);
     let lines: Vec<&str> = text.lines().collect();
     let pick: Vec<&str> = if name.ends_with(".log") {
