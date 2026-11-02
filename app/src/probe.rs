@@ -71,7 +71,7 @@ fn min_probe_kbps() -> f64 {
 }
 
 impl ProbeResult {
-    fn new(id: &str, name: &str, role: Option<Role>, host: &str, full: bool) -> Self {
+    pub(crate) fn new(id: &str, name: &str, role: Option<Role>, host: &str, full: bool) -> Self {
         Self {
             target_id: id.into(),
             name: name.into(),
@@ -283,7 +283,7 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
                 .failed(Fail::Config, "нет адреса");
         }
     };
-    let a = auth(t.kind(), secrets);
+    let (a, url) = auth_for_url(t.kind(), secrets, url);
     let (headers, note) = (a.headers, a.missing);
     let mut r = probe_url(
         &t.id,
@@ -356,9 +356,54 @@ pub fn probe_target(t: &Target, secrets: &Secrets, full: bool) -> ProbeResult {
     {
         r.ok = false;
         r.fail = Some(Fail::Auth);
-        r.error = Some("Confluence вернул страницу входа — проверьте CONFLUENCE_TOKEN".into());
+        r.error = Some("Confluence вернул страницу входа — вход не принят: войдите логином AD заново или задайте CONFLUENCE_TOKEN".into());
     }
     r.into()
+}
+
+/// Креды и адрес для цели. 0.9.5: веб-страница Confluence логин AD (Basic) не принимает — уводит на вход, хотя REST
+/// его принимает (проверка входа ходит в `/rest/api/user/current`). С Basic качаем ту же страницу через REST, подпись
+/// входа — «… · REST» (видно в логе и окне); токен (Bearer) — как раньше, веб-страница.
+pub fn auth_for_url(kind: AuthKind, secrets: &Secrets, url: String) -> (Auth, String) {
+    let mut a = auth(kind, secrets);
+    if kind == AuthKind::Confluence
+        && a.label.starts_with("Basic")
+        && let Some(rest) = confluence_rest_url(&url)
+    {
+        a.label += " · REST";
+        return (a, rest);
+    }
+    (a, url)
+}
+
+/// Адрес страницы Confluence → та же страница через REST: `/spaces/IT/pages/37980442[/Имя]` или `?pageId=37980442` →
+/// `{origin}/rest/api/content/37980442?expand=body.storage`. Не страница — `None`.
+pub fn confluence_rest_url(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let digits = |s: &str| -> Option<String> {
+        let d: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        (!d.is_empty()).then_some(d)
+    };
+    let id = if let Some(i) = path.find("pageId=") {
+        digits(&path[i + 7..])
+    } else {
+        let parts: Vec<&str> = path.split(['/', '?']).collect();
+        parts
+            .iter()
+            .position(|p| *p == "pages")
+            .and_then(|i| parts.get(i + 1))
+            .and_then(|p| digits(p).filter(|d| d.len() == p.len()))
+    }?;
+    // контекст приложения (`/wiki/spaces/…`, `/wiki/pages/viewpage.action`) сохраняем
+    let path = format!("/{path}");
+    let ctx = ["/spaces/", "/pages/viewpage.action", "/display/"]
+        .iter()
+        .find_map(|m| path.find(m))
+        .map_or("", |i| &path[..i]);
+    Some(format!(
+        "{scheme}://{host}{ctx}/rest/api/content/{id}?expand=body.storage"
+    ))
 }
 
 /// `svn info` по HTTP: PROPFIND Depth 0 с тем же входом. Ответ 207 Multi-Status — SVN отвечает как SVN.
@@ -680,6 +725,26 @@ pub fn base64(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confluence_page_to_rest() {
+        // адрес из settings.json заказчика: страница не принимает Basic (AD), REST — принимает
+        let rest =
+            "https://confluence.corp.dominigames.com/rest/api/content/37980442?expand=body.storage";
+        for u in [
+            "https://confluence.corp.dominigames.com/spaces/IT/pages/37980442",
+            "https://confluence.corp.dominigames.com/spaces/IT/pages/37980442/VPN+test",
+            "https://confluence.corp.dominigames.com/pages/viewpage.action?pageId=37980442",
+        ] {
+            assert_eq!(confluence_rest_url(u).as_deref(), Some(rest), "{u}");
+        }
+        assert_eq!(
+            confluence_rest_url("https://h/wiki/spaces/IT/pages/42").as_deref(),
+            Some("https://h/wiki/rest/api/content/42?expand=body.storage")
+        );
+        assert_eq!(confluence_rest_url("https://h/display/IT/Home"), None);
+        assert_eq!(confluence_rest_url("https://h/spaces/IT/pages/abc"), None);
+    }
 
     #[test]
     fn base64_rfc4648() {

@@ -19,7 +19,7 @@ paths: ["app/web/**", "docs/**/*.html", "scripts/screens.py"]
 - **`replaceChildren(..., null)` вставляет текст «null»** — фильтровать `null` перед вставкой.
 - **Тема:** токены на `:root`, тёмные — в `@media (prefers-color-scheme: dark)` под `:root:not([data-theme="light"])`
   и в `:root[data-theme="dark"]`; выбор сотрудника — `user.json` → `theme`.
-- **Данные из API — только `textContent`**, меняющие запросы — `POST` с `X-VPN-Monitor: 1`, пороги — из
+- **Данные из API — только `textContent`**, меняющие запросы — `POST` с `X-Domini-VPN-Monitor: 1`, пороги — из
   `/api/state` (`thresholds`), не зашивать.
 - **Страницы встроены в exe и отдаются с `Cache-Control: no-store`** — папка данных WebView2 одна на все версии.
 - **Галерея** `docs/screens.html` собирается `python scripts/screens.py`; CI (`--check`) падает, если страницы

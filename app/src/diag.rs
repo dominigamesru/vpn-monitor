@@ -207,7 +207,8 @@ fn diag_url(
     secrets: &Secrets,
     adapters: &[Adapter],
 ) -> TargetDiag {
-    let a = crate::probe::auth(auth, secrets);
+    let (a, url) = crate::probe::auth_for_url(auth, secrets, url.to_string());
+    let url = url.as_str();
     let (headers, auth_name, missing) = (a.headers, a.label, a.missing);
     let mut d = TargetDiag {
         id: id.into(),

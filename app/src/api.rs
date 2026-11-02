@@ -1,6 +1,6 @@
 //! Локальный HTTP API и окно в браузере (R7, ADR 0005). Только `127.0.0.1`, порт 5151; занят — следующий, до 10
 //! попыток. Защита от чужих страниц: проверяется заголовок `Host`, а меняющие запросы (POST) требуют заголовка
-//! `X-VPN-Monitor: 1` — браузер не пошлёт его с чужого сайта без preflight, на который мы не отвечаем.
+//! `X-Domini-VPN-Monitor: 1` (до 0.9.5 — `X-VPN-Monitor`, его тоже принимаем) — браузер не пошлёт его с чужого сайта без preflight, на который мы не отвечаем.
 
 use crate::app::{Cmd, SharedRef, lock};
 use crate::win;
@@ -107,7 +107,7 @@ fn handle(
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
     if method == Method::Post && path == "/mcp" {
-        // MCP-клиенты (Claude Code, Desktop) не шлют X-VPN-Monitor: защита — Origin только локальный и JSON
+        // MCP-клиенты (Claude Code, Desktop) не шлют X-Domini-VPN-Monitor: защита — Origin только локальный и JSON
         let origin = header(&req, "Origin");
         let ct = header(&req, "Content-Type").unwrap_or_default();
         if !vpn_monitor::mcp::origin_allowed(origin.as_deref()) || !ct.contains("application/json")
@@ -133,10 +133,14 @@ fn handle(
         });
         return Ok(());
     }
-    if method != Method::Get && header(&req, "X-VPN-Monitor").as_deref() != Some("1") {
+    // 0.9.5: заголовок X-Domini-VPN-Monitor; старый X-VPN-Monitor принимаем — скрипты сотрудников (контракт API)
+    if method != Method::Get
+        && header(&req, "X-Domini-VPN-Monitor").as_deref() != Some("1")
+        && header(&req, "X-VPN-Monitor").as_deref() != Some("1")
+    {
         return req
             .respond(json_resp(
-                &json!({"error": "нужен заголовок X-VPN-Monitor: 1"}),
+                &json!({"error": "нужен заголовок X-Domini-VPN-Monitor: 1"}),
                 403,
             ))
             .map_err(|e| e.to_string());
@@ -874,6 +878,8 @@ fn state(shared: &SharedRef) -> Value {
         "latest": sh.latest,
         "update_error": sh.update_error,
         "checking": sh.checking,
+        // 0.9.5: ход проверки — узлы, где идёт проба, и шаги (только пока идёт проверка)
+        "progress": vpn_monitor::progress::snapshot(),
         "autostart": win::autostart_get().is_some(),
         "dir": sh.dir.display().to_string(),
         "computer": std::env::var("COMPUTERNAME").unwrap_or_default(),

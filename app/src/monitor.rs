@@ -123,6 +123,7 @@ impl Monitor {
     /// Одна проверка. `manual` — по клику: интернет мерится, только если подошёл его интервал (рейт-лимиты).
     pub fn run_check(&mut self, manual: bool) -> Snapshot {
         self.check_no += 1;
+        crate::progress::begin();
         crate::gitlab::ensure_fresh(self.settings.gitlab_oauth.as_ref());
         crate::probe::set_min_probe_kbps(self.settings.thresholds.min_probe_kbps);
         let secrets = Secrets::load(&self.secrets_path);
@@ -160,16 +161,44 @@ impl Monitor {
                 .map(|t| {
                     let secrets = &secrets;
                     sc.spawn(move || {
-                        let mut out = vec![probe::probe_target(t, secrets, false)];
+                        // ход проверки (0.9.5): меню моргает узлом и пишет шаг в полосу микроуведомлений
+                        let step = |full: bool| {
+                            let key = format!("{}{}", t.id, if full { ":full" } else { "" });
+                            crate::progress::probe_started(&key, Some(t.role), &t.name, full);
+                            let r = probe::probe_target(t, secrets, full);
+                            crate::progress::probe_done(&key, &r);
+                            r
+                        };
+                        let mut out = vec![step(false)];
                         if full_due && t.full_url.is_some() {
-                            out.push(probe::probe_target(t, secrets, true));
+                            out.push(step(true));
                         }
                         out
                     })
                 })
                 .collect();
-            let inet = internet_due.then(|| sc.spawn(|| probe::probe_internet(&s.internet)));
-            let conn = sc.spawn(|| connectivity(&s.internet.check_hosts));
+            let inet = internet_due.then(|| {
+                sc.spawn(|| {
+                    crate::progress::probe_started("internet", None, "скорость без VPN", false);
+                    let r = probe::probe_internet(&s.internet);
+                    crate::progress::probe_done("internet", &r);
+                    r
+                })
+            });
+            let conn = sc.spawn(|| {
+                crate::progress::start("conn", "inet", "Проверяю: есть ли интернет…".into());
+                let c = connectivity(&s.internet.check_hosts);
+                crate::progress::done(
+                    "conn",
+                    if c.is_some() { "good" } else { "bad" },
+                    match c {
+                        Some(ms) if ms > 0.0 => format!("✓ Интернет есть · {ms:.0} мс"),
+                        Some(_) => "✓ Интернет есть".into(),
+                        None => "✗ Интернет: проверочные адреса не отвечают".into(),
+                    },
+                );
+                c
+            });
             let results: Vec<ProbeResult> = handles
                 .into_iter()
                 .flat_map(|h| h.join().unwrap_or_default())
@@ -184,7 +213,20 @@ impl Monitor {
         for r in results.iter_mut().chain(internet.iter_mut()) {
             annotate_route(r, &self.settings);
         }
+        crate::progress::start(
+            "vpn",
+            "vpn",
+            "Определяю клиент VPN по маршруту до офиса…".into(),
+        );
         let client = detect_client(&results, &self.settings);
+        crate::progress::done(
+            "vpn",
+            if client.is_some() { "good" } else { "warn" },
+            match &client {
+                Some(c) => format!("✓ VPN: {} (адаптер «{}»)", c.name, c.adapter),
+                None => "VPN: клиент не определён".into(),
+            },
+        );
         match &client {
             Some(c) => info!(
                 "vpn",
