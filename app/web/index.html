@@ -201,6 +201,9 @@ th { color: var(--muted); font-weight: 600; } td.num { white-space: nowrap; }
 .svcstate .row2 .spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); border-right-color: transparent; animation: spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .svcstate .row2 .spin { animation: none; } }
 .svcstate .row2 small { grid-column: 2; color: var(--muted); font-size: 12px; }
+.svcstate .row2 small.now { color: var(--ink); }
+.svcstate .row2 small.now.bad { color: var(--bad); }
+.svcstate .svchead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 form.login { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 10px; align-items: end; }
 @media (max-width: 640px) { form.login { grid-template-columns: 1fr; } }
@@ -359,7 +362,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     </div>
     <div class="card">
       <details id="logBox"><summary><b>Лог</b> <span class="st">последние 300 строк</span></summary>
-        <div class="row" style="margin-top:10px"><button class="btn ghost" id="logCopy">Скопировать</button><button class="btn ghost" data-open="log">Открыть в Блокноте</button><button class="btn ghost" data-open="dir">Открыть папку</button></div>
+        <div class="row" style="margin-top:10px"><button class="btn ghost" id="logRefresh" type="button">Обновить</button><button class="btn ghost" id="logCopy">Скопировать</button><button class="btn ghost" data-open="log">Открыть в Блокноте</button><button class="btn ghost" data-open="dir">Открыть папку</button></div>
         <pre class="log" id="log"></pre>
       </details>
     </div>
@@ -481,7 +484,7 @@ const R = () => S?.snapshot?.route || null;
 const mbps = (x) => x == null ? "—" : `${num(x, x < 10 ? 1 : 0)} Мбит/с`;
 const msf = (x) => x == null ? "—" : x >= 1000 ? `${num(x / 1000, 1)} с` : `${num(x)} мс`;
 const clientName = () => S?.snapshot?.client?.name || "VPN";
-const clientFull = () => { const c = S?.snapshot?.client; return c ? `${c.name}${c.profile ? " · " + c.profile : ""}` : "клиент VPN не определён"; };
+const clientFull = () => { const c = S?.snapshot?.client; const at = c?.profile || (c?.server ? `сервер ${c.server}` : ""); return c ? `${c.name}${at ? " · " + at : ""}` : "клиент VPN не определён"; };
 const officeT = () => (S?.snapshot?.targets || []).filter((x) => x.role === "light" || x.role === "speed");
 function verdict() {
   const sn = S?.snapshot, r = R(), th = TH();
@@ -777,13 +780,26 @@ function renderConn() {
   } else { form.hidden = false; if (!S.login) host.append(el("p", { class: "sub", text: "Вход не выполнен." })); }
   // справа — по каждому сервису: каким входом проверяем и когда последний раз ответил (история за 7 дней)
   const ago = (t) => { if (!t) return "ни разу за неделю"; const m = Math.round((Date.now() - t) / 60000); return m < 2 ? "только что" : m < 60 ? `${m} мин назад` : new Date(t).toDateString() === new Date().toDateString() ? `сегодня в ${hhmm(t)}` : when(t); };
-  $("#svcState").replaceChildren(el("span", { class: "sub", style: "margin:0", text: "Подключение по сервисам" }), ...(S.services || []).map((x) => {
-    // 0.9.5: пока идёт проверка (после входа — сразу), прошлый результат устарел: крутилка вместо точки, «проверяю…»
-    const busy = !!S.checking, st = busy ? "idle" : x.ok ? "good" : x.note ? "warn" : x.ok === false ? "bad" : "idle";
+  // 0.9.6: «сейчас» — что показала последняя проверка: вход не принят (Auth) — это пароль, остальное — связь; кнопка
+  // «Обновить» — проверить сейчас, не дожидаясь расписания
+  const busy = !!S.checking, svcs = S.services || [];
+  const refresh = el("button", { class: `btn ghost sm${busy ? " busy" : ""}`, type: "button", text: busy ? "Проверяю…" : "Обновить", title: "Проверить сервисы сейчас" });
+  if (busy) refresh.disabled = true;
+  refresh.addEventListener("click", async () => { refresh.disabled = true; await api("/api/check", { method: "POST", body: "{}" }).catch(() => {}); poll(true); });
+  const now = (x) => { if (busy) return "сейчас: проверяю…"; if (x.ok) return x.note ? "сейчас: открылась страница входа — войдите" : "сейчас: отвечает, вход принят";
+    if (x.ok == null) return "сейчас: ещё не проверяли"; if (x.fail === "auth") return "сейчас: вход не принят";
+    const why = (x.error || "").replace(/\s*\(.*\)\s*$/, ""); return `сейчас: не ответил${/timeout/i.test(why) ? " — таймаут, это связь, не пароль" : why ? ` — ${why.slice(0, 70)}` : ""}`; };
+  $("#svcState").replaceChildren(el("div", { class: "svchead" }, el("span", { class: "sub", style: "margin:0", text: "Подключение по сервисам" }), refresh), ...svcs.map((x) => {
+    // 0.9.5: пока идёт проверка (после входа — сразу), прошлый результат устарел: крутилка вместо точки
+    const st = busy ? "idle" : x.ok ? (x.note ? "warn" : "good") : x.fail === "auth" ? "warn" : x.ok === false ? "bad" : "idle";
     const auth = busy && (x.note || !x.auth) ? (S.login ? "проверяю…" : "не задан") : x.note ? "не задан" : x.auth || "—";
     return el("div", { class: `row2 ${st}${busy ? " busy" : ""}` }, el("span", { class: busy ? "spin" : "dot" }), el("b", { text: x.name }),
-      el("small", { text: `вход: ${auth}` }), el("small", { text: `последний успех: ${ago(x.last_ok_ms)}` }));
+      el("small", { class: st === "bad" ? "now bad" : "now", text: now(x) }), el("small", { text: `вход: ${auth} · последний успех: ${ago(x.last_ok_ms)}` }));
   }));
+  // слева — проверка входа, справа — связь: вход принят, а сервис не отвечает — сказать прямо, что это не пароль
+  const net = !busy && svcs.filter((x) => x.ok === false && x.fail !== "auth").map((x) => x.name);
+  const lc = $("#loginChecks"); lc.querySelector(".svcnote")?.remove();
+  if (lc.childElementCount && net?.length) lc.append(el("p", { class: "sub svcnote", style: "margin:6px 0 0", text: `Вход принят. ${net.join(", ")} сейчас не ${net.length > 1 ? "отвечают" : "отвечает"} по сети — дело в связи, а не в пароле.` }));
   const views = { route: "Маршрут", dash: "Приборная панель", strip: "Лента часа" };
   const curView = S.prefs.view === "gauge" || S.prefs.view === "panel" ? "dash" : S.prefs.view;
   $("#viewChoice").replaceChildren(...Object.entries(views).map(([k, n]) => { const b = el("button", { type: "button", "aria-pressed": String(curView === k), text: n }); b.addEventListener("click", async () => { await api("/api/prefs", { method: "POST", body: JSON.stringify({ view: k }) }); poll(true); }); return b; }));
@@ -879,7 +895,9 @@ $("#updBtn").addEventListener("click", async () => { const res = $("#updRes"); r
 $("#autostart").addEventListener("change", (e) => api("/api/autostart", { method: "POST", body: JSON.stringify({ on: e.target.checked }) }));
 document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => api("/api/open", { method: "POST", body: JSON.stringify({ what: b.dataset.open }) })));
 $("#logBox").addEventListener("toggle", loadLog);
-async function loadLog() { if (!$("#logBox").open) return; $("#log").textContent = await api("/api/log?lines=300").catch(() => ""); }
+async function loadLog() { if (!$("#logBox").open) return; const lg = $("#log"); lg.textContent = await api("/api/log?lines=300").catch(() => ""); lg.scrollTop = lg.scrollHeight; }
+// 0.9.6: перечитать последние 300 строк, не закрывая блок
+$("#logRefresh").addEventListener("click", async () => { const b = $("#logRefresh"); b.disabled = true; b.classList.add("busy"); await loadLog(); b.disabled = false; b.classList.remove("busy"); });
 $("#logCopy").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#log").textContent); $("#logCopy").textContent = "Скопировано"; } catch {} setTimeout(() => { $("#logCopy").textContent = "Скопировать"; }, 2000); });
 $("#unBtn").addEventListener("click", () => { $("#unYes").hidden = false; $("#unBtn").textContent = "Отмена"; $("#unBtn").onclick = () => location.reload(); });
 $("#unYes").addEventListener("click", async () => { await api("/api/uninstall", { method: "POST", body: "{}" }); document.body.replaceChildren(el("main", {}, el("div", { class: "card" }, el("h2", { text: "VPN Monitor удалён с этого компьютера" }), el("p", { class: "sub", text: "Окно можно закрыть." })))); });
@@ -927,7 +945,7 @@ function renderWelcome() { if (!$("section[data-tab=welcome]") || $("section[dat
   const sn = S?.snapshot, r = sn?.route, svc = r?.services || [];
   const officeOk = svc.length ? svc.every((x) => x.st === "good") : false;
   const steps = [[!!S?.login, "Учётная запись AD", S?.login ? `${S.login} — Jira, Confluence и SVN приняли вход` : "Войдите — без этого Jira, Confluence и SVN не проверить", S?.login ? null : ["Войти", "#settings"]],
-    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", профиль " + sn.client.profile : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
+    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", профиль " + sn.client.profile : sn.client.server ? ", сервер " + sn.client.server : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
     [officeOk, "Офис отвечает", officeOk ? "Confluence, Jira и SVN отвечают" : S?.checking ? "Проверяю Confluence, Jira, SVN…" : "Ждём, когда офис ответит через VPN", null]];
   const firstOpen = steps.findIndex((x) => !x[0]);
   $("#wSteps").replaceChildren(...steps.map(([ok, t, d, act], i) => el("li", {}, el("span", { class: `mark ${ok ? "ok" : i === firstOpen ? "cur" : "wait"}`, text: ok ? "✓" : String(i + 1) }), el("div", {}, el("b", { text: t }), el("small", { text: d })), act ? el("a", { class: "btn ghost sm", href: act[1], text: act[0] }) : el("span"))));

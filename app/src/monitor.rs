@@ -223,7 +223,12 @@ impl Monitor {
             "vpn",
             if client.is_some() { "good" } else { "warn" },
             match &client {
-                Some(c) => format!("✓ VPN: {} (адаптер «{}»)", c.name, c.adapter),
+                Some(c) => format!(
+                    "✓ VPN: {}{} (адаптер «{}»)",
+                    c.name,
+                    c.place().map(|p| format!(" · {p}")).unwrap_or_default(),
+                    c.adapter
+                ),
                 None => "VPN: клиент не определён".into(),
             },
         );
@@ -232,10 +237,11 @@ impl Monitor {
                 "vpn",
                 "клиент VPN: {}{} (адаптер «{}»)",
                 c.name,
-                c.profile
-                    .as_deref()
-                    .map(|p| format!(", профиль «{p}»"))
-                    .unwrap_or_default(),
+                match (&c.profile, &c.server) {
+                    (Some(p), _) => format!(", профиль «{p}»"),
+                    (None, Some(s)) => format!(", сервер {s}"),
+                    _ => String::new(),
+                },
                 c.adapter
             ),
             None => info!("vpn", "клиент VPN не определён"),

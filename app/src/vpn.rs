@@ -24,6 +24,10 @@ pub struct Client {
     /// Профиль (подключение внутри клиента), если удалось прочитать.
     pub profile: Option<String>,
     pub adapter: String,
+    /// 0.9.6: сервер, к которому подключён клиент (`IP:порт`) — по соединениям его процессов; для Happ и других
+    /// клиентов, у которых профиль не прочитать.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
 }
 
 fn matches_any(text: &str, patterns: &[String]) -> bool {
@@ -34,12 +38,17 @@ fn matches_any(text: &str, patterns: &[String]) -> bool {
 }
 
 impl Client {
-    /// Ключ нормы и подпись: «Happ / Lisbon» или «Happ».
+    /// Ключ нормы и подпись: «Happ / Lisbon», «Happ / 45.12.0.7:443» или «Happ».
     pub fn key(&self) -> String {
-        match &self.profile {
+        match self.place() {
             Some(p) => format!("{} / {p}", self.name),
             None => self.name.clone(),
         }
+    }
+
+    /// Куда подключён: профиль, иначе сервер.
+    pub fn place(&self) -> Option<&str> {
+        self.profile.as_deref().or(self.server.as_deref())
     }
 }
 
@@ -82,11 +91,52 @@ pub fn detect(
             .find(|r| running(r))
             .unwrap_or(by_adapter[0]),
     };
+    let profile = profile(&rule.name);
+    // сервер — когда профиль не прочитан (Happ): по TCP-соединениям процессов клиента
+    let server = if profile.is_none() {
+        platform::server_of(&rule.processes)
+    } else {
+        None
+    };
     Some(Client {
         name: rule.name.clone(),
-        profile: profile(&rule.name),
+        profile,
         adapter: adapter.into(),
+        server,
     })
+}
+
+/// Адрес, который можно считать сервером VPN: внешний, не локальный и не подставной (fake-ip 198.18.0.0/15, 1.2.3.x
+/// у Happ — это адреса внутри туннеля).
+pub fn public_v4(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    !(ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+        || o[0] == 0
+        || (o[0] == 100 && (64..128).contains(&o[1]))
+        || (o[0] == 198 && (o[1] == 18 || o[1] == 19))
+        || (o[0] == 1 && o[1] == 2 && o[2] == 3))
+}
+
+/// Сервер VPN по соединениям: из `(pid, адрес, порт)` — соединения процессов клиента `pids` с внешними адресами;
+/// сервер — пара адрес:порт, которая встречается чаще всех (каждый поток через туннель — своё соединение до сервера,
+/// а прямые соединения клиента разбросаны по разным адресам).
+pub fn pick_server(conns: &[(u32, std::net::Ipv4Addr, u16)], pids: &[u32]) -> Option<String> {
+    let mut count: std::collections::BTreeMap<(std::net::Ipv4Addr, u16), usize> =
+        Default::default();
+    for (pid, ip, port) in conns {
+        if pids.contains(pid) && public_v4(*ip) {
+            *count.entry((*ip, *port)).or_default() += 1;
+        }
+    }
+    count
+        .into_iter()
+        .max_by_key(|(k, n)| (*n, std::cmp::Reverse(*k)))
+        .map(|((ip, port), _)| format!("{ip}:{port}"))
 }
 
 pub fn processes() -> Vec<String> {
@@ -388,6 +438,29 @@ mod platform {
     pub fn processes() -> Vec<String> {
         crate::diag::win::processes()
     }
+
+    /// Сервер клиента: процессы по именам из правила и их дочерние (ядро xray/sing-box у Happ) → TCP-соединения.
+    pub fn server_of(names: &[String]) -> Option<String> {
+        let procs = crate::diag::win::process_tree();
+        let mut pids: Vec<u32> = procs
+            .iter()
+            .filter(|(_, _, n)| names.iter().any(|x| x.eq_ignore_ascii_case(n)))
+            .map(|(p, _, _)| *p)
+            .collect();
+        // дочерние — до двух поколений
+        for _ in 0..2 {
+            let more: Vec<u32> = procs
+                .iter()
+                .filter(|(p, parent, _)| pids.contains(parent) && !pids.contains(p))
+                .map(|(p, _, _)| *p)
+                .collect();
+            pids.extend(more);
+        }
+        if pids.is_empty() {
+            return None;
+        }
+        super::pick_server(&crate::diag::win::tcp_connections(), &pids)
+    }
 }
 
 #[cfg(not(windows))]
@@ -399,11 +472,42 @@ mod platform {
     pub fn processes() -> Vec<String> {
         vec![]
     }
+    pub fn server_of(_names: &[String]) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_by_connections() {
+        use std::net::Ipv4Addr as A;
+        let srv = A::new(45, 12, 0, 7);
+        // Happ (pid 10) и ядро (pid 11): три потока к серверу, один прямой, адреса туннеля и локальные — мимо
+        let conns = vec![
+            (10, srv, 443),
+            (11, srv, 443),
+            (11, srv, 443),
+            (11, A::new(87, 250, 250, 242), 443),
+            (11, A::new(1, 2, 3, 4), 443),
+            (11, A::new(198, 18, 0, 5), 443),
+            (11, A::new(127, 0, 0, 1), 10808),
+            (11, A::new(192, 168, 1, 1), 53),
+            (99, A::new(8, 8, 8, 8), 443),
+            (99, A::new(8, 8, 8, 8), 443),
+            (99, A::new(8, 8, 8, 8), 443),
+            (99, A::new(8, 8, 8, 8), 443),
+        ];
+        assert_eq!(
+            pick_server(&conns, &[10, 11]).as_deref(),
+            Some("45.12.0.7:443")
+        );
+        assert_eq!(pick_server(&conns, &[42]), None);
+        assert!(!public_v4(A::new(100, 64, 0, 1)));
+        assert!(public_v4(A::new(100, 128, 0, 1)));
+    }
 
     fn rules() -> Vec<VpnClientRule> {
         crate::settings::Settings::embedded().vpn_clients

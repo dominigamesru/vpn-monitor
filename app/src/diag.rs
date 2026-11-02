@@ -535,6 +535,98 @@ pub(crate) mod win {
         out
     }
 
+    /// Процессы: (pid, pid родителя, имя exe в нижнем регистре) — для поиска сервера VPN (0.9.6).
+    pub fn process_tree() -> Vec<(u32, u32, String)> {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        };
+        let mut out = vec![];
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE || snap.is_null() {
+                return out;
+            }
+            let mut e = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if Process32FirstW(snap, &mut e) != 0 {
+                loop {
+                    let n = e
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(e.szExeFile.len());
+                    out.push((
+                        e.th32ProcessID,
+                        e.th32ParentProcessID,
+                        String::from_utf16_lossy(&e.szExeFile[..n]).to_lowercase(),
+                    ));
+                    if Process32NextW(snap, &mut e) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+
+    /// Установленные TCP-соединения IPv4: (pid владельца, удалённый адрес, удалённый порт). Прав админа не нужно.
+    pub fn tcp_connections() -> Vec<(u32, std::net::Ipv4Addr, u16)> {
+        use windows_sys::Win32::NetworkManagement::IpHelper::{
+            GetExtendedTcpTable, MIB_TCP_STATE_ESTAB, MIB_TCPROW_OWNER_PID,
+            TCP_TABLE_OWNER_PID_CONNECTIONS,
+        };
+        use windows_sys::Win32::Networking::WinSock::AF_INET;
+        let mut size: u32 = 0;
+        unsafe {
+            GetExtendedTcpTable(
+                std::ptr::null_mut(),
+                &mut size,
+                0,
+                AF_INET as u32,
+                TCP_TABLE_OWNER_PID_CONNECTIONS,
+                0,
+            );
+        }
+        if size == 0 {
+            return vec![];
+        }
+        // запас: между двумя вызовами соединений может стать больше
+        let mut buf = vec![0u32; (size as usize + 4096) / 4];
+        let mut size = (buf.len() * 4) as u32;
+        let rc = unsafe {
+            GetExtendedTcpTable(
+                buf.as_mut_ptr().cast(),
+                &mut size,
+                0,
+                AF_INET as u32,
+                TCP_TABLE_OWNER_PID_CONNECTIONS,
+                0,
+            )
+        };
+        if rc != 0 {
+            return vec![];
+        }
+        let n = buf[0] as usize;
+        let rows = unsafe {
+            std::slice::from_raw_parts(buf.as_ptr().add(1).cast::<MIB_TCPROW_OWNER_PID>(), n)
+        };
+        rows.iter()
+            .filter(|r| r.dwState == MIB_TCP_STATE_ESTAB as u32)
+            .map(|r| {
+                (
+                    r.dwOwningPid,
+                    std::net::Ipv4Addr::from(u32::from_be(r.dwRemoteAddr)),
+                    u16::from_be((r.dwRemotePort & 0xffff) as u16),
+                )
+            })
+            .collect()
+    }
+
     /// Имена запущенных exe (в нижнем регистре).
     pub fn processes() -> Vec<String> {
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};

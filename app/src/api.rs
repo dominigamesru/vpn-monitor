@@ -869,7 +869,11 @@ fn state(shared: &SharedRef) -> Value {
                     let last_ok = recs.iter().rev().find(|r| r.tg.get(&t.id).is_some_and(|x| x.ok)).map(|r| r.t);
                     let p = sh.snapshot.as_ref().and_then(|sn| sn.targets.iter().find(|r| r.target_id == t.id));
                     json!({"id": t.id, "name": t.name, "auth": p.map(|r| r.auth_used.clone()),
-                           "note": p.and_then(|r| r.note.clone()), "ok": p.map(|r| r.ok), "last_ok_ms": last_ok})
+                           "note": p.and_then(|r| r.note.clone()), "ok": p.map(|r| r.ok), "last_ok_ms": last_ok,
+                           // 0.9.6: что именно сейчас — вид отказа (Auth — вход, остальное — связь) и коротко почему
+                           "fail": p.and_then(|r| r.fail).map(|f| format!("{f:?}").to_lowercase()),
+                           "error": p.and_then(|r| r.error.clone()),
+                           "at_ms": sh.snapshot.as_ref().map(|sn| sn.at)})
                 })
                 .collect::<Vec<_>>()
     };

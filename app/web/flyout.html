@@ -270,7 +270,7 @@ function spark(vals) {
 }
 const raw3 = (m, f) => m?.raw?.length ? h("span", { class: "tm", text: `проверки: ${m.raw.map(f).join(" · ")} → медиана ${f(m.value)}` }) : null;
 const clientName = () => S?.snapshot?.client?.name || "VPN";
-const clientFull = () => { const c = S?.snapshot?.client; return c ? `${c.name}${c.profile ? " · " + c.profile : ""}` : "клиент VPN не определён"; };
+const clientFull = () => { const c = S?.snapshot?.client; const at = c?.profile || (c?.server ? `сервер ${c.server}` : ""); return c ? `${c.name}${at ? " · " + at : ""}` : "клиент VPN не определён"; };
 
 // ---------- состояние: вывод ----------
 function verdict() {
