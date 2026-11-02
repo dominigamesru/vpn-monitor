@@ -342,7 +342,7 @@ function tipNet() {
     : n.kind === "phone" || n.metered ? "Большие обновления SVN лучше отложить до Wi‑Fi — проверки без скачивания."
     : netNew() ? "Вы здесь впервые — через 20 проверок будет своя норма этой сети." : "Сеть в порядке.";
   return tipBox(h("div", { class: "big", text: head }),
-    kv([n.signal != null ? ["сигнал", `${n.signal}%${n.band ? " · " + n.band : ""}`] : null, n.link_mbps ? ["скорость Wi‑Fi", mbps(n.link_mbps)] : null,
+    kv([n.signal != null ? ["сигнал", `${n.signal}%${n.band ? " · " + n.band : ""}`] : null, n.link_mbps ? ["связь с роутером", `${mbps(n.link_mbps)} — это не интернет`] : null, R()?.inet?.value != null ? ["интернет", mbps(R().inet.value)] : null,
       ["норма этой сети", b?.net && b?.inet_mbps ? `интернет ${mbps(b.inet_mbps)}` : b?.net ? "есть" : "ещё копим"], n.metered ? ["лимитная сеть", "да"] : null]), bar, h("span", { text: what }));
 }
 function tipCall() {
