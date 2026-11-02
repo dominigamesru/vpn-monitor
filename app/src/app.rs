@@ -257,11 +257,45 @@ pub fn run(replace: bool, first_run: bool) {
     let mut ui: Option<Ui> = None;
     let mut flyout: Option<crate::flyout::Flyout> = None;
     let fly_proxy = proxy.clone();
+    // меню на WebView2 может не создаться при запуске (после обновления старая копия ещё держит папку WebView2) —
+    // тогда пробуем снова каждые 10 с, а пока работает системное меню (v0.9.2)
+    let mut fly_retry: Option<std::time::Instant> = None;
+    let mut fly_tries = 0u32;
+    let mut fly_last_err = String::new();
     event_loop.run(move |event, target, flow| {
+        if flyout.is_none()
+            && let (Some(u), Some(url), Some(at)) = (ui.as_ref(), api_url.as_ref(), fly_retry)
+            && at.elapsed() >= Duration::from_secs(10)
+            && fly_tries < 60
+        {
+            fly_tries += 1;
+            match crate::flyout::Flyout::new(
+                target,
+                &format!("{url}flyout"),
+                dir.join("WebView2"),
+                fly_proxy.clone(),
+                UserEvent::FlyoutIpc,
+            ) {
+                Ok(f) => {
+                    info!("tray", "меню у иконки — WebView2 (с попытки {})", fly_tries + 1);
+                    u.tray.set_show_menu_on_right_click(false);
+                    flyout = Some(f);
+                    fly_retry = None;
+                }
+                Err(e) => {
+                    if e != fly_last_err {
+                        warn!("tray", "меню на WebView2 снова не создано ({e}) — пробую через 10 с");
+                        fly_last_err = e.clone();
+                    }
+                    fly_retry = Some(std::time::Instant::now());
+                }
+            }
+        }
         // меню открыто — 4 раза в секунду смотрим, не ушёл ли человек в другое окно; иначе — раз в 5 с (пауза)
         let open = flyout.as_ref().is_some_and(|f| f.is_visible());
         *flow = ControlFlow::WaitUntil(
-            std::time::Instant::now() + Duration::from_millis(if open { 250 } else { 5000 }),
+            std::time::Instant::now()
+                + Duration::from_millis(if open { 250 } else if fly_retry.is_some() { 2000 } else { 5000 }),
         );
         if let Some(f) = flyout.as_mut()
             && f.lost_to_other_window()
@@ -294,7 +328,9 @@ pub fn run(replace: bool, first_run: bool) {
                                 flyout = Some(f);
                             }
                             Err(e) => {
-                                warn!("tray", "меню на WebView2 не создано ({e}) — системное меню")
+                                warn!("tray", "меню на WebView2 не создано ({e}) — системное меню, повторю через 10 с");
+                                fly_last_err = e.to_string();
+                                fly_retry = Some(std::time::Instant::now());
                             }
                         }
                     }
