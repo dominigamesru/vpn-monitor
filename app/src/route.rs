@@ -295,6 +295,7 @@ pub fn headline(r: &Route, client: &str) -> String {
         (Some("inet"), Some("wifi")) => "Слабый Wi‑Fi — VPN не виноват".into(),
         (Some("inet"), _) => "Медленный интернет — VPN в порядке".into(),
         (Some("vpn"), Some("off")) => format!("VPN выключен — включите {client}"),
+        (Some("vpn"), Some("stall")) => format!("{client} включён, но не пропускает трафик"),
         (Some("vpn"), Some("lat")) => format!("VPN медленный — переподключите {client}"),
         (Some("vpn"), _) => "SVN качает медленно — режет VPN".into(),
         (Some("office"), Some("auth")) => "Пароль AD не подошёл — войдите заново".into(),

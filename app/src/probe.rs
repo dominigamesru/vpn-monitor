@@ -56,6 +56,11 @@ pub struct ProbeResult {
     /// SVN и за сколько, отдельно от скорости скачивания.
     pub svn_info_ms: Option<f64>,
     pub svn_info_ok: Option<bool>,
+    /// 0.9.7: время до первого байта ответа HTTP, мс (соединение, запрос, обработка сервером). Скорость считается без
+    /// него — по времени тела ответа.
+    pub ttfb_ms: Option<f64>,
+    /// 0.9.7: DNS вернул подставной адрес туннеля (Happ, fake-ip): TCP «до цели» — это TCP до своего туннеля.
+    pub fake_ip: bool,
 }
 
 /// Минимальная скорость пробы, КБ/с (задаёт проверка из настроек; биты f64).
@@ -98,6 +103,8 @@ impl ProbeResult {
             slow_abort: false,
             svn_info_ms: None,
             svn_info_ok: None,
+            ttfb_ms: None,
+            fake_ip: false,
         }
     }
 
@@ -137,7 +144,17 @@ impl ProbeResult {
             );
         }
         if let Some(ms) = self.latency_ms {
-            s += &format!(" tcp={ms:.0}мс");
+            s += &format!(
+                " tcp={ms:.0}мс{}",
+                if self.fake_ip {
+                    "(до туннеля)"
+                } else {
+                    ""
+                }
+            );
+        }
+        if let Some(ms) = self.ttfb_ms {
+            s += &format!(" ответ={ms:.0}мс");
         }
         if let Some(c) = self.http_status {
             s += &format!(" http={c} auth={}", self.auth_used);
@@ -376,6 +393,18 @@ pub fn auth_for_url(kind: AuthKind, secrets: &Secrets, url: String) -> (Auth, St
     (a, url)
 }
 
+/// Скорость передачи, Мбит/с (0.9.7): по времени тела ответа, без ожидания первого байта — иначе файл 1 МБ при
+/// ответе сервера 0,8 с мерится вдвое медленнее большого (лог заказчика: 965 КБ за 1,32 с — 6 Мбит/с, 2,6 МБ за
+/// 1,53 с — 14 Мбит/с). Тело короче 0,2 с (пришло из буфера разом) — по общему времени, чтобы не завысить.
+pub fn transfer_mbps(bytes: u64, total_secs: f64, body_secs: f64) -> f64 {
+    let secs = if body_secs >= 0.2 {
+        body_secs
+    } else {
+        total_secs
+    };
+    bytes as f64 * 8.0 / secs.max(1e-3) / 1_000_000.0
+}
+
 /// Адрес страницы Confluence → та же страница через REST: `/spaces/IT/pages/37980442[/Имя]` или `?pageId=37980442` →
 /// `{origin}/rest/api/content/37980442?expand=body.storage`. Не страница — `None`.
 pub fn confluence_rest_url(url: &str) -> Option<String> {
@@ -522,6 +551,7 @@ fn probe_url(
         };
     };
     r.resolved = Some(addr.ip().to_string());
+    r.fake_ip = is_fake_ip(&addr);
 
     // Задержка: установка TCP-соединения
     let t1 = Instant::now();
@@ -573,6 +603,9 @@ fn probe_url(
             };
         }
     };
+    // время до заголовков ответа; тело — отдельно (скорость передачи без ожидания сервера)
+    r.ttfb_ms = Some(ms(t2.elapsed()));
+    let t_body = Instant::now();
     let status = resp.status().as_u16();
     r.http_status = Some(status);
     r.reachable = true;
@@ -617,7 +650,11 @@ fn probe_url(
     }
     r.secs = t2.elapsed().as_secs_f64();
     if (r.bytes >= 64 * 1024 || slow) && r.secs > 0.0 {
-        r.mbps = Some(r.bytes as f64 * 8.0 / r.secs / 1_000_000.0);
+        r.mbps = Some(transfer_mbps(
+            r.bytes,
+            r.secs,
+            t_body.elapsed().as_secs_f64(),
+        ));
     }
     if slow && (200..300).contains(&status) {
         let got = fmt_bytes(r.bytes);
@@ -725,6 +762,18 @@ pub fn base64(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transfer_speed_without_waiting() {
+        // лог заказчика 03.11: SVN 965,2 КБ за 1,32 с (6,0 Мбит/с), из них ~0,78 с — ожидание ответа
+        let b = (965.2 * 1024.0) as u64;
+        assert_eq!(
+            (transfer_mbps(b, 1.32, 1.32 - 0.78) * 10.0).round() / 10.0,
+            14.6
+        );
+        // тело пришло разом из буфера — общее время
+        assert_eq!((transfer_mbps(b, 1.32, 0.05) * 10.0).round() / 10.0, 6.0);
+    }
 
     #[test]
     fn confluence_page_to_rest() {

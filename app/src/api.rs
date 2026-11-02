@@ -823,6 +823,7 @@ fn probe_json(r: &ProbeResult) -> Value {
         "fail": r.fail.map(|f| format!("{f:?}")), "error": r.error, "note": r.note, "auth": r.auth_used,
         "adapter": r.adapter, "via_vpn": r.via_vpn,
         "svn_info_ok": r.svn_info_ok, "svn_info_ms": r.svn_info_ms,
+        "ttfb_ms": r.ttfb_ms, "fake_ip": r.fake_ip,
     })
 }
 
@@ -847,6 +848,7 @@ fn state(shared: &SharedRef) -> Value {
             "explain": v.explain,
             "parts": v.parts, "baseline": v.baseline,
             "client": sn.client,
+            "drops_hour": sn.drops_hour,
             "waking": sn.waking, "lite": sn.lite,
             "internet_latency": sn.internet_latency_ms, "overhead": sn.overhead_ms, "share": sn.share,
             "route": sn.route, "full": sn.full, "took_ms": sn.took_ms,

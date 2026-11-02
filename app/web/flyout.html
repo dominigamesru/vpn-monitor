@@ -290,12 +290,14 @@ function verdict() {
   else if (r.cause === "inet" && r.why === "wifi") { const n = NET() || {}; title = "Слабый Wi‑Fi — VPN не виноват"; sub = `Сигнал ${n.signal ?? "—"}%${n.band ? " на " + n.band : ""}. Подойдите к роутеру${n.band === "2,4 ГГц" ? " или переключитесь на 5 ГГц" : ""}.`; }
   else if (r.cause === "inet") { title = "Медленный интернет"; sub = `${mbps(r.inet.value)} — SVN упирается в него. VPN в порядке.`; }
   else if (r.cause === "vpn" && r.why === "off") { title = "VPN выключен"; sub = `Включите ${clientName()} — Confluence, Jira и SVN без него недоступны.`; }
+  // 0.9.7: туннель поднят, а офис молчит — переподключить или сменить сервер, а не «включить»
+  else if (r.cause === "vpn" && r.why === "stall") { title = `${clientName()} включён, но не пропускает трафик`; sub = "Офис не отвечает через туннель. Обычно проходит за минуту; если нет — переподключите VPN или выберите другой сервер."; }
   else if (r.cause === "vpn" && r.why === "lat") { title = "VPN медленный"; sub = `Задержка до офиса ${ms(r.vpn.value)} (норма до ${ms(th.vpn_good_ms)}). Переподключите ${clientName()}.`; }
   else if (r.cause === "vpn" && r.why === "speed") { title = "SVN качает медленно"; sub = `${mbps(r.svn.value)} при интернете ${mbps(r.inet.value)} — скорость режет VPN. Переподключите ${clientName()}.`; }
   else if (r.cause === "office" && r.why === "auth") { title = "Пароль AD не подошёл"; sub = `${list(r.auth_failed)} не приняли вход. Войдите заново.`; }
   else if (r.cause === "office") { const bad = r.services.filter((x) => x.st !== "good").map((x) => x.name); title = `${list(bad)} ${bad.length > 1 ? "не отвечают" : "не отвечает"}`; sub = "Остальное работает."; }
   else { title = "Можно работать"; sub = r.svn.value != null ? `SVN ${mbps(r.svn.value)} · VPN ${ms(r.vpn.value)}` : `VPN ${ms(r.vpn.value)}`; if (worldDown.length) sub = `Офис работает, ${list(worldDown)} — ${worldDown.length > 1 ? "не открываются" : "не открывается"}`; }
-  if (down.length && r.cause !== "office" && r.why !== "off") sub += ` ${list(down)} не отвечает.`;
+  if (down.length && r.cause !== "office" && r.why !== "off" && r.why !== "stall") sub += ` ${list(down)} ${down.length > 1 ? "не отвечают" : "не отвечает"}.`;
   return { st, idx, title, sub };
 }
 
@@ -431,7 +433,7 @@ function viewRoute() {
   const wl = worldLink(r, worldT());
   return [...annBlocks(), verdictBlock(), ...notes(), h("div", { class: "route" },
     hop("inet", P(r?.st_inet), "Интернет", h("div", { class: "ds", text: latBad ? `задержка ${ms(r.inet_ms.value)}` : "без VPN" }), r ? mbps(r.inet.value) : "—", r ? (latBad ? "медленно отвечает" : `задержка ${ms(r.inet_ms.value)}`) : "", tipInet),
-    hop("vpn", P(r?.st_vpn), "VPN", h("div", { class: "ds", text: clientFull(), title: clientFull() }), r?.vpn.value == null ? "нет" : ms(r.vpn.value), r?.vpn.value == null ? "не подключён" : B()?.latency_ms != null ? `обычно ${ms(B().latency_ms)}` : `норма до ${ms(TH().vpn_good_ms)}`, tipVpn, r?.because_vpn),
+    hop("vpn", P(r?.st_vpn), "VPN", h("div", { class: "ds", text: clientFull(), title: clientFull() }), r?.vpn.value == null ? "нет" : ms(r.vpn.value), r?.vpn.value == null ? (r?.why === "stall" ? "не пропускает" : "не подключён") : B()?.latency_ms != null ? `обычно ${ms(B().latency_ms)}` : `норма до ${ms(TH().vpn_good_ms)}`, tipVpn, r?.because_vpn),
     hop("office", P(r?.st_office), "Офис", h("div", { class: "svc" }, ...office().map(svcChip)), r?.svn.value == null ? "—" : mbps(r.svn.value), r?.svn.value == null ? "" : B()?.speed_mbps != null ? `SVN · обычно ${num(B().speed_mbps, 1)}` : `SVN · комфортно от ${num(TH().svn_good_mbps)}`, tipSvn, r?.because_office),
     wl ? hop("world", P(wl.st), "Мир", h("div", { class: "svc" }, ...worldT().map(worldChip)), "", wl.direct ? "напрямую, без VPN" : "через VPN", null, wl.because) : null)];
 }
@@ -462,6 +464,8 @@ function viewStrip() {
     strip("SVN", svnCells, r?.svn.value == null ? "—" : mbps(r.svn.value), tipSvn),
     h("div", { class: "axis" }, h("span", { text: "час назад" }), h("span", { text: "сейчас" })))];
 }
+// 1 раз, 2 раза, 5 раз; 11–14 — «раз»
+function plural(n, one, few, many) { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many; }
 function notes() {
   const out = [], sn = S?.snapshot;
   if (!S?.login && (sn?.targets || []).some((t) => t.note)) out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", h("button", { type: "button", text: "Войти", onclick: () => toApp("open:settings") })));
@@ -469,6 +473,8 @@ function notes() {
   // совет по известной причине (v0.7) — что сделать самому до обращения в поддержку
   if (!S?.paused && outage()) out.push(h("div", { class: "note advice", text: "Звонить в поддержку не нужно — админы знают и чинят." }));
   else if (!S?.paused && sn?.advice?.length) out.push(h("div", { class: "note advice", text: `Совет: ${sn.advice[0]}` }));
+  // 0.9.7: туннель рвётся на секунды — сказать прямо, что это сервер VPN, а не сотрудник
+  if (!S?.paused && (sn?.drops_hour || 0) >= 2) out.push(h("div", { class: "note advice", text: `Туннель обрывался ${sn.drops_hour} ${plural(sn.drops_hour, "раз", "раза", "раз")} за час — это сервер VPN${sn.client?.server ? ` (${sn.client.server})` : ""}, а не вы. Мешает — смените сервер.` }));
   const c = ctxRow(); if (c) out.push(c);
   return out;
 }
