@@ -67,12 +67,14 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 /* маршрут */
 .route { display: grid; }
 .hop { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; padding: 6px 0; position: relative; }
-.hop::before { content: ""; position: absolute; left: 8px; top: 22px; bottom: -8px; width: 2px; background: var(--rail, var(--line)); }
+.hop::before { content: ""; position: absolute; left: 6px; top: 22px; bottom: -8px; width: 2px; background: var(--rail, var(--line)); }
 .hop:last-child::before { display: none; }
 /* v0.9.3: мир напрямую — ветка от «Интернета»: основная линия кончается на «Офисе», «Мир» сдвинут вправо */
 .route { position: relative; }
 .route.branched .hop[data-k="office"]::before { display: none; }
-.route.branched .hop[data-k="world"] { padding-left: 18px; }
+/* две полосы, как в git: основная (Интернет, VPN, Офис) и ветка мира — у каждой свой коридор, текст после обеих */
+.route.branched .hop { grid-template-columns: 40px 1fr auto; }
+.route.branched .hop[data-k="world"] .pin { margin-left: 22px; }
 .route.branched .hop[data-k="world"]::before { display: none; }
 svg.branchline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 svg.branchline path { fill: none; stroke-width: 2; }

@@ -149,7 +149,9 @@ ul.tickets li .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis;
 /* v0.9.3: мир напрямую — ветка от «Интернета» */
 .route { position: relative; }
 .route.branched .hop.mainend::before { bottom: 50%; }
-.route.branched .hop.branch { padding-left: 22px; }
+.route.branched .hop { grid-template-columns: 46px 1fr auto; }
+.route.branched .hop .node { justify-self: start; margin-left: 4px; }
+.route.branched .hop.branch .node { margin-left: 28px; }
 .route.branched .hop.branch::before { display: none; }
 svg.branchline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 svg.branchline path { fill: none; stroke-width: 2; }
