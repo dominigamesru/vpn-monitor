@@ -235,6 +235,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   </header>
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
   <div id="annBox"></div>
+  <div class="banner" id="notifyBanner" hidden style="--c: var(--warn)"><p id="notifyBannerText"></p><div class="row"><button class="btn" type="button" data-open-notify>Открыть настройки уведомлений</button><button class="btn ghost" type="button" id="notifyLater">Не сейчас</button></div></div>
   <div class="banner" id="newsBanner" hidden><div id="newsText"></div><button class="btn ghost" id="newsOk">Понятно</button></div>
   <div class="banner" id="loginBanner" hidden style="--c: var(--warn)"><p>Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN.</p><a class="btn" href="#settings">Войти</a></div>
 
@@ -317,7 +318,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
         <div class="choice" id="viewChoice"></div>
         <h2 style="margin-top:18px">Уведомления</h2>
         <div class="opts" id="notifyOpts" style="margin-top:8px"></div>
-        <div class="row" style="margin-top:10px"><button class="btn ghost sm" id="notifyTest" type="button">Показать тестовое уведомление</button><span class="st" id="notifyTestRes"></span></div>
+        <div class="row" style="margin-top:10px"><button class="btn ghost sm" id="notifyTest" type="button">Показать тестовое уведомление</button><button class="btn ghost sm" type="button" data-open-notify>Настройки уведомлений Windows</button><span class="st" id="notifyTestRes"></span></div>
       </div>
       <div class="card">
         <h2>Обновления</h2>
@@ -813,7 +814,13 @@ async function openSupport(pre) {
 $("#supCancel").addEventListener("click", () => $("#supDlg").close());
 // v0.9: увидеть, как выглядит уведомление, и что Windows его не прячет («Не беспокоить», настройки уведомлений)
 $("#notifyTest").addEventListener("click", async () => { const tb = $("#notifyTest"); tb.disabled = true; const r = await api("/api/notify/test", { method: "POST", body: "{}" }).catch(() => null); tb.disabled = false;
-  $("#notifyTestRes").textContent = r?.ok ? "Отправлено. Не видно? Проверьте «Не беспокоить» и Параметры → Система → Уведомления → Domini VPN Monitor." : `Не показалось: ${r?.error || "приложение не ответило"}`; });
+  $("#notifyTestRes").textContent = r?.ok ? (S?.notify_blocked ? "Windows не покажет: уведомления VPN Monitor выключены — включите в настройках." : "Отправлено. Не видно? Скорее всего, включён «Не беспокоить» — выключите его или добавьте Domini VPN Monitor в исключения (в настройках уведомлений).") : `Не показалось: ${r?.error || "приложение не ответило"}`; });
+// уведомления выключены в Windows (v0.9.1) — без них не видно сообщений админов и статусов запросов
+document.addEventListener("click", (e) => { if (e.target.closest("[data-open-notify]")) api("/api/open", { method: "POST", body: JSON.stringify({ what: "notifications" }) }).catch(() => {}); });
+$("#notifyLater").addEventListener("click", () => { try { sessionStorage.setItem("notifyLater", "1"); } catch {} $("#notifyBanner").hidden = true; });
+function renderNotifyBanner() { let later = false; try { later = sessionStorage.getItem("notifyLater") === "1"; } catch {}
+  const why = { app: "Уведомления Domini VPN Monitor выключены в Windows", user: "Все уведомления выключены в Windows", policy: "Уведомления выключены политикой компьютера" }[S?.notify_blocked];
+  $("#notifyBanner").hidden = !why || later; if (why) $("#notifyBannerText").textContent = `${why} — сообщения админов, статусы запросов и «VPN упал» вы не увидите.${S.notify_blocked === "policy" ? " Обратитесь в поддержку." : " Включите их в настройках."}`; }
 $("#wSkip").addEventListener("click", finishWelcome); $("#wDone").addEventListener("click", finishWelcome);
 $("#ticketsRefresh").addEventListener("click", refreshTickets);
 $("#supForm").addEventListener("submit", async (e) => { e.preventDefault(); const send = $("#supSend"); send.disabled = true; send.classList.add("busy"); send.textContent = "Отправляю…"; $("#supErr").textContent = "";
@@ -909,7 +916,7 @@ async function poll(once) { clearTimeout(pt);
     applyTheme();
     // фавикон = иконка в трее с текущим статусом
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
-    renderHeader(); renderAnnounce(); renderWelcome();
+    renderHeader(); renderAnnounce(); renderWelcome(); renderNotifyBanner();
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
     renderNow(); renderConn(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }

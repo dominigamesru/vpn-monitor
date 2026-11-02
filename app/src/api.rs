@@ -564,6 +564,7 @@ fn handle(
                     }
                 }
                 Some("secrets") => win::open_in_notepad(&crate::secrets_path(&dir)),
+                Some("notifications") => win::open_notification_settings(),
                 _ => win::open(&dir),
             }
             json_resp(&json!({"ok": true}), 200)
@@ -892,6 +893,7 @@ fn state(shared: &SharedRef) -> Value {
         "city": sh.city,
         "support_url": s.support_url,
         "announce": sh.announce,
+        "notify_blocked": win::notifications_blocked(),
         "office": {"keys": sh.office_keys, "at_ms": sh.office_at},
         "services": services,
         // когда поставлена эта версия: время файла exe (скачан при обновлении)

@@ -340,6 +340,30 @@ pub fn toast_link(title: &str, body: &str, link: Option<&str>) -> Result<(), Str
         .map_err(|e| format!("уведомление: {e:?}"))
 }
 
+/// Уведомления VPN Monitor в Windows (v0.9.1): `""` — включены; иначе почему выключены — для подсказки «включите».
+/// «Не беспокоить» (Focus Assist) Windows приложениям не сообщает — о нём подсказка в окне после тестового уведомления.
+pub fn notifications_blocked() -> &'static str {
+    use windows::UI::Notifications::{NotificationSetting, ToastNotificationManager};
+    let Ok(n) =
+        ToastNotificationManager::CreateToastNotifierWithId(&windows::core::HSTRING::from(AUMID))
+    else {
+        return "";
+    };
+    match n.Setting() {
+        Ok(NotificationSetting::DisabledForApplication) => "app",
+        Ok(NotificationSetting::DisabledForUser) => "user",
+        Ok(NotificationSetting::DisabledByGroupPolicy) => "policy",
+        _ => "",
+    }
+}
+
+/// Открыть настройки уведомлений Windows (Параметры → Система → Уведомления).
+pub fn open_notification_settings() {
+    let _ = std::process::Command::new("explorer")
+        .arg("ms-settings:notifications")
+        .spawn();
+}
+
 /// Показывает уведомление Windows.
 pub fn toast(title: &str, body: &str) -> Result<(), String> {
     tauri_winrt_notification::Toast::new(AUMID)
