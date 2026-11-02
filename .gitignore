@@ -20,3 +20,6 @@ Thumbs.db
 # Rust
 /app/target/
 /app/assets/favicon.ico
+
+# заметки релиза (scripts/release_notes.py) — собираются в CI
+dist/
