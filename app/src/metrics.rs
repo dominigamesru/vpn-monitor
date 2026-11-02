@@ -71,6 +71,12 @@ pub struct Record {
     pub sig: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jit: Option<f64>,
+    /// 0.9.6: клиент VPN отдельно («OpenVPN Connect», «Happ») и куда подключён — профиль
+    /// («vpn.dominigames.com [DG_…]») или сервер («45.12.0.7:443»). `vpn` — как раньше, оба вместе.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vp: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +169,11 @@ impl Record {
             nk: s.net.as_ref().map(|n| n.kind.clone()),
             sig: s.net.as_ref().and_then(|n| n.signal),
             jit: s.call.as_ref().map(|c| c.jitter_ms),
+            vc: s.client.as_ref().map(|c| c.name.clone()),
+            vp: s
+                .client
+                .as_ref()
+                .and_then(|c| c.place().map(str::to_string)),
         }
     }
 }
@@ -457,6 +468,8 @@ mod tests {
             nk: None,
             sig: None,
             jit: None,
+            vc: None,
+            vp: None,
         }
     }
 
