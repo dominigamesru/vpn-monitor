@@ -69,6 +69,13 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .hop { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; padding: 6px 0; position: relative; }
 .hop::before { content: ""; position: absolute; left: 8px; top: 22px; bottom: -8px; width: 2px; background: var(--rail, var(--line)); }
 .hop:last-child::before { display: none; }
+/* v0.9.3: мир напрямую — ветка от «Интернета»: основная линия кончается на «Офисе», «Мир» сдвинут вправо */
+.route { position: relative; }
+.route.branched .hop[data-k="office"]::before { display: none; }
+.route.branched .hop[data-k="world"] { padding-left: 18px; }
+.route.branched .hop[data-k="world"]::before { display: none; }
+svg.branchline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+svg.branchline path { fill: none; stroke-width: 2; }
 .hop .pin { width: 14px; height: 14px; border-radius: 50%; border: 3px solid currentColor; margin-top: 3px; background: var(--bg); }
 .hop.cause .pin { background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 20%, transparent); }
 .hop .nm { font-weight: 600; font-size: 13.5px; }
@@ -371,6 +378,34 @@ function annBlocks() {
     h("button", { class: "x", type: "button", "aria-label": "Закрыть сообщение", title: "Закрыть", onclick: async () => { const r = await api("/api/announce/dismiss", { method: "POST", body: JSON.stringify({ key: a.dismiss_key }) }).catch(() => null); if (r) S.announce = r.announce; render(); } }, icon("close"))));
 }
 
+// топология мира (v0.9.3): напрямую — ветка от «Интернета», статус не лучше интернета; через VPN — на основной линии,
+// статус не лучше VPN (VPN выключен — мир недоступен)
+function worldLink(r, world) {
+  if (!world.length) return null;
+  const ok = world.filter((t) => t.ok).length, svc = ok === world.length ? "good" : ok ? "warn" : "bad";
+  const direct = world.every((t) => t.via_vpn === false);
+  const link = !r ? "idle" : (direct ? r.st_inet : r.st_vpn) || "good";
+  const rank = { idle: -1, good: 0, warn: 1, bad: 2 };
+  const st = rank[link] > rank[svc] ? link : svc;
+  const because = rank[link] > 0 && rank[link] >= rank[svc] ? (direct ? "из‑за интернета" : "из‑за VPN") : null;
+  return { direct, st, because };
+}
+// линия ветки: от узла «Интернет» вниз-вправо к узлу «Мир» — как ветка в git, вертикально
+function drawBranch(route, fromNode, toNode, st) {
+  route.querySelectorAll("svg.branchline").forEach((x) => x.remove());
+  if (!route || !fromNode || !toNode) return;
+  const R = route.getBoundingClientRect(), a = fromNode.getBoundingClientRect(), b = toNode.getBoundingClientRect();
+  const x0 = a.left + a.width / 2 - R.left, y0 = a.bottom - R.top, x1 = b.left + b.width / 2 - R.left, y1 = b.top - R.top;
+  if (!(y1 > y0)) return;
+  const bend = Math.min(26, (y1 - y0) / 2);
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("class", "branchline"); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", `M${x0} ${y0} C${x0} ${y0 + bend} ${x1} ${y0 + bend * 0.4} ${x1} ${y0 + bend * 1.4} L${x1} ${y1}`);
+  p.setAttribute("stroke", `var(--${st === "good" || st === "idle" ? "line" : st})`);
+  s.append(p); route.append(s);
+}
+
 // ---------- виды ----------
 function verdictBlock() {
   const v = verdict();
@@ -381,18 +416,19 @@ function viewRoute() {
   const r = R(), sn = S?.snapshot;
   const hop = (key, st, name, desc, val, small, tipFn, tag) => {
     const cause = r?.cause === key;
-    const n = h("div", { class: `hop${cause ? " cause" : ""}`, style: `--rail: var(--${st === "good" || st === "idle" ? "line" : st})` },
+    const n = h("div", { class: `hop${cause ? " cause" : ""}`, "data-k": key, style: `--rail: var(--${st === "good" || st === "idle" ? "line" : st})` },
       h("span", { class: `pin c-${st}` }),
       h("div", { style: "min-width:0" }, h("div", { class: "nm" }, name, key === "inet" && netIconName() ? tip(h("span", { class: `nico ${weakWifi() ? "warn" : ""}`, tabindex: "0", "aria-label": "Сеть" }, icon(netIconName())), tipNet) : null, cause ? h("span", { class: `tag bg-${st}`, text: "причина" }) : tag ? h("span", { class: "tag bg-idle", text: tag }) : null), desc),
       h("div", { class: "v" }, val, small ? h("small", { text: small }) : null));
     return tip(n, tipFn);
   };
   const latBad = r && r.st_inet_lat !== "good";
+  const wl = worldLink(r, worldT());
   return [...annBlocks(), verdictBlock(), ...notes(), h("div", { class: "route" },
     hop("inet", P(r?.st_inet), "Интернет", h("div", { class: "ds", text: latBad ? `задержка ${ms(r.inet_ms.value)}` : "без VPN" }), r ? mbps(r.inet.value) : "—", r ? (latBad ? "медленно отвечает" : `задержка ${ms(r.inet_ms.value)}`) : "", tipInet),
     hop("vpn", P(r?.st_vpn), "VPN", h("div", { class: "ds", text: clientFull(), title: clientFull() }), r?.vpn.value == null ? "нет" : ms(r.vpn.value), r?.vpn.value == null ? "не подключён" : B()?.latency_ms != null ? `обычно ${ms(B().latency_ms)}` : `норма до ${ms(TH().vpn_good_ms)}`, tipVpn, r?.because_vpn),
     hop("office", P(r?.st_office), "Офис", h("div", { class: "svc" }, ...office().map(svcChip)), r?.svn.value == null ? "—" : mbps(r.svn.value), r?.svn.value == null ? "" : B()?.speed_mbps != null ? `SVN · обычно ${num(B().speed_mbps, 1)}` : `SVN · комфортно от ${num(TH().svn_good_mbps)}`, tipSvn, r?.because_office),
-    worldT().length ? hop("world", P(worldT().every((t) => t.ok) ? "good" : worldT().some((t) => t.ok) ? "warn" : "bad"), "Мир", h("div", { class: "svc" }, ...worldT().map(worldChip)), "", "", null) : null)];
+    wl ? hop("world", P(wl.st), "Мир", h("div", { class: "svc" }, ...worldT().map(worldChip)), "", wl.direct ? "напрямую, без VPN" : "через VPN", null, wl.because) : null)];
 }
 function viewDash() {
   const r = R(), th = TH();
@@ -500,6 +536,8 @@ function render() {
   if (view === "gauge" || view === "panel") view = "dash";
   header();
   $("#root").replaceChildren(...({ route: viewRoute, dash: viewDash, strip: viewStrip }[view] || viewRoute)().filter(Boolean));
+  const rt = $("#root .route"); if (rt) { const wl = worldLink(R(), worldT()); rt.classList.toggle("branched", !!wl?.direct);
+    if (wl?.direct) drawBranch(rt, rt.querySelector('[data-k="inet"] .pin'), rt.querySelector('[data-k="world"] .pin'), S?.paused || !R() ? "idle" : wl.st); }
   footer();
   fit();
 }

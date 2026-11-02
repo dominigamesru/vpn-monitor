@@ -146,6 +146,13 @@ ul.tickets li .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis;
 .hop { display: grid; grid-template-columns: 22px 1fr auto; gap: 12px; align-items: center; min-height: 48px; position: relative; padding: 3px 0; }
 .hop::before { content: ""; position: absolute; left: 10px; top: 0; bottom: 0; width: 2px; background: var(--line); }
 .hop:first-child::before { top: 50%; } .hop:last-child::before { bottom: 50%; }
+/* v0.9.3: мир напрямую — ветка от «Интернета» */
+.route { position: relative; }
+.route.branched .hop.mainend::before { bottom: 50%; }
+.route.branched .hop.branch { padding-left: 22px; }
+.route.branched .hop.branch::before { display: none; }
+svg.branchline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+svg.branchline path { fill: none; stroke-width: 2; }
 .hop .node { width: 14px; height: 14px; border-radius: 50%; border: 3px solid var(--c); background: var(--surface); justify-self: center; z-index: 1; }
 .hop.fault .node { background: var(--c); }
 .hop .t b { font-weight: 600; } .hop .t div { color: var(--muted); font-size: 12.5px; }
@@ -526,14 +533,17 @@ function renderNow() {
   const chips = (arr, isWorld) => { const c = el("div", { class: "chips" }); for (const x of arr) { const st = isWorld ? P(x.ok ? "good" : x.reachable ? "warn" : "bad") : svcSt(x); const ch = el("span", { class: `chip ${st}` }, el("span", { class: "dot" }), x.name, isWorld && x.via_vpn != null ? el("em", { text: x.via_vpn ? "VPN" : "напрямую" }) : null); tip(ch, () => tipTarget(x)); c.append(ch); } return c; };
   const hop = (name, st, sub, val, small, extra, tf, cause, tag) => { const row = el("div", { class: `hop ${st}${cause ? " fault" : ""}` }, el("span", { class: "node", "aria-hidden": "true" }), el("div", { class: "t" }, el("b", {}, name, cause ? el("span", { class: `tag ${st}`, text: " причина" }) : tag ? el("span", { class: "tag idle", text: ` ${tag}` }) : null), sub ? el("div", { text: sub }) : null, extra), el("div", { class: "v" }, val, small ? el("small", { text: small }) : null)); if (tf) tip(row, tf); return row; };
   const raw = (m, f) => m?.raw?.length ? `проверки: ${m.raw.map(f).join(" · ")} → медиана ${f(m.value)}` : "";
-  const wOk = world.filter((x) => x.ok).length;
+  const wl = worldLink(r, world);
   $("#route").replaceChildren(
     hop("Интернет", P(r?.st_inet), r && r.st_inet_lat !== "good" ? `задержка ${msf(r.inet_ms.value)} — медленно` : "без VPN", r ? mbps(r.inet.value) : "—", r ? `задержка ${msf(r.inet_ms.value)}` : "", null,
       () => el("div", { class: "tip" }, el("span", { class: "big", text: `Интернет без VPN: ${mbps(r?.inet.value)}` }), el("span", { class: "mut", text: `Для SVN нужно от ${mbps(th.inet_good_mbps)}; задержка больше ${msf(th.inet_lat_warn_ms)} — уже медленно.` }), el("span", { class: "mut", text: raw(r?.inet, (x) => num(x, 1)) })), r?.cause === "inet"),
     hop("VPN", P(r?.st_vpn), clientFull(), r?.vpn.value == null ? "нет" : msf(r.vpn.value), r?.vpn.value == null ? "не подключён" : `норма до ${msf(th.vpn_good_ms)}`, null,
       () => el("div", { class: "tip" }, el("span", { class: "big", text: r?.vpn.value == null ? "VPN не подключён" : `VPN: средняя задержка ${msf(r.vpn.value)}` }), el("span", { class: "mut", text: raw(r?.vpn, msf) }), sn.client?.adapter ? el("span", { class: "mut", text: `Адаптер: ${sn.client.adapter}` }) : null), r?.cause === "vpn", r?.because_vpn),
     hop("Офис", P(r?.st_office), "", r?.svn.value == null ? "" : mbps(r.svn.value), r?.svn.value == null ? "" : `SVN · норма от ${num(th.svn_good_mbps)}`, chips(officeT(), false), null, r?.cause === "office", r?.because_office),
-    world.length ? hop("Мир", P(wOk === world.length ? "good" : wOk ? "warn" : "bad"), "", "", "", chips(world, true)) : null);
+    wl ? hop("Мир", P(wl.st), wl.direct ? "напрямую, без VPN" : "через VPN", "", "", chips(world, true), null, false, wl.because) : null);
+  { const rt = $("#route"), rows = rt.querySelectorAll(".hop"); rt.classList.toggle("branched", !!wl?.direct);
+    if (wl?.direct && rows.length >= 4) { rows[2].classList.add("mainend"); rows[3].classList.add("branch"); drawBranch(rt, rows[0].querySelector(".node"), rows[3].querySelector(".node"), P(wl.st)); }
+    else rt.querySelectorAll("svg.branchline").forEach((x) => x.remove()); }
   // звенья против порогов (медиана трёх проверок)
   $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин` : "Ещё не проверяли";
   const norms = $("#norms"); norms.replaceChildren();
@@ -555,6 +565,33 @@ function renderNow() {
     li.append(el("span", { class: n.kind === "wifi" && n.signal != null && n.signal < 40 ? "warnline" : "", text: parts.join(" · ") })); }
   if (!S?.paused && (S.announce || []).some((a) => a.level === "outage")) li.append(el("span", { class: "advice", text: "Звонить в поддержку не нужно — админы знают и чинят." }));
   else for (const a of S?.paused ? [] : sn.advice || []) li.append(el("span", { class: "advice", text: `Совет: ${a}` }));
+}
+// топология мира (v0.9.3): напрямую — ветка от «Интернета», статус не лучше интернета; через VPN — на основной линии,
+// статус не лучше VPN (VPN выключен — мир недоступен)
+function worldLink(r, world) {
+  if (!world.length) return null;
+  const ok = world.filter((t) => t.ok).length, svc = ok === world.length ? "good" : ok ? "warn" : "bad";
+  const direct = world.every((t) => t.via_vpn === false);
+  const link = !r ? "idle" : (direct ? r.st_inet : r.st_vpn) || "good";
+  const rank = { idle: -1, good: 0, warn: 1, bad: 2 };
+  const st = rank[link] > rank[svc] ? link : svc;
+  const because = rank[link] > 0 && rank[link] >= rank[svc] ? (direct ? "из‑за интернета" : "из‑за VPN") : null;
+  return { direct, st, because };
+}
+// линия ветки: от узла «Интернет» вниз-вправо к узлу «Мир» — как ветка в git, вертикально
+function drawBranch(route, fromNode, toNode, st) {
+  route.querySelectorAll("svg.branchline").forEach((x) => x.remove());
+  if (!route || !fromNode || !toNode) return;
+  const R = route.getBoundingClientRect(), a = fromNode.getBoundingClientRect(), b = toNode.getBoundingClientRect();
+  const x0 = a.left + a.width / 2 - R.left, y0 = a.bottom - R.top, x1 = b.left + b.width / 2 - R.left, y1 = b.top - R.top;
+  if (!(y1 > y0)) return;
+  const bend = Math.min(26, (y1 - y0) / 2);
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("class", "branchline"); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", `M${x0} ${y0} C${x0} ${y0 + bend} ${x1} ${y0 + bend * 0.4} ${x1} ${y0 + bend * 1.4} L${x1} ${y1}`);
+  p.setAttribute("stroke", `var(--${st === "good" || st === "idle" ? "line" : st})`);
+  s.append(p); route.append(s);
 }
 const gbDur = (mbps) => { const m = 8192 / mbps / 60; return m < 60 ? `${Math.round(m)} мин` : `${Math.floor(m / 60)} ч ${String(Math.round(m % 60)).padStart(2, "0")} мин`; };
 // сообщения админов (v0.9): плашки с крестиком сверху окна
