@@ -38,6 +38,8 @@ pub struct Snapshot {
     /// v0.9: сеть (Wi‑Fi, кабель, телефон) и качество звонка до офиса.
     pub net: Option<crate::netctx::Net>,
     pub call: Option<crate::netctx::Call>,
+    /// 0.9.7: короткие обрывы туннеля за последний час — офис не ответил, а через 3 с ответил.
+    pub drops_hour: u32,
 }
 
 pub struct Monitor {
@@ -68,6 +70,8 @@ pub struct Monitor {
     pub last_client: Option<String>,
     /// До этого момента — льготные минуты после сна (ставит трей), v0.5.
     pub grace_until: Option<Instant>,
+    /// 0.9.7: когда были короткие обрывы туннеля (для «обрывов за час»).
+    drops: VecDeque<Instant>,
 }
 
 /// Сколько последних проверок сглаживает оценку.
@@ -117,6 +121,7 @@ impl Monitor {
             baseline: None,
             last_client: None,
             grace_until: None,
+            drops: VecDeque::new(),
         }
     }
 
@@ -209,6 +214,60 @@ impl Monitor {
         });
 
         let mut results = results;
+        // 0.9.7: офис молчит целиком, а интернет есть — повтор через 3 с: у Happ туннель рвётся на секунды (лог
+        // заказчика 03.11: проверка всё «НЕДОСТУПНА», следующая — всё OK). Прошёл — короткий обрыв, не «VPN выключен».
+        let light_ids: Vec<&str> = s
+            .targets
+            .iter()
+            .filter(|t| t.enabled && t.role == Role::Light)
+            .map(|t| t.id.as_str())
+            .collect();
+        let light_silent = !light_ids.is_empty()
+            && online_hint.is_some()
+            && results
+                .iter()
+                .filter(|r| light_ids.contains(&r.target_id.as_str()))
+                .all(|r| !r.reachable);
+        if light_silent && lite.is_none() {
+            info!("check", "офис не ответил целиком — повтор через 3 с");
+            std::thread::sleep(Duration::from_secs(3));
+            let again: Vec<ProbeResult> = std::thread::scope(|sc| {
+                let hs: Vec<_> = s
+                    .targets
+                    .iter()
+                    .filter(|t| light_ids.contains(&t.id.as_str()))
+                    .map(|t| {
+                        let secrets = &secrets;
+                        sc.spawn(move || {
+                            let key = format!("{}:again", t.id);
+                            crate::progress::probe_started(&key, Some(t.role), &t.name, false);
+                            let r = probe::probe_target(t, secrets, false);
+                            crate::progress::probe_done(&key, &r);
+                            r
+                        })
+                    })
+                    .collect();
+                hs.into_iter().filter_map(|h| h.join().ok()).collect()
+            });
+            if again.iter().any(|r| r.reachable) {
+                for a in again {
+                    if let Some(x) = results
+                        .iter_mut()
+                        .find(|r| r.target_id == a.target_id && !r.full)
+                    {
+                        *x = a;
+                    }
+                }
+                self.drops.push_back(Instant::now());
+                info!(
+                    "check",
+                    "повтор прошёл — короткий обрыв туннеля; обрывов за час: {}",
+                    drops_in_hour(&mut self.drops)
+                );
+            } else {
+                info!("check", "повтор тоже без ответа");
+            }
+        }
         let mut internet = internet;
         for r in results.iter_mut().chain(internet.iter_mut()) {
             annotate_route(r, &self.settings);
@@ -493,6 +552,12 @@ impl Monitor {
             if r.cause == Some("inet") && crate::netctx::weak_wifi(&net, r.inet.value) {
                 r.why = Some("wifi");
             }
+            // 0.9.7: клиент VPN найден по маршруту до офиса (туннель поднят), а офис молчит — не «выключен», а «не
+            // пропускает трафик»
+            if r.cause == Some("vpn") && r.why == Some("off") && client.is_some() {
+                r.why = Some("stall");
+                r.because_office = Some("из‑за VPN");
+            }
             r
         });
         if let Some(r) = &route
@@ -556,8 +621,20 @@ impl Monitor {
             took_ms: t0.elapsed().as_millis() as u64,
             net: (!net.kind.is_empty() && net.kind != "unknown").then_some(net),
             call,
+            drops_hour: drops_in_hour(&mut self.drops),
         }
     }
+}
+
+/// Обрывов за последний час; старые забываются.
+fn drops_in_hour(d: &mut VecDeque<Instant>) -> u32 {
+    while d
+        .front()
+        .is_some_and(|t| t.elapsed() > Duration::from_secs(3600))
+    {
+        d.pop_front();
+    }
+    d.len() as u32
 }
 
 /// Серия TCP-соединений до сервиса офиса (v0.9): 8 штук через 120 мс, без данных — разброс задержки и потери для
