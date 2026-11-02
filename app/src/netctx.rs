@@ -26,13 +26,10 @@ pub struct Net {
 /// Порог слабого сигнала, % (заказчик 2026-11-02: «годится»).
 pub const WEAK_SIGNAL: u32 = 40;
 
-/// Wi‑Fi слабый: сигнал ниже порога или скорость Wi‑Fi меньше двух скоростей интернета (тогда упираемся в Wi‑Fi).
-pub fn weak_wifi(net: &Net, inet_mbps: Option<f64>) -> bool {
-    if net.kind != "wifi" {
-        return false;
-    }
-    net.signal.is_some_and(|s| s < WEAK_SIGNAL)
-        || matches!((net.link_mbps, inet_mbps), (Some(l), Some(i)) if l > 0.0 && l < 2.0 * i)
+/// Wi‑Fi слабый: сигнал ниже порога. Скорость связи с роутером не учитываем (0.9.5, заказчик): Windows показывает
+/// согласованную скорость, а не реальную — она «погоды не делает» и сбивала с толку.
+pub fn weak_wifi(net: &Net, _inet_mbps: Option<f64>) -> bool {
+    net.kind == "wifi" && net.signal.is_some_and(|s| s < WEAK_SIGNAL)
 }
 
 /// Диапазон по номеру канала Wi‑Fi: 1–14 — 2,4 ГГц, 32–177 — 5 ГГц (6 ГГц Windows здесь не различает).
@@ -161,8 +158,9 @@ mod tests {
         n.signal = Some(82);
         n.link_mbps = Some(433.0);
         assert!(!weak_wifi(&n, Some(15.0)));
-        n.link_mbps = Some(20.0); // Wi‑Fi 20 при интернете 15 — упираемся в Wi‑Fi
-        assert!(weak_wifi(&n, Some(15.0)));
+        n.link_mbps = Some(20.0); // скорость связи с роутером не в счёт — сигнал хороший
+        assert!(!weak_wifi(&n, Some(15.0)));
+        n.signal = Some(32);
         n.kind = "cable".into();
         assert!(!weak_wifi(&n, Some(15.0)));
         assert_eq!(band_of(6), "2,4 ГГц");

@@ -41,7 +41,7 @@ header.top h1 { display: inline-flex; align-items: center; gap: 8px; }
 header.top .ver { color: var(--muted); font-size: 13px; font-weight: 400; }
 a.ver { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--muted); }
 a.ver:hover { color: var(--accent); border-color: var(--accent); }
-.agent { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 12px; }
+.agent { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 20px; margin-top: 12px; }
 .agent h3, .rel h3 { font-size: 14px; margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 pre.code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 0 0 8px; }
 .tools { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
@@ -198,6 +198,8 @@ th { color: var(--muted); font-weight: 600; } td.num { white-space: nowrap; }
 @media (max-width: 760px) { .svcstate { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 14px; } }
 .svcstate .row2 { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; }
 .svcstate .row2 b { font-weight: 600; font-size: 13.5px; }
+.svcstate .row2 .spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); border-right-color: transparent; animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .svcstate .row2 .spin { animation: none; } }
 .svcstate .row2 small { grid-column: 2; color: var(--muted); font-size: 12px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 form.login { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 10px; align-items: end; }
@@ -379,6 +381,8 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
         <div>
           <h3>Claude Code (терминал, VS Code)</h3>
           <div class="codebox"><pre class="code" id="cmdCode"></pre><button class="copyi" type="button" data-copy="cmdCode" aria-label="Скопировать команду" title="Скопировать"></button></div>
+          <h3 style="margin-top:16px">Claude Desktop и другие MCP-клиенты</h3>
+          <div class="codebox"><pre class="code" id="cmdDesktop"></pre><button class="copyi" type="button" data-copy="cmdDesktop" aria-label="Скопировать настройки" title="Скопировать"></button></div>
         </div>
         <div>
           <h3>ChatGPT — Codex (приложение, терминал, VS Code)</h3>
@@ -386,10 +390,6 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
           <p class="sub" style="margin:6px 0 0">Или в <code>~/.codex/config.toml</code>:</p>
           <div class="codebox"><pre class="code" id="cmdCodexToml"></pre><button class="copyi" type="button" data-copy="cmdCodexToml" aria-label="Скопировать настройки" title="Скопировать"></button></div>
           <p class="sub" style="margin:6px 0 0">Чат ChatGPT в браузере и в приложении подключает только серверы из интернета (https) — до VPN Monitor на этом компьютере он не достанет; локально работает Codex.</p>
-        </div>
-        <div>
-          <h3>Claude Desktop и другие MCP-клиенты</h3>
-          <div class="codebox"><pre class="code" id="cmdDesktop"></pre><button class="copyi" type="button" data-copy="cmdDesktop" aria-label="Скопировать настройки" title="Скопировать"></button></div>
         </div>
       </div>
     </div>
@@ -409,7 +409,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
       <div class="card">
         <h2>API для скриптов</h2>
         <p class="sub">Те же данные — обычным HTTP: <a id="apiHelp" href="/api/help" target="_blank" rel="noopener">/api/help</a>
-          (адреса и примеры). Меняющие запросы — POST с заголовком <code>X-VPN-Monitor: 1</code>.</p>
+          (адреса и примеры). Меняющие запросы — POST с заголовком <code>X-Domini-VPN-Monitor: 1</code>.</p>
         <pre class="code" id="cmdCurl"></pre>
       </div>
     </div>
@@ -458,7 +458,7 @@ document.getElementById("themeBtn").addEventListener("click", async () => { if (
   try { await api("/api/prefs", { method: "POST", body: JSON.stringify({ window_theme: next }) }); } catch {} });
 const sv = (tag, attrs = {}) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-async function api(path, opts = {}) { const init = { ...opts, headers: { ...(opts.headers || {}) } }; if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; } const r = await fetch(path, init); return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text(); }
+async function api(path, opts = {}) { const init = { ...opts, headers: { ...(opts.headers || {}) } }; if (init.method && init.method !== "GET") { init.headers["X-Domini-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; } const r = await fetch(path, init); return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text(); }
 const pad = (n) => String(n).padStart(2, "0");
 const hhmm = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const dayLabel = (t) => new Date(t).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" });
@@ -543,8 +543,9 @@ function renderNow() {
       () => el("div", { class: "tip" }, el("span", { class: "big", text: r?.vpn.value == null ? "VPN не подключён" : `VPN: средняя задержка ${msf(r.vpn.value)}` }), el("span", { class: "mut", text: raw(r?.vpn, msf) }), sn.client?.adapter ? el("span", { class: "mut", text: `Адаптер: ${sn.client.adapter}` }) : null), r?.cause === "vpn", r?.because_vpn),
     hop("Офис", P(r?.st_office), "", r?.svn.value == null ? "" : mbps(r.svn.value), r?.svn.value == null ? "" : `SVN · норма от ${num(th.svn_good_mbps)}`, chips(officeT(), false), null, r?.cause === "office", r?.because_office),
     wl ? hop("Мир", P(wl.st), wl.direct ? "напрямую, без VPN" : "через VPN", "", "", chips(world, true), null, false, wl.because) : null);
-  { const rt = $("#route"), rows = rt.querySelectorAll(".hop"); rt.classList.toggle("branched", !!wl?.direct);
-    if (wl?.direct && rows.length >= 4) { rows[2].classList.add("mainend"); rows[3].classList.add("branch"); drawBranch(rt, rows[0].querySelector(".node"), rows[3].querySelector(".node"), P(wl.st)); }
+  // 0.9.5: мир — всегда ветка: напрямую — от «Интернета», через VPN — от «VPN»
+  { const rt = $("#route"), rows = rt.querySelectorAll(".hop"); rt.classList.toggle("branched", !!wl);
+    if (wl && rows.length >= 4) { rows[2].classList.add("mainend"); rows[3].classList.add("branch"); drawBranch(rt, rows[wl.direct ? 0 : 1].querySelector(".node"), rows[3].querySelector(".node"), P(wl.st)); }
     else rt.querySelectorAll("svg.branchline").forEach((x) => x.remove()); }
   // звенья против порогов (медиана трёх проверок)
   $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин` : "Ещё не проверяли";
@@ -777,9 +778,11 @@ function renderConn() {
   // справа — по каждому сервису: каким входом проверяем и когда последний раз ответил (история за 7 дней)
   const ago = (t) => { if (!t) return "ни разу за неделю"; const m = Math.round((Date.now() - t) / 60000); return m < 2 ? "только что" : m < 60 ? `${m} мин назад` : new Date(t).toDateString() === new Date().toDateString() ? `сегодня в ${hhmm(t)}` : when(t); };
   $("#svcState").replaceChildren(el("span", { class: "sub", style: "margin:0", text: "Подключение по сервисам" }), ...(S.services || []).map((x) => {
-    const st = x.ok ? "good" : x.note ? "warn" : x.ok === false ? "bad" : "idle";
-    return el("div", { class: `row2 ${st}` }, el("span", { class: "dot" }), el("b", { text: x.name }),
-      el("small", { text: `вход: ${x.note ? "не задан" : x.auth || "—"}` }), el("small", { text: `последний успех: ${ago(x.last_ok_ms)}` }));
+    // 0.9.5: пока идёт проверка (после входа — сразу), прошлый результат устарел: крутилка вместо точки, «проверяю…»
+    const busy = !!S.checking, st = busy ? "idle" : x.ok ? "good" : x.note ? "warn" : x.ok === false ? "bad" : "idle";
+    const auth = busy && (x.note || !x.auth) ? (S.login ? "проверяю…" : "не задан") : x.note ? "не задан" : x.auth || "—";
+    return el("div", { class: `row2 ${st}${busy ? " busy" : ""}` }, el("span", { class: busy ? "spin" : "dot" }), el("b", { text: x.name }),
+      el("small", { text: `вход: ${auth}` }), el("small", { text: `последний успех: ${ago(x.last_ok_ms)}` }));
   }));
   const views = { route: "Маршрут", dash: "Приборная панель", strip: "Лента часа" };
   const curView = S.prefs.view === "gauge" || S.prefs.view === "panel" ? "dash" : S.prefs.view;
@@ -887,10 +890,10 @@ async function news() { if (!S || S.prefs.last_seen_version === S.version) retur
 // ---------- AI-АГЕНТ ----------
 function renderAgent() {
   const base = `http://${location.host}`;
-  $("#cmdCode").textContent = `claude mcp add --transport http vpn-monitor ${base}/mcp`;
-  $("#cmdCodex").textContent = `codex mcp add vpn-monitor --url ${base}/mcp`;
-  $("#cmdCodexToml").textContent = `[mcp_servers.vpn-monitor]\nurl = "${base}/mcp"`;
-  $("#cmdDesktop").textContent = JSON.stringify({ mcpServers: { "vpn-monitor": { type: "http", url: `${base}/mcp` } } }, null, 2);
+  $("#cmdCode").textContent = `claude mcp add --transport http domini-vpn-monitor ${base}/mcp`;
+  $("#cmdCodex").textContent = `codex mcp add domini-vpn-monitor --url ${base}/mcp`;
+  $("#cmdCodexToml").textContent = `[mcp_servers.domini-vpn-monitor]\nurl = "${base}/mcp"`;
+  $("#cmdDesktop").textContent = JSON.stringify({ mcpServers: { "domini-vpn-monitor": { type: "http", url: `${base}/mcp` } } }, null, 2);
   $("#cmdCurl").textContent = `curl ${base}/api/state\ncurl ${base}/api/summary`;
   document.querySelectorAll(".copyi").forEach((b) => { if (!b.firstChild) b.append(svgIcon(COPY_D)); });
 }
@@ -936,6 +939,9 @@ function showTab() { let [t, part] = location.hash.slice(1).split("/"); if (t ==
   document.querySelectorAll("nav.tabs a").forEach((a) => a.setAttribute("aria-current", a.getAttribute("href") === `#${t}` ? "page" : "false"));
   if (t === "history") { loadHistory(); loadNets(); } if (t === "settings") { pollDiag(); loadLog(); loadTickets(); } if (t === "welcome") renderWelcome(); if (t === "agent") renderAgent(); if (t === "release-notes") renderNotes();
   // #settings/diagnostics — из меню у иконки «Поддержка в Jira»: диагностика и запрос в поддержку
+  // #settings/support — кнопка «Поддержка в Jira» в меню у иконки (0.9.5): сразу диалог запроса; адрес — на диагностику,
+  // чтобы повторный клик в меню снова открыл диалог (тот же адрес не даёт hashchange)
+  if (part === "support") { history.replaceState(null, "", "#settings/diagnostics"); part = "diagnostics"; openSupport(); }
   if (part) { const target = document.getElementById(part === "diagnostics" ? "diagnostics" : part); if (target) setTimeout(() => target.scrollIntoView({ block: "start" }), 50); } }
 addEventListener("hashchange", showTab);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { range = b.dataset.range; document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); loadHistory(); }));

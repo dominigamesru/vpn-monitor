@@ -584,6 +584,7 @@ fn spawn_checker(
             {
                 let mut sh = lock(&shared);
                 sh.checking = false;
+                vpn_monitor::progress::end();
                 // «после сна» в историю не пишем — это не данные о VPN
                 if !snap.waking
                     && let Err(e) = sh

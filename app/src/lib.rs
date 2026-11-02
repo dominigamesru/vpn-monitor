@@ -19,6 +19,7 @@ pub mod notify;
 pub mod office;
 pub mod prefs;
 pub mod probe;
+pub mod progress;
 pub mod route;
 pub mod score;
 pub mod secrets;

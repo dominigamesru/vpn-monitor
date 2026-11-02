@@ -1,7 +1,7 @@
 # VPN Monitor — локальный API (для скриптов и ИИ-агентов)
 
 Адрес: `http://127.0.0.1:{port}` — только с этой машины. Меняющие запросы (POST, DELETE) требуют заголовка
-`X-VPN-Monitor: 1`. Ответы — JSON (UTF-8), обратно совместимы: поля только добавляются. Секретов в ответах нет.
+`X-Domini-VPN-Monitor: 1`. Ответы — JSON (UTF-8), обратно совместимы: поля только добавляются. Секретов в ответах нет.
 
 | Метод | Адрес | Что делает |
 |---|---|---|
@@ -38,7 +38,7 @@ description: Состояние VPN в офис Domini на этой машин�
 ---
 1. Состояние: `curl -s http://127.0.0.1:{port}/api/state` — смотри `snapshot.color`, `snapshot.badge`, `snapshot.score`.
    `badge = novpn` — VPN не включён; `weak` — плохой сам интернет; иначе оценка 1–99 (≥70 — хорошо).
-2. Проверить сейчас: `curl -s -X POST -H "X-VPN-Monitor: 1" http://127.0.0.1:{port}/api/check`, подождать, пока
+2. Проверить сейчас: `curl -s -X POST -H "X-Domini-VPN-Monitor: 1" http://127.0.0.1:{port}/api/check`, подождать, пока
    `/api/state` → `checking: false`.
 3. Почему плохо: `POST /api/diagnostics`, затем `GET /api/diagnostics` до `running: false`; по каждой цели — шаги
    (DNS, маршрут, TCP, HTTP, вход) и `hint`.

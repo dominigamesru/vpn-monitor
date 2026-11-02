@@ -142,6 +142,9 @@ svg.branchline path { fill: none; stroke-width: 2; }
 /* время в шапке во время проверки — мерцает и не нажимается; ширина не меняется (шапка не уезжает) */
 .lnk.busy { pointer-events: none; animation: blink 1.2s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: .35; } }
+/* 0.9.5: узел, который проверяется сейчас */
+@keyframes probe { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent); opacity: .55; } }
+.hop.chk .pin { animation: probe 1s ease-in-out infinite; outline: 2px solid var(--accent); outline-offset: 1px; }
 .ib.busy svg { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .menu { display: grid; }
@@ -200,7 +203,7 @@ toApp("ready"); // сразу, без requestAnimationFrame: в скрытом �
 
 const api = async (path, opts = {}) => {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
-  if (init.method && init.method !== "GET") { init.headers["X-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
+  if (init.method && init.method !== "GET") { init.headers["X-Domini-VPN-Monitor"] = "1"; init.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, init); return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text();
 };
 const num = (x, d = 0) => x == null || Number.isNaN(x) ? "—" : Number(x).toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -351,7 +354,7 @@ function tipNet() {
     : n.kind === "phone" || n.metered ? "Большие обновления SVN лучше отложить до Wi‑Fi — проверки без скачивания."
     : netNew() ? "Вы здесь впервые — через 20 проверок будет своя норма этой сети." : "Сеть в порядке.";
   return tipBox(h("div", { class: "big", text: head }),
-    kv([n.signal != null ? ["сигнал", `${n.signal}%${n.band ? " · " + n.band : ""}`] : null, n.link_mbps ? ["связь с роутером", `${mbps(n.link_mbps)} — это не интернет`] : null, R()?.inet?.value != null ? ["интернет", mbps(R().inet.value)] : null,
+    kv([n.signal != null ? ["сигнал", `${n.signal}%${n.band ? " · " + n.band : ""}`] : null, R()?.inet?.value != null ? ["интернет", mbps(R().inet.value)] : null,
       ["норма этой сети", b?.net && b?.inet_mbps ? `интернет ${mbps(b.inet_mbps)}` : b?.net ? "есть" : "ещё копим"], n.metered ? ["лимитная сеть", "да"] : null]), bar, h("span", { text: what }));
 }
 function tipCall() {
@@ -404,7 +407,7 @@ function drawBranch(route, fromNode, toNode, st) {
   s.setAttribute("class", "branchline"); s.setAttribute("aria-hidden", "true");
   const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
   p.setAttribute("d", `M${x0} ${y0} C${x0} ${y0 + bend} ${x1} ${y0 + bend * 0.4} ${x1} ${y0 + bend * 1.4} L${x1} ${y1}`);
-  p.setAttribute("stroke", `var(--${st === "good" || st === "idle" ? "line" : st})`);
+  p.setAttribute("stroke", `var(--${st === "idle" ? "line" : st})`);
   s.append(p); route.append(s);
 }
 
@@ -418,7 +421,7 @@ function viewRoute() {
   const r = R(), sn = S?.snapshot;
   const hop = (key, st, name, desc, val, small, tipFn, tag) => {
     const cause = r?.cause === key;
-    const n = h("div", { class: `hop${cause ? " cause" : ""}`, "data-k": key, style: `--rail: var(--${st === "good" || st === "idle" ? "line" : st})` },
+    const n = h("div", { class: `hop${cause ? " cause" : ""}`, "data-k": key, style: `--rail: var(--${st === "idle" ? "line" : st})` },
       h("span", { class: `pin c-${st}` }),
       h("div", { style: "min-width:0" }, h("div", { class: "nm" }, name, key === "inet" && netIconName() ? tip(h("span", { class: `nico ${weakWifi() ? "warn" : ""}`, tabindex: "0", "aria-label": "Сеть" }, icon(netIconName())), tipNet) : null, cause ? h("span", { class: `tag bg-${st}`, text: "причина" }) : tag ? h("span", { class: "tag bg-idle", text: tag }) : null), desc),
       h("div", { class: "v" }, val, small ? h("small", { text: small }) : null));
@@ -514,7 +517,7 @@ function footer() {
   const pauseBtn = ib(S?.paused ? "play" : "pause", pauseLabel, !!S?.paused, (e) => S?.paused ? api("/api/pause", { method: "POST", body: JSON.stringify({ resume: true }) }).then(refresh) : openPop(e.currentTarget, pauseItems));
   $("#ft").replaceChildren(user, h("span", { class: "sp" }),
     (() => { const b = ib("refresh", S?.checking ? "Проверяю…" : "Проверить сейчас", false, checkNow); if (S?.checking) { b.classList.add("busy"); b.disabled = true; } return b; })(), pauseBtn,
-    ib("help", "Поддержка в Jira: отправить запрос со сводкой, диагностикой и логом", false, () => toApp("open:settings/diagnostics")),
+    ib("help", "Поддержка в Jira: открыть запрос со сводкой, диагностикой и логом", false, () => toApp("open:settings/support")),
     ib("history", "История за сутки и неделю", false, () => toApp("open:history")),
     ib("gear", "Настройки: вид меню, уведомления, обновления, вход", false, () => toApp("open:settings")));
 }
@@ -538,8 +541,13 @@ function render() {
   if (view === "gauge" || view === "panel") view = "dash";
   header();
   $("#root").replaceChildren(...({ route: viewRoute, dash: viewDash, strip: viewStrip }[view] || viewRoute)().filter(Boolean));
-  const rt = $("#root .route"); if (rt) { const wl = worldLink(R(), worldT()); rt.classList.toggle("branched", !!wl?.direct);
-    if (wl?.direct) drawBranch(rt, rt.querySelector('[data-k="inet"] .pin'), rt.querySelector('[data-k="world"] .pin'), S?.paused || !R() ? "idle" : wl.st); }
+  // 0.9.5: ход проверки — моргают узлы, где сейчас идёт проба; шаг — в полосе микроуведомлений
+  const pg = S?.checking ? S.progress : null;
+  document.querySelectorAll("#root .hop[data-k]").forEach((x) => x.classList.toggle("chk", !!pg?.active?.includes(x.dataset.k)));
+  progressToast(pg);
+  // 0.9.5: мир — всегда ветка: напрямую — от «Интернета», через VPN — от «VPN» (иначе цепочка «Офис → Мир» врёт)
+  const rt = $("#root .route"); if (rt) { const wl = worldLink(R(), worldT()); rt.classList.toggle("branched", !!wl);
+    if (wl) drawBranch(rt, rt.querySelector(`[data-k="${wl.direct ? "inet" : "vpn"}"] .pin`), rt.querySelector('[data-k="world"] .pin'), S?.paused || !R() ? "idle" : wl.st); }
   footer();
   fit();
 }
@@ -547,6 +555,10 @@ function render() {
 let lastH = 0;
 function fit() { requestAnimationFrame(() => { const v = Math.ceil(document.body.getBoundingClientRect().height); if (Math.abs(v - lastH) >= 2) { lastH = v; toApp(`h:${v}`); } }); }
 let timer = null, fails = 0;
+// полоса микроуведомлений во время проверки: последний изменившийся шаг; по окончании — итог шагов на 3,5 с
+function progressToast(pg) {
+  if (pg?.steps?.length) { const s = pg.steps[pg.last ?? pg.steps.length - 1]; progressToast.was = true; if (s.text !== progressToast.txt) { progressToast.txt = s.text; toast(s.text, true); } return; }
+  if (progressToast.was && !S?.checking) { progressToast.was = false; progressToast.txt = ""; toast("Проверка закончена"); } }
 async function refresh() {
   clearTimeout(timer);
   try {
@@ -557,7 +569,7 @@ async function refresh() {
     fails += 1; report(`данные: ${e.message || e}`);
     if (fails >= 2 || !S) { $("#root").replaceChildren(h("div", { class: "err" }, h("b", { text: "Нет ответа от VPN Monitor" }), h("span", { text: "Пробую снова каждые 5 секунд. Если не проходит — перезапустите приложение." }))); fit(); }
   }
-  timer = setTimeout(refresh, S?.checking ? 1000 : 5000);
+  timer = setTimeout(refresh, S?.checking ? 600 : 5000);
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (popFor) closePop(); else toApp("hide"); } });
 $("#scrim").addEventListener("click", closePop);
