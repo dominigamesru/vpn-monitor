@@ -292,6 +292,7 @@ pub fn evaluate(i: &Input, th: &Thresholds) -> Route {
 pub fn headline(r: &Route, client: &str) -> String {
     match (r.cause, r.why) {
         (Some("inet"), Some("lat")) => "Интернет отвечает с задержкой — VPN не виноват".into(),
+        (Some("inet"), Some("wifi")) => "Слабый Wi‑Fi — VPN не виноват".into(),
         (Some("inet"), _) => "Медленный интернет — VPN в порядке".into(),
         (Some("vpn"), Some("off")) => format!("VPN выключен — включите {client}"),
         (Some("vpn"), Some("lat")) => format!("VPN медленный — переподключите {client}"),

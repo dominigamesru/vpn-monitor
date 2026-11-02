@@ -96,6 +96,23 @@ ul.tickets .d { color: var(--muted); font-variant-numeric: tabular-nums; font-si
 .tklink { color: var(--accent); font-weight: 600; }
 .st.sent { color: var(--accent); } .st.sent i { background: none; color: var(--accent); }
 a.tmark { cursor: pointer; } a.tmark:hover line { stroke-width: 2.2; } svg a.tmark text { fill: var(--accent); font-weight: 600; text-decoration: underline; }
+.ann { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 12px 10px 12px 16px; margin-bottom: 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); }
+.ann.warn { border-left-color: var(--warn); } .ann.outage { border-left-color: var(--bad); background: var(--bad-bg); } .ann.resolved { border-left-color: var(--good); background: var(--good-bg); }
+.ann p { margin: 2px 0 0; } .ann a { color: var(--accent); font-size: 13px; }
+.annx { width: 30px; height: 30px; border: 0; background: none; color: var(--muted); font-size: 20px; line-height: 1; border-radius: 8px; cursor: pointer; } .annx:hover { color: var(--ink); background: var(--surface-2); }
+.nets summary { cursor: pointer; } .lineinfo .warnline { color: var(--warn); }
+.steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.steps li { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.steps small { display: block; color: var(--muted); }
+.steps .mark { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: var(--idle-bg); color: var(--muted); }
+.steps .mark.ok { background: var(--good-bg); color: var(--good); } .steps .mark.cur { background: var(--surface-2); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.codebox { position: relative; }
+.codebox .code { margin: 0; padding-right: 40px; }
+.copyi { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.codebox:hover .copyi, .copyi:focus-visible, .copyi.done { opacity: 1; }
+@media (hover: none) { .copyi { opacity: 1; } }
+.copyi:hover { color: var(--ink); } .copyi.done { color: var(--good); border-color: var(--good); }
+.copyi svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .newslink { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 13px; }
 ul.tickets li .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; max-width: 70ch; }
@@ -217,6 +234,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     <button class="ib" id="themeBtn" type="button" aria-label="Тема окна"></button>
   </header>
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
+  <div id="annBox"></div>
   <div class="banner" id="newsBanner" hidden><div id="newsText"></div><button class="btn ghost" id="newsOk">Понятно</button></div>
   <div class="banner" id="loginBanner" hidden style="--c: var(--warn)"><p>Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN.</p><a class="btn" href="#settings">Войти</a></div>
 
@@ -237,6 +255,15 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   </section>
 
   <!-- ИСТОРИЯ -->
+  <section data-tab="welcome" hidden>
+    <div class="card welcome">
+      <h2>Настроим VPN Monitor — три шага</h2>
+      <p class="sub">Каждый шаг отмечается сам, когда готов. Потом эта страница не показывается.</p>
+      <ol class="steps" id="wSteps"></ol>
+      <div class="row" style="justify-content:flex-end"><button class="btn ghost" id="wSkip" type="button">Пропустить</button><button class="btn" id="wDone" type="button">Готово</button></div>
+      <p class="sub" style="margin:12px 0 0">Что где: иконка в трее — оценка VPN; клик по ней — меню; «?» в меню — запрос в Jira; здесь, в окне, — история и настройки.</p>
+    </div>
+  </section>
   <section data-tab="history" hidden>
     <div class="filters">
       <div class="seg" role="group" aria-label="Период"><button data-range="day" aria-pressed="true">Сутки</button><button data-range="week" aria-pressed="false">7 дней</button></div>
@@ -258,6 +285,11 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
       <p class="sub">Отрезки, когда что-то было «плохо», и ваши запросы в Jira — от свежих к старым. Про отрезок можно сразу отправить запрос.</p>
       <div id="incidents"></div>
     </div>
+    <details class="card nets" id="netsBox">
+      <summary><b>Ваши сети</b> <span class="st" id="netsInfo"></span></summary>
+      <p class="sub" style="margin-top:8px">Где вы работали за неделю и какая там норма. Дома, в отеле и через телефон нормы разные — сравниваем с нормой текущей сети. Эта таблица уходит и в запрос в Jira.</p>
+      <div class="tablewrap" id="netsTable"></div>
+    </details>
   </section>
 
   <!-- ПОДКЛЮЧЕНИЕ -->
@@ -285,6 +317,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
         <div class="choice" id="viewChoice"></div>
         <h2 style="margin-top:18px">Уведомления</h2>
         <div class="opts" id="notifyOpts" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:10px"><button class="btn ghost sm" id="notifyTest" type="button">Показать тестовое уведомление</button><span class="st" id="notifyTestRes"></span></div>
       </div>
       <div class="card">
         <h2>Обновления</h2>
@@ -330,18 +363,23 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   <section data-tab="agent" hidden>
     <div class="card">
       <h2>Подключить к своему AI-агенту</h2>
-      <p class="sub">Агент (Claude Code, Claude Desktop) сможет сам спросить «что с VPN?», собрать отчёт для поддержки и
-        показать историю. Сервер слушает только этот компьютер; паролей и токенов в ответах нет.</p>
+      <p class="sub">Агент (Claude Code, Claude Desktop, ChatGPT Codex) сможет сам спросить «что с VPN?», собрать отчёт для
+        поддержки, показать историю и позвать вас уведомлением. Сервер слушает только этот компьютер; паролей и токенов в ответах нет.</p>
       <div class="agent">
         <div>
           <h3>Claude Code (терминал, VS Code)</h3>
-          <pre class="code" id="cmdCode"></pre>
-          <button class="btn ghost" type="button" data-copy="cmdCode">Скопировать команду</button>
+          <div class="codebox"><pre class="code" id="cmdCode"></pre><button class="copyi" type="button" data-copy="cmdCode" aria-label="Скопировать команду" title="Скопировать"></button></div>
+        </div>
+        <div>
+          <h3>ChatGPT — Codex (приложение, терминал, VS Code)</h3>
+          <div class="codebox"><pre class="code" id="cmdCodex"></pre><button class="copyi" type="button" data-copy="cmdCodex" aria-label="Скопировать команду" title="Скопировать"></button></div>
+          <p class="sub" style="margin:6px 0 0">Или в <code>~/.codex/config.toml</code>:</p>
+          <div class="codebox"><pre class="code" id="cmdCodexToml"></pre><button class="copyi" type="button" data-copy="cmdCodexToml" aria-label="Скопировать настройки" title="Скопировать"></button></div>
+          <p class="sub" style="margin:6px 0 0">Чат ChatGPT в браузере и в приложении подключает только серверы из интернета (https) — до VPN Monitor на этом компьютере он не достанет; локально работает Codex.</p>
         </div>
         <div>
           <h3>Claude Desktop и другие MCP-клиенты</h3>
-          <pre class="code" id="cmdDesktop"></pre>
-          <button class="btn ghost" type="button" data-copy="cmdDesktop">Скопировать настройки</button>
+          <div class="codebox"><pre class="code" id="cmdDesktop"></pre><button class="copyi" type="button" data-copy="cmdDesktop" aria-label="Скопировать настройки" title="Скопировать"></button></div>
         </div>
       </div>
     </div>
@@ -354,6 +392,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
           <li><b>vpn_check</b> — проверить сейчас (до минуты)</li>
           <li><b>vpn_report</b> — отчёт для запроса в поддержку</li>
           <li><b>vpn_diagnostics</b> — шаги проверки каждого сервиса</li>
+          <li><b>vpn_notify</b> — показать вам уведомление Windows (заголовок, текст, ссылка): агент зовёт, когда задача готова</li>
         </ul>
         <p class="sub">Попросите агента: «что с VPN?», «почему SVN медленный?», «собери отчёт для поддержки».</p>
       </div>
@@ -448,6 +487,7 @@ function verdict() {
   const down = officeT().filter((t) => !t.ok && !(r.auth_failed || []).includes(t.name)).map((t) => t.name);
   let title, sub;
   if (r.cause === "inet" && r.why === "lat") { title = "Интернет отвечает с задержкой"; sub = `${msf(r.inet_ms.value)} до интернета — VPN и офис медленные из‑за этого. VPN не виноват.`; }
+  else if (r.cause === "inet" && r.why === "wifi") { const n = sn.net || {}; title = "Слабый Wi‑Fi — VPN не виноват"; sub = `Сигнал ${n.signal ?? "—"}%${n.band ? " на " + n.band : ""}. Подойдите к роутеру${n.band === "2,4 ГГц" ? " или переключитесь на 5 ГГц" : ""}.`; }
   else if (r.cause === "inet") { title = "Медленный интернет"; sub = `${mbps(r.inet.value)} — SVN упирается в него. VPN в порядке.`; }
   else if (r.cause === "vpn" && r.why === "off") { title = "VPN выключен"; sub = `Включите ${clientName()} — Confluence, Jira и SVN без него недоступны.`; }
   else if (r.cause === "vpn" && r.why === "lat") { title = "VPN медленный"; sub = `Задержка до офиса ${msf(r.vpn.value)} (норма до ${msf(th.vpn_good_ms)}). Переподключите ${clientName()}.`; }
@@ -505,8 +545,22 @@ function renderNow() {
   } else norms.append(el("div", { class: "empty", text: "Сравнивать пока не с чем." }));
   const li = $("#lineinfo"); li.replaceChildren();
   if (sn.lite) li.append(el("span", { text: `${cap(sn.lite)} — проверяю без скачивания` }));
-  for (const a of S?.paused ? [] : sn.advice || []) li.append(el("span", { class: "advice", text: `Совет: ${a}` }));
+  // v0.9: сеть, звонок, 1 ГБ из SVN — одной строкой; авария у админов заменяет советы
+  const n = sn.net, c = sn.call, b = sn.baseline || {}, fresh = n && n.name && !b.net && (b.net_samples || 0) < 20;
+  if (n) { const kind = n.kind === "phone" ? "через телефон" : n.kind === "cable" ? "кабель" : `Wi‑Fi «${n.name}»`;
+    const parts = [kind, n.signal != null ? `сигнал ${n.signal}%${n.band ? " · " + n.band : ""}` : null, fresh ? "здесь вы впервые — норма копится" : b.net ? "своя норма этой сети" : null,
+      c ? ({ good: "звонок пойдёт", warn: "звонок: лучше без видео", bad: "звонок: связь рвётся" }[c.st]) : null,
+      r?.svn?.value ? `1 ГБ из SVN ≈ ${gbDur(r.svn.value)}${b.speed_mbps && !fresh ? `, обычно ≈ ${gbDur(b.speed_mbps)}` : ""}` : null].filter(Boolean);
+    li.append(el("span", { class: n.kind === "wifi" && n.signal != null && n.signal < 40 ? "warnline" : "", text: parts.join(" · ") })); }
+  if (!S?.paused && (S.announce || []).some((a) => a.level === "outage")) li.append(el("span", { class: "advice", text: "Звонить в поддержку не нужно — админы знают и чинят." }));
+  else for (const a of S?.paused ? [] : sn.advice || []) li.append(el("span", { class: "advice", text: `Совет: ${a}` }));
 }
+const gbDur = (mbps) => { const m = 8192 / mbps / 60; return m < 60 ? `${Math.round(m)} мин` : `${Math.floor(m / 60)} ч ${String(Math.round(m % 60)).padStart(2, "0")} мин`; };
+// сообщения админов (v0.9): плашки с крестиком сверху окна
+function renderAnnounce() { const box = $("#annBox"); box.replaceChildren();
+  for (const a of S?.announce || []) { const x = el("button", { class: "annx", type: "button", "aria-label": "Закрыть сообщение", title: "Закрыть", text: "×" });
+    x.addEventListener("click", async () => { const r = await api("/api/announce/dismiss", { method: "POST", body: JSON.stringify({ key: a.dismiss_key }) }).catch(() => null); if (r) S.announce = r.announce; renderAnnounce(); });
+    box.append(el("div", { class: `ann ${a.level}` }, el("div", {}, el("b", { text: a.title }), a.text ? el("p", { text: a.text }) : null, a.link && /^https:\/\//.test(a.link) ? el("a", { href: a.link, target: "_blank", rel: "noopener", text: "Подробнее" }) : null), x)); } }
 function tipTarget(x) {
   const st = x.ok ? "good" : x.reachable ? "warn" : "bad";
   return el("div", { class: "tip" }, el("span", { class: "big", text: x.name }),
@@ -757,6 +811,10 @@ async function openSupport(pre) {
     f.preview ? el("details", {}, el("summary", { text: f.name.endsWith(".log") ? "посмотреть последние строки" : "посмотреть начало" }), el("pre", { text: f.preview })) : null)));
   $("#supSend").disabled = false; $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal(); $("#supSummary").focus(); }
 $("#supCancel").addEventListener("click", () => $("#supDlg").close());
+// v0.9: увидеть, как выглядит уведомление, и что Windows его не прячет («Не беспокоить», настройки уведомлений)
+$("#notifyTest").addEventListener("click", async () => { const tb = $("#notifyTest"); tb.disabled = true; const r = await api("/api/notify/test", { method: "POST", body: "{}" }).catch(() => null); tb.disabled = false;
+  $("#notifyTestRes").textContent = r?.ok ? "Отправлено. Не видно? Проверьте «Не беспокоить» и Параметры → Система → Уведомления → Domini VPN Monitor." : `Не показалось: ${r?.error || "приложение не ответило"}`; });
+$("#wSkip").addEventListener("click", finishWelcome); $("#wDone").addEventListener("click", finishWelcome);
 $("#ticketsRefresh").addEventListener("click", refreshTickets);
 $("#supForm").addEventListener("submit", async (e) => { e.preventDefault(); const send = $("#supSend"); send.disabled = true; send.classList.add("busy"); send.textContent = "Отправляю…"; $("#supErr").textContent = "";
   const attach = [...$("#supFiles").querySelectorAll("input:checked")].map((x) => x.value);
@@ -784,10 +842,18 @@ async function news() { if (!S || S.prefs.last_seen_version === S.version) retur
 function renderAgent() {
   const base = `http://${location.host}`;
   $("#cmdCode").textContent = `claude mcp add --transport http vpn-monitor ${base}/mcp`;
+  $("#cmdCodex").textContent = `codex mcp add vpn-monitor --url ${base}/mcp`;
+  $("#cmdCodexToml").textContent = `[mcp_servers.vpn-monitor]\nurl = "${base}/mcp"`;
   $("#cmdDesktop").textContent = JSON.stringify({ mcpServers: { "vpn-monitor": { type: "http", url: `${base}/mcp` } } }, null, 2);
   $("#cmdCurl").textContent = `curl ${base}/api/state\ncurl ${base}/api/summary`;
+  document.querySelectorAll(".copyi").forEach((b) => { if (!b.firstChild) b.append(svgIcon(COPY_D)); });
 }
-document.addEventListener("click", async (e) => { const b = e.target.closest("[data-copy]"); if (!b) return; try { await navigator.clipboard.writeText($("#" + b.dataset.copy).textContent); const t = b.textContent; b.textContent = "Скопировано"; setTimeout(() => (b.textContent = t), 1500); } catch {} });
+const COPY_D = "M9 9h10v10H9zM5 15V5h10", CHECK_D = "M5 12l5 5 9-10";
+// копирование кода (v0.9): значок в углу блока при наведении; после нажатия — галочка на 2 секунды
+document.addEventListener("click", async (e) => { const b = e.target.closest("[data-copy]"); if (!b) return;
+  try { await navigator.clipboard.writeText($("#" + b.dataset.copy).textContent); } catch { const r = document.createRange(); r.selectNodeContents($("#" + b.dataset.copy)); getSelection().removeAllRanges(); getSelection().addRange(r); return; }
+  if (b.classList.contains("copyi")) { b.replaceChildren(svgIcon(CHECK_D)); b.classList.add("done"); b.title = "Скопировано"; clearTimeout(b._t); b._t = setTimeout(() => { b.replaceChildren(svgIcon(COPY_D)); b.classList.remove("done"); b.title = "Скопировать"; }, 2000); }
+  else { const t = b.textContent; b.textContent = "Скопировано"; setTimeout(() => { b.textContent = t; }, 2000); } });
 
 // ---------- ЧТО НОВОГО: CHANGELOG → карточки версий ----------
 // «## 0.7.1 — заголовок», пункты «- **Главное.** подробности», раздел «### Технически» — под спойлер
@@ -806,16 +872,36 @@ async function renderNotes() {
 $("#newsOk").addEventListener("click", async () => { $("#newsBanner").hidden = true; await api("/api/prefs", { method: "POST", body: JSON.stringify({ last_seen_version: S.version }) }); });
 
 // ---------- вкладки и опрос ----------
-const TABS = ["now", "history", "settings", "agent", "release-notes"];
+const TABS = ["now", "history", "settings", "agent", "release-notes", "welcome"];
+// первый запуск (v0.9): шаги отмечаются по живому состоянию
+function renderWelcome() { if (!$("section[data-tab=welcome]") || $("section[data-tab=welcome]").hidden) return;
+  const sn = S?.snapshot, r = sn?.route, svc = r?.services || [];
+  const officeOk = svc.length ? svc.every((x) => x.st === "good") : false;
+  const steps = [[!!S?.login, "Учётная запись AD", S?.login ? `${S.login} — Jira, Confluence и SVN приняли вход` : "Войдите — без этого Jira, Confluence и SVN не проверить", S?.login ? null : ["Войти", "#settings"]],
+    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", профиль " + sn.client.profile : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
+    [officeOk, "Офис отвечает", officeOk ? "Confluence, Jira и SVN отвечают" : S?.checking ? "Проверяю Confluence, Jira, SVN…" : "Ждём, когда офис ответит через VPN", null]];
+  const firstOpen = steps.findIndex((x) => !x[0]);
+  $("#wSteps").replaceChildren(...steps.map(([ok, t, d, act], i) => el("li", {}, el("span", { class: `mark ${ok ? "ok" : i === firstOpen ? "cur" : "wait"}`, text: ok ? "✓" : String(i + 1) }), el("div", {}, el("b", { text: t }), el("small", { text: d })), act ? el("a", { class: "btn ghost sm", href: act[1], text: act[0] }) : el("span"))));
+  $("#wDone").textContent = firstOpen < 0 ? "Всё готово" : "Готово"; }
+async function finishWelcome() { await api("/api/prefs", { method: "POST", body: JSON.stringify({ onboarded: true }) }).catch(() => {}); location.hash = "#now"; }
 // #conn и #log — старые адреса (меню у иконки до 0.6.3, ссылки в доках) → «Настройки»
 function showTab() { let [t, part] = location.hash.slice(1).split("/"); if (t === "log" || t === "conn") t = "settings"; if (!TABS.includes(t)) t = "now";
   document.querySelectorAll("section[data-tab]").forEach((s) => { s.hidden = s.dataset.tab !== t; });
   document.querySelectorAll("nav.tabs a").forEach((a) => a.setAttribute("aria-current", a.getAttribute("href") === `#${t}` ? "page" : "false"));
-  if (t === "history") loadHistory(); if (t === "settings") { pollDiag(); loadLog(); loadTickets(); } if (t === "agent") renderAgent(); if (t === "release-notes") renderNotes();
+  if (t === "history") { loadHistory(); loadNets(); } if (t === "settings") { pollDiag(); loadLog(); loadTickets(); } if (t === "welcome") renderWelcome(); if (t === "agent") renderAgent(); if (t === "release-notes") renderNotes();
   // #settings/diagnostics — из меню у иконки «Поддержка в Jira»: диагностика и запрос в поддержку
   if (part) { const target = document.getElementById(part === "diagnostics" ? "diagnostics" : part); if (target) setTimeout(() => target.scrollIntoView({ block: "start" }), 50); } }
 addEventListener("hashchange", showTab);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { range = b.dataset.range; document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); loadHistory(); }));
+async function loadNets() { try { const r = await api("/api/networks"); const list = r.networks || [], forgot = r.forgot || {};
+  $("#netsInfo").textContent = list.length ? `· ${list.length} ${list.length === 1 ? "сеть" : list.length < 5 ? "сети" : "сетей"} за неделю` : "· пока нет данных";
+  const KIND = { wifi: "Wi‑Fi", cable: "кабель", phone: "телефон" };
+  const tb = el("tbody"); for (const n of list) { const fg = el("button", { class: "btn ghost sm", type: "button", text: forgot[n.name] ? "Забыта" : "Забыть" }); if (forgot[n.name]) fg.disabled = true;
+    fg.addEventListener("click", async () => { fg.disabled = true; await api("/api/networks/forget", { method: "POST", body: JSON.stringify({ name: n.name }) }).catch(() => {}); loadNets(); });
+    tb.append(el("tr", {}, el("td", {}, el("b", { text: n.name }), el("span", { class: "st", text: ` ${KIND[n.kind] || ""}${n.signal != null ? ` · сигнал ${n.signal}%` : ""}` })), el("td", { class: "num", text: String(n.checks) }),
+      el("td", { class: "num", text: n.inet_mbps != null ? `${num(n.inet_mbps, 1)} Мбит/с` : "—" }), el("td", { class: "num", text: n.vpn_ms != null ? `${num(n.vpn_ms)} мс` : "—" }), el("td", { class: "num", text: n.svn_mbps != null ? num(n.svn_mbps, 1) : "—" }),
+      el("td", { class: "num", text: `${num(n.bad * 100)}%` }), el("td", { class: "num", text: when(n.last_ms) }), el("td", {}, fg))); }
+  $("#netsTable").replaceChildren(list.length ? el("table", {}, el("thead", {}, el("tr", {}, ...["Сеть", "Проверок", "Интернет", "VPN", "SVN, Мбит/с", "Плохо", "Последний раз", ""].map((t) => el("th", { text: t })))), tb) : el("div", { class: "empty", text: "Данные о сетях появятся после обновления — с первой проверки." })); } catch {} }
 async function loadHistory() { try { if (!TICKETS.length) { const r = await api("/api/tickets").catch(() => ({})); TICKETS = r.tickets || []; } H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
 let pt = null, off = false;
 async function poll(once) { clearTimeout(pt);
@@ -823,7 +909,7 @@ async function poll(once) { clearTimeout(pt);
     applyTheme();
     // фавикон = иконка в трее с текущим статусом
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
-    renderHeader();
+    renderHeader(); renderAnnounce(); renderWelcome();
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
     renderNow(); renderConn(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }

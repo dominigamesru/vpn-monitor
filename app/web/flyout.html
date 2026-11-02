@@ -113,6 +113,18 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .scrim[hidden] { display: none; }
 .pop { position: fixed; left: 12px; right: 12px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: 0 12px 32px rgba(0,0,0,.22); max-height: calc(100vh - 80px); overflow: auto; }
 .pop[hidden] { display: none; }
+/* v0.9: значок сети у «Интернета», плашки контекста, сообщения админов */
+.nico { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: 4px; color: var(--muted); vertical-align: -3px; cursor: help; }
+.nico svg { width: 15px; height: 15px; } .nico.warn { color: var(--warn); }
+.ctx { display: flex; flex-wrap: wrap; gap: 6px; }
+.cx { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 8px 3px 6px; border-radius: 7px; background: var(--bg-2); color: var(--muted); cursor: help; }
+.cx svg { width: 14px; height: 14px; } .cx.warn { color: var(--warn); background: var(--warn-bg); } .cx.bad { color: var(--bad); background: var(--bad-bg); }
+.ann { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 9px 6px 9px 12px; border-radius: 10px; background: var(--bg-2); border-left: 4px solid var(--accent); font-size: 12.5px; }
+.ann.warn { border-left-color: var(--warn); background: var(--warn-bg); } .ann.outage { border-left-color: var(--bad); background: var(--bad-bg); } .ann.resolved { border-left-color: var(--good); background: var(--good-bg); }
+.ann b { font-size: 13px; } .ann p { margin: 2px 0 0; } .ann a { color: var(--accent); font-size: 12px; }
+.ann .x { width: 24px; height: 24px; border: 0; background: none; color: var(--muted); border-radius: 6px; display: grid; place-items: center; padding: 0; }
+.ann .x:hover { color: var(--ink); background: rgba(0,0,0,.06); } .ann .x svg { width: 14px; height: 14px; }
+.sigbar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.15); overflow: hidden; margin: 2px 0 4px; } .sigbar i { display: block; height: 100%; }
 .menu .head { display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px 4px 10px; }
 .menu .head div { flex: 1; }
 .menu .head b { display: block; font-size: 13px; }
@@ -194,7 +206,14 @@ let S = null, H = [], view = "route";
 const TH = () => S?.thresholds || {};
 const R = () => S?.snapshot?.route || null;
 // своя норма (v0.7): медианы за неделю по клиенту и профилю VPN — поверх порогов из настроек
-const B = () => S?.snapshot?.baseline || null;
+// v0.9: в новой сети (меньше 20 проверок, своей нормы нет) «обычно X» не показываем — сравнивать не с чем
+const B = () => { const b = S?.snapshot?.baseline || null; return netNew() ? null : b; };
+const NET = () => S?.snapshot?.net || null;
+const netNew = () => { const n = S?.snapshot?.net, b = S?.snapshot?.baseline; return !!(n && n.name && (!b || (!b.net && (b.net_samples || 0) < 20))); };
+const weakWifi = () => { const n = NET(); return !!(n && n.kind === "wifi" && n.signal != null && n.signal < 40); };
+const outage = () => (S?.announce || []).some((a) => a.level === "outage");
+const gbMin = (mbps) => mbps > 0.05 ? 8192 / mbps / 60 : null;
+const dur = (m) => m == null ? "—" : m < 60 ? `${Math.round(m)} мин` : `${Math.floor(m / 60)} ч ${String(Math.round(m % 60)).padStart(2, "0")} мин`;
 const ICON = {
   refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
   pause: "M9 5v14M15 5v14",
@@ -209,6 +228,13 @@ const ICON = {
   vStrip: "M4 7h16M4 12h16M4 17h16M8 5v4M12 10v4M16 15v4",
   sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4",
   moon: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z",
+  wifi4: "M2 8.5a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0M12 19h.01",
+  wifi2: "M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0M12 19h.01",
+  wifi1: "M8.5 15.5a5 5 0 0 1 7 0M12 19h.01",
+  phone: "M8 2h8a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM11 18h2",
+  cable: "M7 3v4M17 3v4M5 7h14v4a7 7 0 0 1-14 0zM12 18v3",
+  cam: "M3 7h11a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM15 10l6-3v10l-6-3",
+  down: "M12 3v12M7 10l5 5 5-5M4 21h16",
 };
 const icon = (name) => sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: ICON[name] }));
 
@@ -249,6 +275,7 @@ function verdict() {
   const world = (sn.targets || []).filter((t) => t.role === "world"), worldDown = world.filter((t) => !t.ok).map((t) => t.name);
   let title, sub;
   if (r.cause === "inet" && r.why === "lat") { title = "Интернет отвечает с задержкой"; sub = `${ms(r.inet_ms.value)} до интернета — VPN и офис медленные из‑за этого. VPN не виноват.`; }
+  else if (r.cause === "inet" && r.why === "wifi") { const n = NET() || {}; title = "Слабый Wi‑Fi — VPN не виноват"; sub = `Сигнал ${n.signal ?? "—"}%${n.band ? " на " + n.band : ""}. Подойдите к роутеру${n.band === "2,4 ГГц" ? " или переключитесь на 5 ГГц" : ""}.`; }
   else if (r.cause === "inet") { title = "Медленный интернет"; sub = `${mbps(r.inet.value)} — SVN упирается в него. VPN в порядке.`; }
   else if (r.cause === "vpn" && r.why === "off") { title = "VPN выключен"; sub = `Включите ${clientName()} — Confluence, Jira и SVN без него недоступны.`; }
   else if (r.cause === "vpn" && r.why === "lat") { title = "VPN медленный"; sub = `Задержка до офиса ${ms(r.vpn.value)} (норма до ${ms(th.vpn_good_ms)}). Переподключите ${clientName()}.`; }
@@ -301,7 +328,47 @@ function tipSvn() {
   return tipBox(h("div", { class: "big", text: `SVN качает ${mbps(r.svn.value)}` }),
     kv([["комфортно", `от ${mbps(th.svn_good_mbps)}`], B()?.speed_mbps != null ? ["обычно у вас", mbps(B().speed_mbps)] : null, ["интернет даёт", mbps(r.inet.value)], r.inet.value ? ["доходит до SVN", `${num((r.svn.value / r.inet.value) * 100)}%`] : null]),
     spark(r.svn.raw), raw3(r.svn, (x) => num(x, 1)),
+    h("span", { class: "tm", text: `1 ГБ из SVN сейчас ≈ ${dur(gbMin(r.svn.value))}${B()?.speed_mbps ? `, обычно ≈ ${dur(gbMin(B().speed_mbps))}` : ""}` }),
     r.cause === "inet" ? h("span", { text: "Упирается в интернет: быстрее, чем он, не будет." }) : r.st_svn !== "good" ? h("span", { text: "Интернет в норме — скорость теряется в VPN." }) : null);
+}
+
+// ---------- контекст сети (v0.9, вариант A+C) ----------
+function netIconName() { const n = NET(); if (!n) return null; if (n.kind === "phone") return "phone"; if (n.kind === "cable") return "cable"; const sg = n.signal ?? 100; return sg < 40 ? "wifi1" : sg < 65 ? "wifi2" : "wifi4"; }
+function tipNet() {
+  const n = NET(); if (!n) return null; const b = S?.snapshot?.baseline;
+  const head = n.kind === "phone" ? `Интернет через телефон${n.name ? " «" + n.name + "»" : ""}` : n.kind === "cable" ? "Кабель" : `Wi‑Fi «${n.name}»`;
+  const bar = n.signal != null ? h("div", { class: "sigbar" }, h("i", { class: `d-${n.signal < 40 ? "bad" : n.signal < 65 ? "warn" : "good"}`, style: `width:${n.signal}%` })) : null;
+  const what = weakWifi() ? "Сигнал слабый: подойдите к роутеру" + (n.band === "2,4 ГГц" ? " или переключитесь на 5 ГГц" : "") + ". VPN не виноват."
+    : n.kind === "phone" || n.metered ? "Большие обновления SVN лучше отложить до Wi‑Fi — проверки без скачивания."
+    : netNew() ? "Вы здесь впервые — через 20 проверок будет своя норма этой сети." : "Сеть в порядке.";
+  return tipBox(h("div", { class: "big", text: head }),
+    kv([n.signal != null ? ["сигнал", `${n.signal}%${n.band ? " · " + n.band : ""}`] : null, n.link_mbps ? ["скорость Wi‑Fi", mbps(n.link_mbps)] : null,
+      ["норма этой сети", b?.net && b?.inet_mbps ? `интернет ${mbps(b.inet_mbps)}` : b?.net ? "есть" : "ещё копим"], n.metered ? ["лимитная сеть", "да"] : null]), bar, h("span", { text: what }));
+}
+function tipCall() {
+  const c = S?.snapshot?.call; if (!c) return null;
+  const word = { good: "звонок пойдёт", warn: "лучше без видео", bad: "связь рвётся" }[c.st];
+  return tipBox(h("div", { class: "big", text: `Звонок: ${word}` }), kv([["задержка скачет", `на ${num(c.jitter_ms)} мс`], ["потери", `${num(c.loss_pct, 1)}%`]]),
+    h("span", { text: c.st === "warn" ? "Голос пойдёт, видео будет подвисать — выключите камеру." : c.st === "bad" ? "Связь рвётся: подключитесь с телефона или перенесите звонок." : "Видео и экран пойдут." }));
+}
+// плашки — только когда что-то не в норме (вариант C)
+function ctxRow() {
+  if (S?.paused || !S?.snapshot) return null; const n = NET(), c = S.snapshot.call, r = R(), out = [];
+  const chip = (st, ic, text, fn) => tip(h("span", { class: `cx ${st}`, tabindex: "0" }, icon(ic), h("span", { text })), fn);
+  if (weakWifi()) out.push(chip("warn", "wifi1", `слабый Wi‑Fi ${n.signal}%`, tipNet));
+  else if (n && (n.kind === "phone" || n.metered)) out.push(chip("warn", "phone", n.kind === "phone" ? "через телефон" : "лимитная сеть", tipNet));
+  else if (netNew()) out.push(chip("", netIconName() || "wifi4", "новая сеть", tipNet));
+  if (c && c.st !== "good") out.push(chip(c.st, "cam", c.st === "warn" ? "лучше без видео" : "связь рвётся", tipCall));
+  const now = r?.svn?.value, usual = S.snapshot.baseline?.speed_mbps;
+  if (now && usual && !netNew() && gbMin(now) > 2 * gbMin(usual)) out.push(chip("warn", "down", `1 ГБ ≈ ${dur(gbMin(now))}`, tipSvn));
+  return out.length ? h("div", { class: "ctx" }, ...out) : null;
+}
+// сообщения админов (v0.9) — плашка с крестиком, сама не исчезает
+function annBlocks() {
+  if (!S?.announce?.length) return [];
+  return S.announce.map((a) => h("div", { class: `ann ${a.level}` },
+    h("div", {}, h("b", { text: a.title }), a.text ? h("p", { text: a.text }) : null, a.link && /^https:\/\//.test(a.link) ? h("a", { href: "#", text: "Подробнее", onclick: (e) => { e.preventDefault(); toApp(`url:${a.link}`); } }) : null),
+    h("button", { class: "x", type: "button", "aria-label": "Закрыть сообщение", title: "Закрыть", onclick: async () => { const r = await api("/api/announce/dismiss", { method: "POST", body: JSON.stringify({ key: a.dismiss_key }) }).catch(() => null); if (r) S.announce = r.announce; render(); } }, icon("close"))));
 }
 
 // ---------- виды ----------
@@ -316,12 +383,12 @@ function viewRoute() {
     const cause = r?.cause === key;
     const n = h("div", { class: `hop${cause ? " cause" : ""}`, style: `--rail: var(--${st === "good" || st === "idle" ? "line" : st})` },
       h("span", { class: `pin c-${st}` }),
-      h("div", { style: "min-width:0" }, h("div", { class: "nm" }, name, cause ? h("span", { class: `tag bg-${st}`, text: "причина" }) : tag ? h("span", { class: "tag bg-idle", text: tag }) : null), desc),
+      h("div", { style: "min-width:0" }, h("div", { class: "nm" }, name, key === "inet" && netIconName() ? tip(h("span", { class: `nico ${weakWifi() ? "warn" : ""}`, tabindex: "0", "aria-label": "Сеть" }, icon(netIconName())), tipNet) : null, cause ? h("span", { class: `tag bg-${st}`, text: "причина" }) : tag ? h("span", { class: "tag bg-idle", text: tag }) : null), desc),
       h("div", { class: "v" }, val, small ? h("small", { text: small }) : null));
     return tip(n, tipFn);
   };
   const latBad = r && r.st_inet_lat !== "good";
-  return [verdictBlock(), ...notes(), h("div", { class: "route" },
+  return [...annBlocks(), verdictBlock(), ...notes(), h("div", { class: "route" },
     hop("inet", P(r?.st_inet), "Интернет", h("div", { class: "ds", text: latBad ? `задержка ${ms(r.inet_ms.value)}` : "без VPN" }), r ? mbps(r.inet.value) : "—", r ? (latBad ? "медленно отвечает" : `задержка ${ms(r.inet_ms.value)}`) : "", tipInet),
     hop("vpn", P(r?.st_vpn), "VPN", h("div", { class: "ds", text: clientFull(), title: clientFull() }), r?.vpn.value == null ? "нет" : ms(r.vpn.value), r?.vpn.value == null ? "не подключён" : B()?.latency_ms != null ? `обычно ${ms(B().latency_ms)}` : `норма до ${ms(TH().vpn_good_ms)}`, tipVpn, r?.because_vpn),
     hop("office", P(r?.st_office), "Офис", h("div", { class: "svc" }, ...office().map(svcChip)), r?.svn.value == null ? "—" : mbps(r.svn.value), r?.svn.value == null ? "" : B()?.speed_mbps != null ? `SVN · обычно ${num(B().speed_mbps, 1)}` : `SVN · комфортно от ${num(TH().svn_good_mbps)}`, tipSvn, r?.because_office),
@@ -332,7 +399,7 @@ function viewDash() {
   const gauge = (v, max, mark, st, norm) => h("div", { class: "gauge" }, h("i", { class: `d-${st}`, style: `width:${Math.min(100, ((v ?? 0) / max) * 100)}%` }), h("b", { style: `left:${(mark / max) * 100}%` }), norm != null ? h("b", { class: "norm", style: `left:${Math.min(99, (norm / max) * 100)}%` }) : null);
   const tile = (k, st, val, unit, g, nb, tipFn) => tip(h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${st}` }), k), h("div", { class: "val" }, val, unit ? h("small", { text: ` ${unit}` }) : null), g, h("div", { class: "nb", text: nb })), tipFn);
   const svn = r?.svn.value, vpn = r?.vpn.value;
-  return [verdictBlock(), ...notes(), h("div", { class: "tiles" },
+  return [...annBlocks(), verdictBlock(), ...notes(), h("div", { class: "tiles" },
     tile("Скорость SVN", P(r?.st_svn), svn == null ? "—" : num(svn, 1), "Мбит/с", gauge(svn, Math.max(16, th.svn_good_mbps * 2), th.svn_good_mbps, P(r?.st_svn), B()?.speed_mbps), r?.because_office ? `${r.because_office} · норма от ${num(th.svn_good_mbps)}` : `норма от ${num(th.svn_good_mbps)}`, tipSvn),
     tile("Задержка VPN", P(r?.st_vpn_lat ?? r?.st_vpn), vpn == null ? "нет" : vpn >= 1000 ? num(vpn / 1000, 1) : num(vpn), vpn == null ? "" : vpn >= 1000 ? "с" : "мс", gauge(vpn == null ? 0 : Math.min(vpn, th.vpn_bad_ms * 1.15), th.vpn_bad_ms * 1.15, th.vpn_good_ms, P(r?.st_vpn_lat ?? r?.st_vpn), B()?.latency_ms != null ? Math.min(B().latency_ms, th.vpn_bad_ms * 1.15) : null), vpn == null ? "не подключён" : r?.because_vpn ? `${r.because_vpn} · норма до ${ms(th.vpn_good_ms)}` : `норма до ${ms(th.vpn_good_ms)}`, tipVpn),
     // приборная панель: мир — под интернетом (ChatGPT и др. идут напрямую или через VPN), справа — только офис
@@ -348,7 +415,7 @@ function viewStrip() {
   const vpnCells = recs.map((x) => x.b === "novpn" ? "bad" : x.lat == null ? "idle" : x.lat <= th.vpn_good_ms ? "good" : x.lat <= th.vpn_bad_ms ? "warn" : "bad");
   const svnCells = recs.map((x) => x.b === "novpn" ? "bad" : x.spd == null ? "idle" : x.spd >= th.svn_good_mbps ? "good" : x.spd >= th.svn_bad_mbps ? "warn" : "bad");
   const strip = (name, cells, val, tipFn) => tip(h("div", { class: "strip" }, h("span", { class: "mut", text: name }), h("div", { class: "cells" }, ...pad(cells).map((c) => h("i", { class: `d-${S?.paused ? "idle" : c}` }))), h("span", { class: "n", text: val })), tipFn);
-  return [verdictBlock(), ...notes(), h("div", { class: "strips" },
+  return [...annBlocks(), verdictBlock(), ...notes(), h("div", { class: "strips" },
     strip("Интернет", inetCells, r ? mbps(r.inet.value) : "—", tipInet),
     strip("VPN", vpnCells, r?.vpn.value == null ? "нет" : ms(r.vpn.value), tipVpn),
     strip("SVN", svnCells, r?.svn.value == null ? "—" : mbps(r.svn.value), tipSvn),
@@ -359,7 +426,9 @@ function notes() {
   if (!S?.login && (sn?.targets || []).some((t) => t.note)) out.push(h("div", { class: "note" }, "Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN", h("button", { type: "button", text: "Войти", onclick: () => toApp("open:settings") })));
   if (sn?.lite) out.push(h("div", { class: "note", text: `${sn.lite[0].toUpperCase()}${sn.lite.slice(1)} — проверяю без скачивания` }));
   // совет по известной причине (v0.7) — что сделать самому до обращения в поддержку
-  if (!S?.paused && sn?.advice?.length) out.push(h("div", { class: "note advice", text: `Совет: ${sn.advice[0]}` }));
+  if (!S?.paused && outage()) out.push(h("div", { class: "note advice", text: "Звонить в поддержку не нужно — админы знают и чинят." }));
+  else if (!S?.paused && sn?.advice?.length) out.push(h("div", { class: "note advice", text: `Совет: ${sn.advice[0]}` }));
+  const c = ctxRow(); if (c) out.push(c);
   return out;
 }
 

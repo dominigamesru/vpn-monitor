@@ -61,6 +61,16 @@ pub struct Record {
     pub ovh: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share: Option<f64>,
+    /// v0.9: сеть (SSID или «кабель») — своя норма для каждой сети; тип (`wifi`/`cable`/`phone`); сигнал Wi‑Fi, %;
+    /// разброс задержки до офиса, мс (звонок).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jit: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +155,14 @@ impl Record {
             ilat: s.internet_latency_ms.map(round1),
             ovh: s.overhead_ms.map(round1),
             share: s.share.map(round2),
+            net: s
+                .net
+                .as_ref()
+                .map(|n| n.name.clone())
+                .filter(|n| !n.is_empty()),
+            nk: s.net.as_ref().map(|n| n.kind.clone()),
+            sig: s.net.as_ref().and_then(|n| n.signal),
+            jit: s.call.as_ref().map(|c| c.jitter_ms),
         }
     }
 }
@@ -236,36 +254,82 @@ impl Store {
         th: &crate::settings::Thresholds,
         client: Option<&str>,
     ) -> Option<crate::score::Baseline> {
+        self.baseline_for(th, client, None, &BTreeMap::new())
+    }
+
+    /// Своя норма (v0.9): сначала по сети и клиенту VPN, потом по сети, по клиенту, по всем — что набрало
+    /// `baseline_min_samples`. «Забытая» сеть (`forgot`: сеть → мс) не учитывает свои записи до забывания.
+    pub fn baseline_for(
+        &self,
+        th: &crate::settings::Thresholds,
+        client: Option<&str>,
+        net: Option<&str>,
+        forgot: &BTreeMap<String, i64>,
+    ) -> Option<crate::score::Baseline> {
         let from = now_ms() - th.baseline_days as i64 * 86_400_000;
         let all: Vec<&Record> = self
             .records
             .iter()
             .filter(|r| r.t >= from && r.b == "score")
+            .filter(|r| {
+                match (
+                    r.net.as_deref(),
+                    r.net.as_deref().and_then(|n| forgot.get(n)),
+                ) {
+                    (Some(_), Some(at)) => r.t > *at,
+                    _ => true,
+                }
+            })
             .collect();
-        let mine: Vec<&Record> = client
-            .map(|c| {
+        let of_net: Vec<&Record> = net
+            .map(|n| {
                 all.iter()
                     .copied()
-                    .filter(|r| r.vpn.as_deref() == Some(c))
+                    .filter(|r| r.net.as_deref() == Some(n))
                     .collect()
             })
             .unwrap_or_default();
-        let (ok, used_client) = if mine.len() >= th.baseline_min_samples {
-            (mine, client.map(str::to_string))
-        } else {
-            (all, None)
+        let net_samples = of_net.len();
+        fn by_client<'a>(v: &[&'a Record], client: Option<&str>) -> Vec<&'a Record> {
+            client
+                .map(|c| {
+                    v.iter()
+                        .copied()
+                        .filter(|r| r.vpn.as_deref() == Some(c))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        let enough = |v: &Vec<&Record>| v.len() >= th.baseline_min_samples;
+        let (ok, used_client, used_net) = {
+            let nc = by_client(&of_net, client);
+            if enough(&nc) {
+                (nc, client.map(str::to_string), net.map(str::to_string))
+            } else if enough(&of_net) {
+                (of_net, None, net.map(str::to_string))
+            } else {
+                let c = by_client(&all, client);
+                if enough(&c) {
+                    (c, client.map(str::to_string), None)
+                } else {
+                    (all, None, None)
+                }
+            }
         };
-        let med = |mut v: Vec<f64>| -> Option<f64> {
-            if v.len() < th.baseline_min_samples {
+        let med = |mut v: Vec<f64>, min: usize| -> Option<f64> {
+            if v.len() < min {
                 return None;
             }
             v.sort_by(|a, b| a.total_cmp(b));
             Some(v[v.len() / 2])
         };
-        let lat = med(ok.iter().filter_map(|r| r.lat).collect());
-        let spd = med(ok.iter().filter_map(|r| r.spd).collect());
-        let ovh = med(ok.iter().filter_map(|r| r.ovh).collect());
-        let share = med(ok.iter().filter_map(|r| r.share).collect());
+        let n = th.baseline_min_samples;
+        let lat = med(ok.iter().filter_map(|r| r.lat).collect(), n);
+        let spd = med(ok.iter().filter_map(|r| r.spd).collect(), n);
+        let ovh = med(ok.iter().filter_map(|r| r.ovh).collect(), n);
+        let share = med(ok.iter().filter_map(|r| r.share).collect(), n);
+        // интернет мерится реже — хватит 5 замеров
+        let inet = med(ok.iter().filter_map(|r| r.inet).collect(), 5);
         (lat.is_some() || spd.is_some() || ovh.is_some() || share.is_some()).then_some(
             crate::score::Baseline {
                 latency_ms: lat,
@@ -274,6 +338,9 @@ impl Store {
                 overhead_ms: ovh,
                 share,
                 client: used_client,
+                net: used_net,
+                net_samples,
+                inet_mbps: inet,
             },
         )
     }
@@ -286,6 +353,85 @@ impl Store {
             .cloned()
             .collect()
     }
+}
+
+/// Статистика по сети за неделю (v0.9) — раздел «Ваши сети» и описание запроса в Jira.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct NetStat {
+    pub name: String,
+    pub kind: String,
+    pub checks: usize,
+    pub last_ms: i64,
+    pub inet_mbps: Option<f64>,
+    pub vpn_ms: Option<f64>,
+    pub svn_mbps: Option<f64>,
+    pub signal: Option<u32>,
+    /// Доля проверок «плохо» (красный), 0..1.
+    pub bad: f64,
+}
+
+/// Сети из записей: по каждой — сколько проверок, медианы, доля «плохо»; свежие первыми.
+pub fn networks(records: &[Record]) -> Vec<NetStat> {
+    let mut by: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
+    for r in records {
+        if let Some(n) = r.net.as_deref().filter(|n| !n.is_empty()) {
+            by.entry(n.to_string()).or_default().push(r);
+        }
+    }
+    let med = |mut v: Vec<f64>| -> Option<f64> {
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(|a, b| a.total_cmp(b));
+        Some(v[v.len() / 2])
+    };
+    let mut out: Vec<NetStat> = by
+        .into_iter()
+        .map(|(name, rs)| NetStat {
+            kind: rs
+                .iter()
+                .rev()
+                .find_map(|r| r.nk.clone())
+                .unwrap_or_default(),
+            checks: rs.len(),
+            last_ms: rs.iter().map(|r| r.t).max().unwrap_or(0),
+            inet_mbps: med(rs.iter().filter_map(|r| r.inet).collect()),
+            vpn_ms: med(rs.iter().filter_map(|r| r.lat).collect()),
+            svn_mbps: med(rs.iter().filter_map(|r| r.spd).collect()),
+            signal: med(rs.iter().filter_map(|r| r.sig.map(f64::from)).collect()).map(|v| v as u32),
+            bad: rs.iter().filter(|r| r.c == "red").count() as f64 / rs.len() as f64,
+            name,
+        })
+        .collect();
+    out.sort_by_key(|n| std::cmp::Reverse(n.last_ms));
+    out
+}
+
+/// Те же сети текстом — для описания запроса в Jira.
+pub fn networks_text(list: &[NetStat]) -> String {
+    let f = |v: Option<f64>, u: &str| {
+        v.map(|x| format!("{x:.1} {u}"))
+            .unwrap_or_else(|| "—".into())
+    };
+    let mut out = vec![
+        "Сети за неделю (сеть, тип, проверок, интернет, VPN, SVN, сигнал, плохо):".to_string(),
+    ];
+    for n in list {
+        out.push(format!(
+            "- {} ({}): {}, интернет {}, VPN {}, SVN {}, сигнал {}, плохо {:.0}%",
+            n.name,
+            if n.kind.is_empty() { "?" } else { &n.kind },
+            n.checks,
+            f(n.inet_mbps, "Мбит/с"),
+            f(n.vpn_ms, "мс"),
+            f(n.svn_mbps, "Мбит/с"),
+            n.signal
+                .map(|s| format!("{s}%"))
+                .unwrap_or_else(|| "—".into()),
+            n.bad * 100.0
+        ));
+    }
+    out.join("\n")
 }
 
 #[cfg(test)]
@@ -307,7 +453,84 @@ mod tests {
             ilat: None,
             ovh: None,
             share: None,
+            net: None,
+            nk: None,
+            sig: None,
+            jit: None,
         }
+    }
+
+    #[test]
+    fn baseline_per_network_and_forget() {
+        let th = crate::settings::Settings::embedded().thresholds;
+        let now = now_ms();
+        let meta = Meta {
+            computer: "PC".into(),
+            user: "u".into(),
+            version: "0".into(),
+            login: String::new(),
+            period: String::new(),
+        };
+        let dir = std::env::temp_dir().join(format!("vpnmon-net-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut st = Store::open(&dir, meta);
+        for i in 0..80 {
+            let mut r = rec(now - i * 60_000);
+            r.net = Some("Rykov_5G".into());
+            r.spd = Some(12.0);
+            st.records.push(r);
+            let mut r = rec(now - i * 60_000 - 30_000);
+            r.net = Some("Rykov_2G".into());
+            r.spd = Some(3.0);
+            st.records.push(r);
+        }
+        let b = st
+            .baseline_for(&th, None, Some("Rykov_5G"), &BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            (b.speed_mbps, b.net.as_deref(), b.net_samples),
+            (Some(12.0), Some("Rykov_5G"), 80)
+        );
+        // новая сеть — норма общая, проверок в сети 0 («здесь вы впервые»)
+        let b = st
+            .baseline_for(&th, None, Some("Hotel_Lisboa"), &BTreeMap::new())
+            .unwrap();
+        assert_eq!((b.net, b.net_samples), (None, 0));
+        // «Забыть сеть» — её старые записи не в счёт
+        let forgot = BTreeMap::from([("Rykov_5G".to_string(), now + 1)]);
+        assert_eq!(
+            st.baseline_for(&th, None, Some("Rykov_5G"), &forgot)
+                .unwrap()
+                .net_samples,
+            0
+        );
+    }
+
+    #[test]
+    fn networks_stats() {
+        let now = now_ms();
+        let mut v = vec![];
+        for i in 0..10 {
+            let mut r = rec(now - i * 60_000);
+            r.net = Some("Rykov_2G".into());
+            r.nk = Some("wifi".into());
+            r.sig = Some(30 + i as u32);
+            if i < 4 {
+                r.c = "red".into();
+            }
+            v.push(r);
+        }
+        let mut r = rec(now - 86_400_000);
+        r.net = Some("кабель".into());
+        v.push(r);
+        let n = networks(&v);
+        assert_eq!(
+            (n[0].name.as_str(), n[0].checks, n[0].kind.as_str()),
+            ("Rykov_2G", 10, "wifi")
+        );
+        assert!((n[0].bad - 0.4).abs() < 1e-9);
+        assert_eq!(n[1].name, "кабель");
+        assert!(networks_text(&n).contains("Rykov_2G (wifi): 10"));
     }
 
     #[test]

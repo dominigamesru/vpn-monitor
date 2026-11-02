@@ -52,7 +52,8 @@ pub fn multipart(boundary: &str, filename: &str, content: &[u8]) -> Vec<u8> {
         .filter(|c| !matches!(c, '"' | '\r' | '\n'))
         .collect();
     let mut out = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{safe}\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{safe}\"\r\nContent-Type: {}\r\n\r\n",
+        if safe.ends_with(".zip") { "application/zip" } else if safe.ends_with(".json") { "application/json; charset=utf-8" } else { "text/plain; charset=utf-8" }
     )
     .into_bytes();
     out.extend_from_slice(content);

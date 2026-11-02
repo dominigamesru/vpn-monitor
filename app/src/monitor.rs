@@ -35,6 +35,9 @@ pub struct Snapshot {
     /// v0.6: была ли полная проба со скачиванием и сколько заняла проверка.
     pub full: bool,
     pub took_ms: u64,
+    /// v0.9: сеть (Wi‑Fi, кабель, телефон) и качество звонка до офиса.
+    pub net: Option<crate::netctx::Net>,
+    pub call: Option<crate::netctx::Call>,
 }
 
 pub struct Monitor {
@@ -390,6 +393,19 @@ impl Monitor {
             verdict.color = score::Color::Gray;
             verdict.explain = "проверяю после сна — сеть ещё поднимается".into();
         }
+        // v0.9: сеть и звонок — до маршрута: слабый Wi‑Fi уточняет причину «интернет»
+        let net = crate::netctx::current();
+        let call = if online {
+            light.first().and_then(|r| {
+                self.settings
+                    .targets
+                    .iter()
+                    .find(|t| t.id == r.target_id)
+                    .and_then(|t| call_pings(&t.url))
+            })
+        } else {
+            None
+        };
         // v0.6: маршрут; цвет и оценка иконки — из него (кроме «нет интернета», Wi‑Fi со входом, после сна)
         let route = online.then(|| {
             let office: Vec<(String, crate::route::Svc, bool)> = targets
@@ -424,6 +440,12 @@ impl Monitor {
                 },
                 &self.settings.thresholds,
             )
+        });
+        let route = route.map(|mut r| {
+            if r.cause == Some("inet") && crate::netctx::weak_wifi(&net, r.inet.value) {
+                r.why = Some("wifi");
+            }
+            r
         });
         if let Some(r) = &route
             && !captive
@@ -484,8 +506,36 @@ impl Monitor {
             route,
             full: results.iter().any(|r| r.full),
             took_ms: t0.elapsed().as_millis() as u64,
+            net: (!net.kind.is_empty() && net.kind != "unknown").then_some(net),
+            call,
         }
     }
+}
+
+/// Серия TCP-соединений до сервиса офиса (v0.9): 8 штук через 120 мс, без данных — разброс задержки и потери для
+/// «можно ли звонить». ~1–2 с; не ответил — потеря.
+fn call_pings(url: &str) -> Option<crate::netctx::Call> {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let rest = url.split_once("://")?.1;
+    let host = rest.split(['/', '?']).next()?;
+    let (h, port) = match host.rsplit_once(':') {
+        Some((h, p)) => (h, p.parse().ok()?),
+        None => (host, if url.starts_with("https") { 443 } else { 80 }),
+    };
+    let addr = (h, port).to_socket_addrs().ok()?.next()?;
+    let mut pings = vec![];
+    for i in 0..8 {
+        if i > 0 {
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        let t = Instant::now();
+        pings.push(
+            TcpStream::connect_timeout(&addr, Duration::from_secs(1))
+                .ok()
+                .map(|_| t.elapsed().as_secs_f64() * 1000.0),
+        );
+    }
+    crate::netctx::call_quality(&pings)
 }
 
 /// Wi‑Fi со страницей входа: проверка Windows (`connecttest.txt`) вернула не свой текст или перенаправила.

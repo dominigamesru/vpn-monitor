@@ -1,0 +1,41 @@
+# Сообщения админов (v0.9, ADR 0014): app/config/announce.json → релиз `latest`. Установленные копии проверяют его раз в
+# 5 минут: новое сообщение — плашка с крестиком в меню и окне и уведомление Windows; `resolved` — зелёная «решено» у
+# тех, кто видел. Файл удалили — ассет удаляется, плашки пропадают. Образец — docs/admin/announce.example.json.
+name: announce
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/config/announce.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Проверить announce.json
+        if: hashFiles('app/config/announce.json') != ''
+        shell: python
+        run: |
+          import json
+          d = json.load(open("app/config/announce.json", encoding="utf-8"))
+          items = d.get("items", [])
+          assert isinstance(items, list), "items — список сообщений"
+          ids = [i.get("id") for i in items]
+          assert all(ids) and len(ids) == len(set(ids)), "у каждого сообщения свой непустой id"
+          assert all(i.get("title") for i in items), "у каждого сообщения нужен title"
+          for i in items:
+              print(f"{i['id']}: {i.get('level', 'info')} — {i['title']}" + (" (решено)" if i.get("resolved") else ""))
+      - name: announce.json → релиз latest
+        if: hashFiles('app/config/announce.json') != ''
+        run: gh release upload latest app/config/announce.json --clobber
+      - name: Файла нет — убрать из релиза latest
+        if: hashFiles('app/config/announce.json') == ''
+        run: gh release delete-asset latest announce.json --yes || true

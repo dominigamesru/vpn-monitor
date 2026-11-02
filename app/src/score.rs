@@ -84,6 +84,14 @@ pub struct Baseline {
     /// Для какого клиента и профиля норма («Happ / Lisbon»); `None` — общая.
     #[serde(default)]
     pub client: Option<String>,
+    /// v0.9: для какой сети норма (`None` — не своя для сети); сколько проверок в текущей сети (< 20 — «здесь вы
+    /// впервые»); обычный интернет, Мбит/с.
+    #[serde(default)]
+    pub net: Option<String>,
+    #[serde(default)]
+    pub net_samples: usize,
+    #[serde(default)]
+    pub inet_mbps: Option<f64>,
 }
 
 /// Надбавка VPN → 0..1: абсолютные пороги по краям, между ними — во сколько раз хуже обычной.

@@ -592,6 +592,78 @@ pub(crate) mod win {
             || cost.OverDataLimit().unwrap_or(false)
     }
 
+    /// Подключённый Wi‑Fi (v0.9): (SSID, качество сигнала 0–100, канал, скорость приёма Мбит/с). WlanAPI — без прав
+    /// администратора; Wi‑Fi нет или служба WLAN выключена — `None`.
+    pub fn wifi() -> Option<(String, u32, u32, f64)> {
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::NetworkManagement::WiFi::{
+            WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST,
+            WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle,
+            WlanQueryInterface, wlan_interface_state_connected, wlan_intf_opcode_channel_number,
+            wlan_intf_opcode_current_connection,
+        };
+        unsafe {
+            let mut ver = 0u32;
+            let mut h: HANDLE = std::ptr::null_mut();
+            if WlanOpenHandle(2, std::ptr::null(), &mut ver, &mut h) != 0 {
+                return None;
+            }
+            let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+            let mut out = None;
+            if WlanEnumInterfaces(h, std::ptr::null(), &mut list) == 0 && !list.is_null() {
+                let n = (*list).dwNumberOfItems as usize;
+                let first = (*list).InterfaceInfo.as_ptr();
+                for i in 0..n {
+                    let info: &WLAN_INTERFACE_INFO = &*first.add(i);
+                    if info.isState != wlan_interface_state_connected {
+                        continue;
+                    }
+                    let (mut size, mut data, mut kind) = (0u32, std::ptr::null_mut(), 0i32);
+                    if WlanQueryInterface(
+                        h,
+                        &info.InterfaceGuid,
+                        wlan_intf_opcode_current_connection,
+                        std::ptr::null(),
+                        &mut size,
+                        &mut data,
+                        &mut kind,
+                    ) != 0
+                        || data.is_null()
+                    {
+                        continue;
+                    }
+                    let c = &*(data as *const WLAN_CONNECTION_ATTRIBUTES);
+                    let a = &c.wlanAssociationAttributes;
+                    let len = (a.dot11Ssid.uSSIDLength as usize).min(32);
+                    let ssid = String::from_utf8_lossy(&a.dot11Ssid.ucSSID[..len]).into_owned();
+                    let (signal, rx) = (a.wlanSignalQuality, a.ulRxRate as f64 / 1000.0);
+                    WlanFreeMemory(data);
+                    let (mut size2, mut data2, mut kind2) = (0u32, std::ptr::null_mut(), 0i32);
+                    let mut channel = 0u32;
+                    if WlanQueryInterface(
+                        h,
+                        &info.InterfaceGuid,
+                        wlan_intf_opcode_channel_number,
+                        std::ptr::null(),
+                        &mut size2,
+                        &mut data2,
+                        &mut kind2,
+                    ) == 0
+                        && !data2.is_null()
+                    {
+                        channel = *(data2 as *const u32);
+                        WlanFreeMemory(data2);
+                    }
+                    out = Some((ssid, signal, channel, rx));
+                    break;
+                }
+                WlanFreeMemory(list as *const _);
+            }
+            WlanCloseHandle(h, std::ptr::null());
+            out
+        }
+    }
+
     pub fn best_interface(ip: Ipv4Addr) -> Option<u32> {
         let mut idx = 0u32;
         let dest = u32::from_ne_bytes(ip.octets());

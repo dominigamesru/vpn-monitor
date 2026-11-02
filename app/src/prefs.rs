@@ -68,6 +68,15 @@ pub struct Prefs {
     /// `auto` — как в системе, `light`, `dark`.
     #[serde(default)]
     pub window_theme: Option<String>,
+    /// Сообщения админов: что видел, что закрыл (v0.9).
+    #[serde(default)]
+    pub announce: crate::announce::Memory,
+    /// Прошёл первый запуск («Всё готово» или «Пропустить»), v0.9.
+    #[serde(default)]
+    pub onboarded: bool,
+    /// «Забыть сеть»: сеть → когда забыли (мс); её записи до этого не идут в норму (v0.9).
+    #[serde(default)]
+    pub forgot_nets: std::collections::BTreeMap<String, i64>,
 }
 
 impl Default for Prefs {
@@ -80,6 +89,9 @@ impl Default for Prefs {
             last_seen_version: None,
             theme: String::new(),
             window_theme: None,
+            announce: Default::default(),
+            onboarded: false,
+            forgot_nets: Default::default(),
         }
     }
 }
