@@ -31,6 +31,10 @@ enum UserEvent {
 
 pub enum Cmd {
     CheckNow,
+    /// 0.9.9: микроджоба — офис или интернет вернулся: полная проверка (не «по клику»).
+    Recheck,
+    /// 0.9.9: микроджоба — цель снова отвечает: перепроверить только её.
+    CheckTargets(Vec<String>),
 }
 
 /// Состояние, общее для трея, проверок, обновления и API.
@@ -63,6 +67,10 @@ pub struct Shared {
     pub next_check_ms: Option<i64>,
     /// 0.9.8: «Поставить сейчас» — ставить, даже если проверки на паузе; идёт установка (для плашки).
     pub install_now: bool,
+    /// 0.9.9: микроджобы — лёгкие проверки частей, которые не ответили.
+    pub jobs: vpn_monitor::jobs::Jobs,
+    /// 0.9.9: следующая проверка — по «Обновить» в «Подключении по сервисам»: не ответившим — уведомляющие джобы.
+    pub watch_next: bool,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -208,6 +216,8 @@ pub fn run(replace: bool, first_run: bool) {
         announce_file: Default::default(),
         next_check_ms: None,
         install_now: false,
+        jobs: Default::default(),
+        watch_next: false,
         checking: false,
         latest: None,
         update_error: None,
@@ -240,6 +250,7 @@ pub fn run(replace: bool, first_run: bool) {
             lock(&shared).api_error = Some(e);
         }
     }
+    spawn_jobs(cmd_tx.clone(), shared.clone());
     spawn_checker(
         settings.clone(),
         crate::secrets_path(&dir),
@@ -561,35 +572,16 @@ fn spawn_checker(
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
         let mut manual = false;
         let mut last_check = std::time::SystemTime::now();
-        // 0.9.8: между полными проверками при не зелёном — лёгкий пинг; когда полная по расписанию и молчал ли офис
-        let mut next_full: Option<std::time::Instant> = None;
-        let mut office_down = false;
-        // ожидание до полной проверки (без пингов) — по нему «ноутбук спал»
+        // ожидание до полной проверки — по нему «ноутбук спал»
         let mut full_wait = wait;
         loop {
+            let mut only: Option<Vec<String>> = None;
             match rx.recv_timeout(wait) {
                 Ok(Cmd::CheckNow) => manual = true,
+                Ok(Cmd::Recheck) => {}
+                Ok(Cmd::CheckTargets(ids)) => only = Some(ids),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
-            }
-            if !manual
-                && !lock(&shared).prefs.paused(vpn_monitor::metrics::now_ms())
-                && let Some(nf) = next_full
-                && let Some(left) = nf.checked_duration_since(std::time::Instant::now())
-                && left > Duration::from_secs(5)
-            {
-                // проснулись для лёгкого пинга: офис снова отвечает — полная проверка сразу, иначе ждём дальше
-                let ping = m.light_ping();
-                if office_down && let Some(ms) = ping {
-                    info!(
-                        "check",
-                        "лёгкий пинг: офис снова отвечает ({ms:.0} мс) — проверяю полностью"
-                    );
-                } else {
-                    let every = Duration::from_secs(m.settings.light_ping_sec.max(30));
-                    wait = left.min(every);
-                    continue;
-                }
             }
             // удалённые настройки поменялись — проверка берёт новые (пороги, цели) без перезапуска
             {
@@ -632,7 +624,8 @@ fn spawn_checker(
                     &sh.prefs.forgot_nets,
                 );
             }
-            let snap = m.run_check(manual);
+            let snap = m.run_check_for(manual, only.as_deref());
+            let was_manual = manual;
             manual = false;
             last_check = std::time::SystemTime::now();
             {
@@ -674,14 +667,10 @@ fn spawn_checker(
             let at = vpn_monitor::schedule::next_at(now_s, interval, &slot, 60);
             wait = Duration::from_secs(at.saturating_sub(now_s).max(1));
             lock(&shared).next_check_ms = Some(at as i64 * 1000);
-            next_full = Some(std::time::Instant::now() + wait);
             full_wait = wait;
-            // лёгкий пинг — пока не зелёный и офис молчал (ждём, когда вернётся); в свою секунду, как и проверки
-            office_down = matches!(snap.verdict.badge, vpn_monitor::score::Badge::NoVpn);
-            let ping = m.settings.light_ping_sec;
-            if office_down && ping > 0 {
-                let every = Duration::from_secs(ping.max(30) + (slot.sec as u64 % 30));
-                wait = wait.min(every);
+            // 0.9.9: микроджобы после полной проверки — что не ответило по сети, сторожить лёгкой проверкой
+            if only.is_none() {
+                plan_jobs(&m, &snap, &shared, was_manual);
             }
             // уведомления: только о подтверждённой смене состояния и с лимитами (notify.rs)
             let (prefs, paused) = {
@@ -706,6 +695,116 @@ fn spawn_checker(
                 return;
             }
             while rx.try_recv().is_ok() {} // клики, пришедшие во время проверки, не копим
+        }
+    });
+}
+
+/// Микроджобы после полной проверки (0.9.9): фоновые — заново по итогам; после «Обновить» — ещё и уведомляющие по
+/// целям, не ответившим по сети.
+fn plan_jobs(m: &Monitor, snap: &Snapshot, shared: &SharedRef, manual: bool) {
+    use vpn_monitor::jobs;
+    let now = vpn_monitor::metrics::now_ms() as u64 / 1000;
+    let urls = m.target_urls();
+    let url_of = |id: &str| urls.iter().find(|u| u.0 == id).map(|u| u.3.clone());
+    let failed: Vec<(String, String, String)> = snap
+        .targets
+        .iter()
+        .filter(|r| {
+            !r.full
+                && matches!(r.role, Some(Role::Light) | Some(Role::Speed))
+                && jobs::network_fail(r.fail)
+        })
+        .filter_map(|r| url_of(&r.target_id).map(|u| (r.target_id.clone(), r.name.clone(), u)))
+        .collect();
+    let light: Vec<String> = urls
+        .iter()
+        .filter(|u| u.2 == Role::Light)
+        .map(|u| u.3.clone())
+        .collect();
+    let plan = jobs::plan(
+        matches!(snap.verdict.badge, Badge::NoInternet),
+        matches!(snap.verdict.badge, Badge::NoVpn),
+        &m.settings.internet.check_hosts,
+        &light,
+        &failed,
+        m.settings.light_ping_sec,
+        now,
+    );
+    let mut sh = lock(shared);
+    sh.jobs.clear_background();
+    for j in plan {
+        info!(
+            "jobs",
+            "сторожу «{}» раз в {} с (без уведомления)", j.name, j.period_s
+        );
+        sh.jobs.upsert(j);
+    }
+    if manual && std::mem::take(&mut sh.watch_next) {
+        let sec = sh.prefs.slot.map_or(0, |s| s.sec);
+        for (id, name, url) in &failed {
+            info!(
+                "jobs",
+                "сторожу «{name}» раз в минуту — сообщу, когда ответит"
+            );
+            sh.jobs.upsert(jobs::watch(id, name, url, now, sec));
+        }
+    }
+}
+
+/// Микроджобы (0.9.9): раз в 5 с смотрим, чей срок подошёл; лёгкая проверка; ответила — убрать, уведомить (если
+/// надо) и запустить проверку пошире.
+pub fn spawn_jobs(cmd: mpsc::Sender<Cmd>, shared: SharedRef) {
+    use vpn_monitor::jobs::{Probe, Then};
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let now = vpn_monitor::metrics::now_ms() as u64 / 1000;
+            let (due, paused, notify_on) = {
+                let mut sh = lock(&shared);
+                (
+                    sh.jobs.due(now),
+                    sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+                    sh.prefs.notify.vpn,
+                )
+            };
+            if paused {
+                continue;
+            }
+            for j in due {
+                let ok = match &j.probe {
+                    Probe::Ping { urls } => urls.iter().any(|u| {
+                        vpn_monitor::probe::light_ping(u, Duration::from_secs(5)).is_some()
+                    }),
+                    Probe::Internet { hosts } => hosts.iter().any(|h| {
+                        use std::net::ToSocketAddrs;
+                        h.to_socket_addrs()
+                            .ok()
+                            .and_then(|mut a| a.next())
+                            .is_some_and(|a| {
+                                std::net::TcpStream::connect_timeout(&a, Duration::from_secs(3))
+                                    .is_ok()
+                            })
+                    }),
+                };
+                if !ok {
+                    lock(&shared).jobs.again(&j.key, now);
+                    continue;
+                }
+                lock(&shared).jobs.remove(&j.key);
+                info!("jobs", "«{}» снова отвечает", j.name);
+                if j.notify && notify_on {
+                    let body = format!("Вы проверяли — {} не отвечал. Теперь отвечает.", j.name);
+                    if let Err(e) = win::toast(&format!("{} снова отвечает", j.name), &body)
+                    {
+                        warn!("notify", "{e}");
+                    }
+                }
+                let _ = match j.then {
+                    Then::Nothing => Ok(()),
+                    Then::Targets(ids) => cmd.send(Cmd::CheckTargets(ids)),
+                    Then::Full => cmd.send(Cmd::Recheck),
+                };
+            }
         }
     });
 }

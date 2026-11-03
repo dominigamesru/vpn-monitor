@@ -23,3 +23,9 @@ Desk Data Center) от имени сотрудника, тем же входом
 - Смена портала или типа запроса — правкой `support_url` в удалённых настройках (ADR 0011), без релиза.
 - **Дополнено в 0.8.0:** статусы запросов — `GET /rest/servicedeskapi/request/{key}` раз в 15 минут только для
   нерешённых; в `jira-tickets.json` добавлены `status`, `status_category`, `status_ms` (старые копии их терпят).
+
+## Дополнение (0.9.9): вложения и описание
+Перед отправкой окно собирает свежие данные (проверка учётной записи AD и диагностика подключения). Вложения:
+`diagnostics.json` — всё структурированно (`app`, `summary`, `state`, `diagnostics`, `networks_week`, `jobs`) вместо
+`svodka.txt` и `diagnostika.json`; `vpn-monitor.log`; `metrics.zip` — `metrics_1d.json` и `metrics_7d.json` (вместо
+`metrics_7d.zip`). Описание начинается со строки «В чем суть запроса или проблемы:» — сотрудник пишет под ней.

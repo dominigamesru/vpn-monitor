@@ -272,6 +272,15 @@ fn handle(
         }
         (Method::Post, "/api/check") => {
             let busy = lock(shared).checking;
+            // 0.9.9: {"watch": true} — «Обновить» в «Подключении по сервисам»: не ответившим — джоба «сообщу, когда
+            // ответит»
+            if serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v["watch"].as_bool())
+                == Some(true)
+            {
+                lock(shared).watch_next = true;
+            }
             if !busy {
                 info!("api", "проверка по запросу из окна/API");
                 let _ = cmd.send(Cmd::CheckNow);
@@ -603,6 +612,27 @@ fn start_diag(shared: &SharedRef) -> bool {
         let mut sh = lock(&shared);
         sh.diag = serde_json::to_value(&report).ok();
         sh.diag_running = false;
+        // 0.9.9: не ответил по сети и после повтора — сторожить раз в минуту и сообщить, когда ответит
+        let now = vpn_monitor::metrics::now_ms() as u64 / 1000;
+        let sec = sh.prefs.slot.map_or(0, |s| s.sec);
+        for t in report
+            .targets
+            .iter()
+            .filter(|t| t.verdict == "fail" && t.network_fail)
+        {
+            let mut j = vpn_monitor::jobs::watch(&t.id, &t.name, &t.url, now, sec);
+            if t.id == "internet" {
+                j.probe = vpn_monitor::jobs::Probe::Internet {
+                    hosts: settings.internet.check_hosts.clone(),
+                };
+                j.then = vpn_monitor::jobs::Then::Full;
+            }
+            info!(
+                "jobs",
+                "сторожу «{}» раз в минуту — сообщу, когда ответит", t.name
+            );
+            sh.jobs.upsert(j);
+        }
     });
     true
 }
@@ -900,6 +930,8 @@ fn state(shared: &SharedRef) -> Value {
         // 0.9.8: следующая проверка по расписанию и свой сдвиг (минута часа, секунда)
         "next_check_ms": sh.next_check_ms,
         "installing": sh.install_now,
+        // 0.9.9: что сейчас сторожится микроджобами (для окна и админа)
+        "jobs": sh.jobs.list(),
         "slot": sh.prefs.slot,
         "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
@@ -1072,29 +1104,56 @@ impl vpn_monitor::mcp::Data for McpData {
 
 /// Файлы для заявки: сводка, диагностика (если запускали), хвост лога — без паролей и токенов.
 fn support_files(shared: &SharedRef, summary: &str) -> Vec<(String, Vec<u8>)> {
-    let mut files = vec![("svodka.txt".to_string(), summary.as_bytes().to_vec())];
-    if let Some(d) = lock(shared).diag.clone() {
-        files.push((
-            "diagnostika.json".into(),
-            serde_json::to_string_pretty(&d)
-                .unwrap_or_default()
-                .into_bytes(),
-        ));
-    }
+    // 0.9.9: всё — одним структурированным diagnostics.json: сводка (строками), состояние и проверка сервисов (как в
+    // окне), диагностика подключения, сети за неделю, микроджобы
+    let st = state(shared);
+    let (diag, nets, jobs) = {
+        let sh = lock(shared);
+        let week = sh
+            .store
+            .since(vpn_monitor::metrics::now_ms() - 7 * 86_400_000);
+        (
+            sh.diag.clone(),
+            serde_json::to_value(vpn_monitor::metrics::networks(&week)).unwrap_or(Value::Null),
+            serde_json::to_value(sh.jobs.list()).unwrap_or(Value::Null),
+        )
+    };
+    let doc = json!({
+        "app": {"version": VERSION, "computer": st["computer"], "user": st["user"], "login": st["login"],
+                "channel": st["prefs"]["channel"], "latest": st["latest"], "dir": st["dir"]},
+        "summary": summary.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>(),
+        "state": {"snapshot": st["snapshot"], "services": st["services"], "checking": st["checking"],
+                  "next_check_ms": st["next_check_ms"], "thresholds": st["thresholds"], "intervals": st["intervals"]},
+        "diagnostics": diag,
+        "networks_week": nets,
+        "jobs": jobs,
+    });
+    let mut files = vec![(
+        "diagnostics.json".to_string(),
+        serde_json::to_string_pretty(&doc)
+            .unwrap_or_default()
+            .into_bytes(),
+    )];
     let log = tail_log(2000);
     if !log.is_empty() {
         files.push(("vpn-monitor.log".into(), log.into_bytes()));
     }
-    // история проверок за неделю (v0.9) — zip: в ней имена сетей, сотрудник видит это в окне запроса
+    // история проверок за сутки и неделю (0.9.9: оба файла в metrics.zip) — в ней имена сетей, сотрудник видит
+    // это в окне запроса
     let dir = lock(shared).dir.clone();
-    if let Ok(m) = std::fs::read(dir.join("metrics_7d.json")) {
-        files.push((
-            "metrics_7d.zip".into(),
-            vpn_monitor::zipfile::one("metrics_7d.json", &m),
-        ));
+    let parts: Vec<(&str, Vec<u8>)> = ["metrics_1d.json", "metrics_7d.json"]
+        .into_iter()
+        .filter_map(|n| std::fs::read(dir.join(n)).ok().map(|d| (n, d)))
+        .collect();
+    if !parts.is_empty() {
+        let refs: Vec<(&str, &[u8])> = parts.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+        files.push(("metrics.zip".into(), vpn_monitor::zipfile::many(&refs)));
     }
     files
 }
+
+/// Первая строка описания заявки — сотрудник пишет под ней суть своими словами.
+const SUPPORT_ASK: &str = "В чем суть запроса или проблемы:";
 
 /// Черновик заявки для окна: можно ли отправить из приложения, тема, описание, какие файлы приложатся.
 fn support_draft(shared: &SharedRef) -> Value {
@@ -1113,11 +1172,13 @@ fn support_draft(shared: &SharedRef) -> Value {
         .store
         .since(vpn_monitor::metrics::now_ms() - 7 * 86_400_000);
     let nets = vpn_monitor::metrics::networks(&week);
-    let description = if nets.is_empty() {
+    // 0.9.9: в начале — что случилось, своими словами (окно ставит туда курсор)
+    let body = if nets.is_empty() {
         text.clone()
     } else {
         format!("{text}\n\n{}", vpn_monitor::metrics::networks_text(&nets))
     };
+    let description = format!("{SUPPORT_ASK}\n\n\n{body}");
     json!({
         "available": portal.is_some() && login.is_some(),
         "reason": if portal.is_none() { "адрес поддержки — не портал Jira Service Desk" } else if login.is_none() { "войдите с учётной записью AD" } else { "" },

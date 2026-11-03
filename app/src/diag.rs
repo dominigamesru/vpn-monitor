@@ -2,6 +2,7 @@
 //! какой сетевой адаптер идёт маршрут, TCP, HTTP (код, кто вошёл, куда перенаправило), вывод и подсказка; плюс
 //! окружение — адаптеры, прокси системы и окружения, какие секреты заданы. Секретов в выводе нет.
 
+use crate::info;
 use crate::net;
 use crate::probe::target_url;
 use crate::secrets::{KNOWN_KEYS, Secrets};
@@ -30,6 +31,9 @@ pub struct TargetDiag {
     pub hint: String,
     /// 0.9.8: что проверено и прошло — пунктами для человека («Сервис доступен: …», «Вход по учётке AD работает»).
     pub passed: Vec<String>,
+    /// 0.9.9: не ответил по сети (DNS, TCP, нет ответа HTTP) — повторяется и сторожится микроджобой; ответ сервера
+    /// (401, 404) — нет.
+    pub network_fail: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -175,6 +179,47 @@ pub fn run(settings: &Settings, secrets: &Secrets) -> Report {
             }
         }
     });
+    // 0.9.9: не ответил по сети — повтор через 3 с; прошёл — показываем повтор, провал — только в логе
+    let again: Vec<usize> = (0..targets.len())
+        .filter(|&i| targets[i].verdict == "fail" && targets[i].network_fail)
+        .collect();
+    if !again.is_empty() {
+        std::thread::sleep(Duration::from_secs(3));
+        let redo: Vec<(usize, TargetDiag)> = std::thread::scope(|sc| {
+            let hs: Vec<_> = again
+                .iter()
+                .map(|&i| {
+                    let (id, name, url) = (
+                        targets[i].id.clone(),
+                        targets[i].name.clone(),
+                        targets[i].url.clone(),
+                    );
+                    let t = settings.targets.iter().find(|t| t.id == id);
+                    let auth = t.map_or(AuthKind::None, |t| t.kind());
+                    let world = t.is_some_and(|t| t.role == crate::settings::Role::World);
+                    let adapters = &adapters;
+                    sc.spawn(move || {
+                        (
+                            i,
+                            diag_url(&id, &name, &url, auth, secrets, adapters, world),
+                        )
+                    })
+                })
+                .collect();
+            hs.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+        for (i, d) in redo {
+            if d.verdict != "fail" {
+                info!(
+                    "diag",
+                    "{}: повтор прошёл — первый провал не показываю", d.name
+                );
+                targets[i] = d;
+            } else {
+                info!("diag", "{}: повтор тоже не прошёл", d.name);
+            }
+        }
+    }
     let env_proxy = [
         "HTTPS_PROXY",
         "HTTP_PROXY",
@@ -226,6 +271,7 @@ fn diag_url(
         verdict: "fail",
         hint: String::new(),
         passed: vec![],
+        network_fail: false,
     };
     if let Some(m) = &missing {
         d.steps.push(step("Креды", "warn", m.clone()));
@@ -261,6 +307,7 @@ fn diag_url(
         Ok(a) => a.collect(),
         Err(e) => {
             d.steps.push(step("DNS", "fail", format!("{host}: {e}")));
+            d.network_fail = true;
             d.hint = "Имя не разрешается: VPN выключен или его DNS не отвечает. Включите VPN и повторите.".into();
             return d;
         }
@@ -304,6 +351,7 @@ fn diag_url(
         }
         Err(e) => {
             d.steps.push(step("TCP", "fail", format!("{addr}: {e}")));
+            d.network_fail = true;
             d.hint = if fake {
                 "Адрес подставной, но туннель не пропускает трафик: перезапустите клиент VPN или проверьте, что \
                  этот сервис входит в его правила."
@@ -413,6 +461,7 @@ fn diag_url(
         }
         Err(e) => {
             d.steps.push(step("HTTP", "fail", e.to_string()));
+            d.network_fail = true;
             d.hint =
                 "TCP есть, но HTTP-запрос не прошёл: TLS, прокси или сервер не отвечает.".into();
         }

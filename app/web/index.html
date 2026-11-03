@@ -203,6 +203,8 @@ th { color: var(--muted); font-weight: 600; } td.num { white-space: nowrap; }
 .svcstate .row2 small { grid-column: 2; color: var(--muted); font-size: 12px; }
 .svcstate .row2 small.now { color: var(--ink); }
 .svcstate .row2 small.now.bad { color: var(--bad); }
+.supform .gather { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.supform .gather .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); border-right-color: transparent; animation: spin .8s linear infinite; flex: none; }
 .svcstate .svchead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 form.login { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 10px; align-items: end; }
@@ -794,7 +796,7 @@ function renderConn() {
   const busy = !!S.checking, svcs = S.services || [];
   const refresh = el("button", { class: `btn ghost sm${busy ? " busy" : ""}`, type: "button", text: busy ? "Проверяю…" : "Обновить", title: "Проверить сервисы сейчас" });
   if (busy) refresh.disabled = true;
-  refresh.addEventListener("click", async () => { refresh.disabled = true; await api("/api/check", { method: "POST", body: "{}" }).catch(() => {}); poll(true); });
+  refresh.addEventListener("click", async () => { refresh.disabled = true; await api("/api/check", { method: "POST", body: JSON.stringify({ watch: true }) }).catch(() => {}); poll(true); });
   const now = (x) => { if (busy) return "сейчас: проверяю…"; if (x.ok) return x.note ? "сейчас: открылась страница входа — войдите" : "сейчас: отвечает, вход принят";
     if (x.ok == null) return "сейчас: ещё не проверяли"; if (x.fail === "auth") return "сейчас: вход не принят";
     const why = (x.error || "").replace(/\s*\(.*\)\s*$/, ""); return `сейчас: не ответил${/timeout/i.test(why) ? " — таймаут, это связь, не пароль" : why ? ` — ${why.slice(0, 70)}` : ""}`; };
@@ -803,7 +805,7 @@ function renderConn() {
     const st = busy ? "idle" : x.ok ? (x.note ? "warn" : "good") : x.fail === "auth" ? "warn" : x.ok === false ? "bad" : "idle";
     const auth = busy && (x.note || !x.auth) ? (S.login ? "проверяю…" : "не задан") : x.note ? "не задан" : x.auth || "—";
     return el("div", { class: `row2 ${st}${busy ? " busy" : ""}` }, el("span", { class: busy ? "spin" : "dot" }), el("b", { text: x.name }),
-      el("small", { class: st === "bad" ? "now bad" : "now", text: now(x) }), el("small", { text: `вход: ${auth} · последний успех: ${ago(x.last_ok_ms)}` }));
+      el("small", { class: st === "bad" ? "now bad" : "now", text: now(x) + ((S.jobs || []).some((j) => j.key === `watch:${x.id}`) ? " · слежу, сообщу, когда ответит" : "") }), el("small", { text: `вход: ${auth} · последний успех: ${ago(x.last_ok_ms)}` }));
   }));
   // слева — проверка входа, справа — связь: вход принят, а сервис не отвечает — сказать прямо, что это не пароль
   const net = !busy && svcs.filter((x) => x.ok === false && x.fail !== "auth").map((x) => x.name);
@@ -875,11 +877,24 @@ async function openSupport(pre) {
     if (pre) location.hash = "#settings/diagnostics";
     $("#supResult").replaceChildren(`Отправить запрос из приложения нельзя: ${supDraft?.reason || "приложение не ответило"}. Сводка скопирована — вставьте её в форму. `, ...[link].filter(Boolean)); return; }
   $("#supWho").textContent = `От вашего имени (${supDraft.login}) в Jira Service Desk. После создания заявка откроется в браузере.`;
-  $("#supSummary").value = pre?.summary || supDraft.summary; $("#supDesc").value = pre?.intro ? `${pre.intro}\n\n${supDraft.description}` : supDraft.description; $("#supPriority").value = supDraft.priority || "Low"; $("#supErr").textContent = "";
-  // каждый файл — флажок и «посмотреть»: что уйдёт в поддержку, видно до отправки
-  $("#supFiles").replaceChildren(...supDraft.files.map((f, i) => el("div", { class: "file" }, el("label", {}, el("input", { type: "checkbox", id: `supF${i}`, value: f.name, checked: "" }), `${f.name} · ${kb(f.bytes)}`),
-    f.preview ? el("details", {}, el("summary", { text: f.name.endsWith(".log") ? "посмотреть последние строки" : "посмотреть начало" }), el("pre", { text: f.preview })) : null)));
-  $("#supSend").disabled = false; $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal(); $("#supSummary").focus(); }
+  // 0.9.9: первая строка — «В чем суть запроса или проблемы:», курсор — под ней
+  const ask = "В чем суть запроса или проблемы:", d0 = supDraft.description.startsWith(ask) ? supDraft.description.slice(ask.length).replace(/^\n+/, "") : supDraft.description;
+  $("#supSummary").value = pre?.summary || supDraft.summary; $("#supDesc").value = `${ask}\n${pre?.intro ? pre.intro + "\n" : ""}\n\n${d0}`; $("#supPriority").value = supDraft.priority || "Low"; $("#supErr").textContent = "";
+  $("#supSend").textContent = "Отправить запрос"; $("#supDlg").showModal();
+  const ta = $("#supDesc"); ta.focus(); const pos = ask.length + 1 + (pre?.intro ? pre.intro.length + 1 : 0); ta.setSelectionRange(pos, pos); ta.scrollTop = 0;
+  gatherSupport(); }
+// 0.9.9: перед отправкой — свежие данные: проверка учётной записи AD (как «Обновить») и диагностика подключения;
+// пока собираются — крутилка, потом вложения (diagnostics.json, лог, metrics.zip)
+function supFilesList(files) { $("#supFiles").replaceChildren(...files.map((f, i) => el("div", { class: "file" }, el("label", {}, el("input", { type: "checkbox", id: `supF${i}`, value: f.name, checked: "" }), `${f.name} · ${kb(f.bytes)}`),
+  f.preview ? el("details", {}, el("summary", { text: f.name.endsWith(".log") ? "посмотреть последние строки" : "посмотреть начало" }), el("pre", { text: f.preview })) : null))); }
+async function gatherSupport() { const send = $("#supSend"); send.disabled = true;
+  const box = $("#supFiles"); box.replaceChildren(el("div", { class: "gather" }, el("span", { class: "spin" }), el("span", { text: "Собираю данные: проверяю учётную запись AD и подключение к сервисам…" })));
+  await Promise.all([api("/api/check", { method: "POST", body: "{}" }).catch(() => {}), api("/api/diagnostics", { method: "POST", body: "{}" }).catch(() => {})]);
+  const t0 = Date.now(); await new Promise((r) => setTimeout(r, 1500));
+  while (Date.now() - t0 < 120000 && $("#supDlg").open) { const [st, dg] = await Promise.all([api("/api/state").catch(() => null), api("/api/diagnostics").catch(() => null)]);
+    if (st && !st.checking && dg && !dg.running) break; await new Promise((r) => setTimeout(r, 1000)); }
+  if (!$("#supDlg").open) return;
+  const fresh = await api("/api/support").catch(() => null); supFilesList((fresh || supDraft).files || []); send.disabled = false; }
 $("#supCancel").addEventListener("click", () => $("#supDlg").close());
 // v0.9: увидеть, как выглядит уведомление, и что Windows его не прячет («Не беспокоить», настройки уведомлений)
 $("#notifyTest").addEventListener("click", async () => { const tb = $("#notifyTest"); tb.disabled = true; const r = await api("/api/notify/test", { method: "POST", body: "{}" }).catch(() => null); tb.disabled = false;
