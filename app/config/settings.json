@@ -2,8 +2,8 @@
   "schema": 1,
   "release_base_url": "https://github.com/dominigamesru/vpn-monitor/releases/download",
   "install_dir": "%LOCALAPPDATA%\\DominiVPNMonitor",
-  "check_interval_green_sec": 180,
-  "check_interval_alert_sec": 60,
+  "check_interval_green_sec": 900,
+  "check_interval_alert_sec": 600,
   "full_probe_interval_min": 30,
   "internet_interval_min": 15,
   "update_interval_min": 5,
@@ -73,11 +73,10 @@
       "id": "gitlab",
       "name": "GitLab",
       "role": "speed",
-      "url": "https://gitlab.dominigames.com/api/v4/projects/devops%2Fvpn-monitor-cli/repository/files/probe%2Fsample_1mb.bin/raw?ref=HEAD",
+      "url": "https://gitlab.dominigames.com/vpn-monitor-public/vpn-monitor-sample/-/raw/main/sample_1mb.bin",
       "url_env": "GITLAB_PROBE_URL",
-      "auth": "gitlab",
-      "timeout_sec": 30,
-      "enabled": false
+      "auth": "none",
+      "timeout_sec": 30
     },
     {
       "id": "chatgpt",

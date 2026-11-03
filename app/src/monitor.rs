@@ -379,8 +379,17 @@ impl Monitor {
             }
         }
         let mut office_speed: Option<f64> = None;
+        // 0.9.8: скорость в оценке — только SVN (GitLab тоже качает пробный файл, но это другой сервер — его скорость
+        // видна у самого GitLab и не подменяет «SVN»)
+        let svn_ids: Vec<&str> = s
+            .targets
+            .iter()
+            .filter(|t| t.kind() == crate::settings::AuthKind::Svn)
+            .map(|t| t.id.as_str())
+            .collect();
         if let Some(sp) = results
             .iter()
+            .filter(|r| svn_ids.is_empty() || svn_ids.contains(&r.target_id.as_str()))
             // «Без ВПН» — это скорость интернета, а не VPN: в оценку VPN не идёт; прерванный медленный замер —
             // идёт (это и есть «очень медленно»), но только когда интернет есть
             .filter(|r| {

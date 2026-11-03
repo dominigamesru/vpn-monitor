@@ -59,6 +59,8 @@ pub struct Shared {
     /// Сообщения админов к показу (v0.9) и последний разобранный файл (для пересчёта после «Закрыть»).
     pub announce: Vec<vpn_monitor::announce::Shown>,
     pub announce_file: vpn_monitor::announce::File,
+    /// 0.9.8: когда следующая проверка по расписанию (мс UNIX).
+    pub next_check_ms: Option<i64>,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -202,6 +204,7 @@ pub fn run(replace: bool, first_run: bool) {
         city_at: None,
         announce: vec![],
         announce_file: Default::default(),
+        next_check_ms: None,
         checking: false,
         latest: None,
         update_error: None,
@@ -526,6 +529,30 @@ fn spawn_checker(
             settings.check_interval_alert_sec,
         );
         let mut m = Monitor::new(settings, secrets);
+        // свой сдвиг расписания (0.9.8): выбрать один раз и запомнить в user.json
+        let slot = {
+            let mut sh = lock(&shared);
+            match sh.prefs.slot.filter(|s| s.valid()) {
+                Some(s) => s,
+                None => {
+                    let s = vpn_monitor::schedule::Slot::random();
+                    sh.prefs.slot = Some(s);
+                    if let Err(e) = sh.prefs.save(&sh.dir) {
+                        warn!("check", "сдвиг расписания не сохранён: {e}");
+                    }
+                    s
+                }
+            }
+        };
+        info!(
+            "check",
+            "расписание: всё хорошо — раз в {} мин (минута {}), иначе — раз в {} мин (минута {}), секунда {}",
+            green / 60,
+            slot.minute_for(green / 60),
+            alert / 60,
+            slot.minute_for(alert / 60),
+            slot.sec
+        );
         let mut rev = 0u64;
         let mut notifier = vpn_monitor::notify::Notifier::default();
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
@@ -610,12 +637,16 @@ fn spawn_checker(
                     });
                 }
             }
-            // R3.4: зелёный — раз в 3 минуты, иначе — раз в минуту
-            wait = Duration::from_secs(if snap.verdict.color == Color::Green {
+            // 0.9.8: зелёный — раз в 15 минут, иначе — раз в 10, в свою минуту часа и секунду (разнести сотрудников)
+            let interval = if snap.verdict.color == Color::Green {
                 green
             } else {
                 alert
-            });
+            };
+            let now_s = vpn_monitor::metrics::now_ms() as u64 / 1000;
+            let at = vpn_monitor::schedule::next_at(now_s, interval, &slot, 60);
+            wait = Duration::from_secs(at.saturating_sub(now_s).max(1));
+            lock(&shared).next_check_ms = Some(at as i64 * 1000);
             // уведомления: только о подтверждённой смене состояния и с лимитами (notify.rs)
             let (prefs, paused) = {
                 let sh = lock(&shared);

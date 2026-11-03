@@ -896,6 +896,9 @@ fn state(shared: &SharedRef) -> Value {
             "full_min": s.full_probe_interval_min, "internet_min": s.internet_interval_min,
             "update_min": s.update_interval_min,
         },
+        // 0.9.8: следующая проверка по расписанию и свой сдвиг (минута часа, секунда)
+        "next_check_ms": sh.next_check_ms,
+        "slot": sh.prefs.slot,
         "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
         "login": vpn_monitor::creds::load_ad().map(|c| c.login),

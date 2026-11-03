@@ -21,6 +21,7 @@ pub mod prefs;
 pub mod probe;
 pub mod progress;
 pub mod route;
+pub mod schedule;
 pub mod score;
 pub mod secrets;
 pub mod settings;

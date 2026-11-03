@@ -553,7 +553,7 @@ function renderNow() {
     if (wl && rows.length >= 4) { rows[2].classList.add("mainend"); rows[3].classList.add("branch"); drawBranch(rt, rows[wl.direct ? 0 : 1].querySelector(".node"), rows[3].querySelector(".node"), P(wl.st)); }
     else rt.querySelectorAll("svg.branchline").forEach((x) => x.remove()); }
   // звенья против порогов (медиана трёх проверок)
-  $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин` : "Ещё не проверяли";
+  $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — ${S.next_check_ms ? `в ${hhmm(S.next_check_ms)}` : `через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин`}` : "Ещё не проверяли";
   const norms = $("#norms"); norms.replaceChildren();
   const row = (name, st, val, frac, mark, cmp) => { const tr = el("div", { class: "track" }, el("i", { style: `width:${Math.max(3, Math.min(1, frac) * 100)}%` })); if (mark != null) tr.append(el("em", { style: `left:calc(${Math.min(1, mark) * 100}% - 1px)` })); norms.append(el("div", { class: `nr ${st}` }, badge(st, name), el("span", { class: "val", text: val }), tr, el("span", { class: "cmp", text: cmp }))); };
   if (r) {

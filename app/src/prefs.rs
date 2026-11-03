@@ -77,6 +77,9 @@ pub struct Prefs {
     /// «Забыть сеть»: сеть → когда забыли (мс); её записи до этого не идут в норму (v0.9).
     #[serde(default)]
     pub forgot_nets: std::collections::BTreeMap<String, i64>,
+    /// 0.9.8: свой сдвиг расписания проверок (минута часа и секунда) — выбирается случайно один раз.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<crate::schedule::Slot>,
 }
 
 impl Default for Prefs {
@@ -92,6 +95,7 @@ impl Default for Prefs {
             announce: Default::default(),
             onboarded: false,
             forgot_nets: Default::default(),
+            slot: None,
         }
     }
 }
