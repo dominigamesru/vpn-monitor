@@ -296,11 +296,17 @@ impl Monitor {
                 "vpn",
                 "клиент VPN: {}{} (адаптер «{}»)",
                 c.name,
-                match (&c.profile, &c.server) {
-                    (Some(p), _) => format!(", профиль «{p}»"),
-                    (None, Some(s)) => format!(", сервер {s}"),
-                    _ => String::new(),
-                },
+                format!(
+                    "{}{}",
+                    c.profile
+                        .as_deref()
+                        .map(|p| format!(", профиль «{p}»"))
+                        .unwrap_or_default(),
+                    c.server
+                        .as_deref()
+                        .map(|s| format!(", сервер {s}"))
+                        .unwrap_or_default()
+                ),
                 c.adapter
             ),
             None => info!("vpn", "клиент VPN не определён"),
@@ -379,8 +385,17 @@ impl Monitor {
             }
         }
         let mut office_speed: Option<f64> = None;
+        // 0.9.8: скорость в оценке — только SVN (GitLab тоже качает пробный файл, но это другой сервер — его скорость
+        // видна у самого GitLab и не подменяет «SVN»)
+        let svn_ids: Vec<&str> = s
+            .targets
+            .iter()
+            .filter(|t| t.kind() == crate::settings::AuthKind::Svn)
+            .map(|t| t.id.as_str())
+            .collect();
         if let Some(sp) = results
             .iter()
+            .filter(|r| svn_ids.is_empty() || svn_ids.contains(&r.target_id.as_str()))
             // «Без ВПН» — это скорость интернета, а не VPN: в оценку VPN не идёт; прерванный медленный замер —
             // идёт (это и есть «очень медленно»), но только когда интернет есть
             .filter(|r| {
@@ -623,6 +638,29 @@ impl Monitor {
             call,
             drops_hour: drops_in_hour(&mut self.drops),
         }
+    }
+}
+
+impl Monitor {
+    /// Лёгкий пинг офиса (0.9.8): хоть одна цель светофора ответила на `HEAD` — сколько мс у самой быстрой.
+    pub fn light_ping(&self) -> Option<f64> {
+        let secrets = Secrets::load(&self.secrets_path);
+        let urls: Vec<String> = self
+            .settings
+            .targets
+            .iter()
+            .filter(|t| t.enabled && t.role == Role::Light)
+            .filter_map(|t| probe::target_url(t, &secrets, false))
+            .collect();
+        std::thread::scope(|sc| {
+            let hs: Vec<_> = urls
+                .iter()
+                .map(|u| sc.spawn(move || probe::light_ping(u, Duration::from_secs(5))))
+                .collect();
+            hs.into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .reduce(f64::min)
+        })
     }
 }
 

@@ -36,6 +36,10 @@ pub struct Settings {
     /// Пишет CI при релизе: контрольные суммы exe этой версии.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe: Option<ExeInfo>,
+    /// 0.9.8: лёгкий пинг офиса (HEAD без входа) между полными проверками, пока статус не зелёный, с; 0 — выключен.
+    /// Офис снова ответил — полная проверка сразу.
+    #[serde(default = "d_light_ping")]
+    pub light_ping_sec: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +108,9 @@ pub struct Thresholds {
     pub vpn_bad_ms: f64,
 }
 
+fn d_light_ping() -> u64 {
+    120
+}
 fn d_support_url() -> String {
     "https://jira.corp.dominigames.com/servicedesk/customer/portal/1/create/23".into()
 }

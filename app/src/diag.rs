@@ -28,6 +28,8 @@ pub struct TargetDiag {
     /// Итог одной строкой и что сделать.
     pub verdict: &'static str,
     pub hint: String,
+    /// 0.9.8: что проверено и прошло — пунктами для человека («Сервис доступен: …», «Вход по учётке AD работает»).
+    pub passed: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,8 +149,11 @@ pub fn run(settings: &Settings, secrets: &Secrets) -> Report {
                     t.name.clone()
                 };
                 let (id, auth) = (t.id.clone(), t.kind());
+                let world = t.role == crate::settings::Role::World;
                 let adapters = &adapters;
-                hs.push(sc.spawn(move || diag_url(&id, &name, &url, auth, secrets, adapters)));
+                hs.push(
+                    sc.spawn(move || diag_url(&id, &name, &url, auth, secrets, adapters, world)),
+                );
             }
         }
         let i = &settings.internet;
@@ -161,6 +166,7 @@ pub fn run(settings: &Settings, secrets: &Secrets) -> Report {
                 AuthKind::None,
                 secrets,
                 adapters,
+                false,
             )
         }));
         for h in hs {
@@ -206,6 +212,7 @@ fn diag_url(
     auth: AuthKind,
     secrets: &Secrets,
     adapters: &[Adapter],
+    world: bool,
 ) -> TargetDiag {
     let (a, url) = crate::probe::auth_for_url(auth, secrets, url.to_string());
     let url = url.as_str();
@@ -218,12 +225,16 @@ fn diag_url(
         steps: vec![],
         verdict: "fail",
         hint: String::new(),
+        passed: vec![],
     };
     if let Some(m) = &missing {
         d.steps.push(step("Креды", "warn", m.clone()));
     } else if auth != AuthKind::None {
         d.steps
             .push(step("Креды", "ok", format!("заданы, вход: {auth_name}")));
+    } else {
+        d.steps
+            .push(step("Креды", "ok", "не нужны — открытый адрес, без логина"));
     }
 
     let uri: ureq::http::Uri = match url.parse() {
@@ -280,9 +291,11 @@ fn diag_url(
 
     // TCP
     let t = Instant::now();
+    let tcp_ms: u128;
     match TcpStream::connect_timeout(&addr, Duration::from_secs(8)) {
         Ok(_) => {
             let ms = t.elapsed().as_millis();
+            tcp_ms = ms;
             d.steps.push(step(
                 "TCP",
                 if ms > 500 { "warn" } else { "ok" },
@@ -335,7 +348,14 @@ fn diag_url(
                 info += &format!(", вход: {reason}");
             }
             let login_page = final_uri.contains("login.action") || final_uri.contains("/login");
-            let ok = (200..300).contains(&status) && !login_page;
+            // мир (ChatGPT, Claude, Luma): важно «доступен ли» — главная страница скачалась; 403 — проверка
+            // Cloudflare для ботов (браузер откроет), закрыт для страны — 451 или страница «недоступно в регионе»
+            let region = final_uri.contains("unavailable") || final_uri.contains("unsupported");
+            let ok = if world {
+                (status < 400 || status == 403) && !region
+            } else {
+                (200..300).contains(&status) && !login_page
+            };
             d.steps
                 .push(step("HTTP", if ok { "ok" } else { "fail" }, info));
             if let Some(u) = &who {
@@ -353,12 +373,33 @@ fn diag_url(
             }
             if ok {
                 d.verdict = if missing.is_some() { "warn" } else { "ok" };
+                d.passed = passed_list(
+                    tcp_ms,
+                    status,
+                    ms,
+                    fake,
+                    world,
+                    &auth_name,
+                    auth,
+                    who.as_deref(),
+                    missing.is_some(),
+                );
                 d.hint = if missing.is_some() {
                     "Сервис отвечает, но без кредов — скорость и доступ проверяются не полностью."
                         .into()
                 } else {
-                    "Всё в порядке.".into()
+                    // коротко для строки: «Доступен · 17 мс · Вход по учётке AD работает»
+                    format!(
+                        "Доступен · {} мс · {}",
+                        if fake { ms } else { tcp_ms },
+                        d.passed
+                            .get(1)
+                            .map(|p| p.split(':').next().unwrap_or(p))
+                            .unwrap_or("")
+                    )
                 };
+            } else if world && (status == 451 || region) {
+                d.hint = "Закрыт для вашей страны — нужен VPN в мир.".into();
             } else {
                 d.hint = match status {
                     401 | 403 => "Нет доступа: проверьте логин, пароль или токен в secrets.env.".into(),
@@ -377,6 +418,47 @@ fn diag_url(
         }
     }
     d
+}
+
+/// Пройденные проверки — пунктами для человека (0.9.8): доступность с задержкой, вход, путь.
+#[allow(clippy::too_many_arguments)]
+fn passed_list(
+    tcp_ms: u128,
+    status: u16,
+    http_ms: u128,
+    fake: bool,
+    world: bool,
+    auth_name: &str,
+    auth: AuthKind,
+    who: Option<&str>,
+    missing: bool,
+) -> Vec<String> {
+    let mut v = vec![if fake {
+        format!(
+            "Сервис доступен: ответ HTTP {status} за {http_ms} мс (через туннель — TCP {tcp_ms} мс до своего туннеля)"
+        )
+    } else {
+        format!("Сервис доступен: TCP {tcp_ms} мс, ответ HTTP {status} за {http_ms} мс")
+    }];
+    if world {
+        v.push(if status == 403 {
+            "Главная страница открывается: 403 — проверка Cloudflare для программ, в браузере откроется".into()
+        } else {
+            "Главная страница скачивается".into()
+        });
+    } else if auth == AuthKind::None {
+        v.push("Доступ по открытой ссылке, без логина".into());
+    } else if missing {
+        v.push("Вход не задан — проверено без логина".into());
+    } else if auth_name.starts_with("Basic") {
+        v.push(match who {
+            Some(u) => format!("Вход по учётке AD работает: сервер узнал «{u}»"),
+            None => "Вход по учётке AD работает".into(),
+        });
+    } else {
+        v.push(format!("Токен работает: {auth_name}"));
+    }
+    v
 }
 
 // ---------- платформенная часть ----------
@@ -807,6 +889,7 @@ mod tests {
             AuthKind::None,
             &s,
             &[],
+            false,
         );
         assert_eq!(d.verdict, "fail");
         assert_eq!(d.steps.last().unwrap().name, "DNS");

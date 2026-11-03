@@ -270,7 +270,8 @@ function spark(vals) {
 }
 const raw3 = (m, f) => m?.raw?.length ? h("span", { class: "tm", text: `проверки: ${m.raw.map(f).join(" · ")} → медиана ${f(m.value)}` }) : null;
 const clientName = () => S?.snapshot?.client?.name || "VPN";
-const clientFull = () => { const c = S?.snapshot?.client; const at = c?.profile || (c?.server ? `сервер ${c.server}` : ""); return c ? `${c.name}${at ? " · " + at : ""}` : "клиент VPN не определён"; };
+// адрес сервера — только для админов (лог, отчёт); сотруднику — имя профиля или сервера (0.9.8)
+const clientFull = () => { const c = S?.snapshot?.client; return c ? `${c.name}${c.profile ? " · " + c.profile : ""}` : "клиент VPN не определён"; };
 
 // ---------- состояние: вывод ----------
 function verdict() {
@@ -474,7 +475,7 @@ function notes() {
   if (!S?.paused && outage()) out.push(h("div", { class: "note advice", text: "Звонить в поддержку не нужно — админы знают и чинят." }));
   else if (!S?.paused && sn?.advice?.length) out.push(h("div", { class: "note advice", text: `Совет: ${sn.advice[0]}` }));
   // 0.9.7: туннель рвётся на секунды — сказать прямо, что это сервер VPN, а не сотрудник
-  if (!S?.paused && (sn?.drops_hour || 0) >= 2) out.push(h("div", { class: "note advice", text: `Туннель обрывался ${sn.drops_hour} ${plural(sn.drops_hour, "раз", "раза", "раз")} за час — это сервер VPN${sn.client?.server ? ` (${sn.client.server})` : ""}, а не вы. Мешает — смените сервер.` }));
+  if (!S?.paused && (sn?.drops_hour || 0) >= 2) out.push(h("div", { class: "note advice", text: `Туннель обрывался ${sn.drops_hour} ${plural(sn.drops_hour, "раз", "раза", "раз")} за час — это сервер VPN${sn.client?.profile ? ` «${sn.client.profile}»` : ""}, а не вы. Мешает — смените сервер.` }));
   const c = ctxRow(); if (c) out.push(c);
   return out;
 }

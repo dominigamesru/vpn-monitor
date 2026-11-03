@@ -221,7 +221,11 @@ input[type=text], input[type=password] { font: inherit; color: var(--ink); backg
 .diag summary::-webkit-details-marker { display: none; }
 .diag summary .h { margin-left: auto; color: var(--muted); font-size: 12.5px; text-align: right; }
 .diag ul { list-style: none; padding: 8px 0 0 26px; margin: 0; display: grid; gap: 3px; font-size: 12.5px; }
-.diag li { display: grid; grid-template-columns: 70px minmax(0,1fr); gap: 8px; } .diag li .n { color: var(--muted); }
+.diag ul.dsteps li { display: grid; grid-template-columns: 30% 70%; gap: 0; } .diag li .n { color: var(--muted); display: flex; gap: 6px; align-items: center; padding-right: 8px; }
+.diag ul.passed { list-style: disc; padding-left: 44px; color: var(--ink); }
+.diag ul.passed li { display: list-item; }
+.diag li .n .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
+.diag li .n .dot.good { background: var(--good); } .diag li .n .dot.warn { background: var(--warn); } .diag li .n .dot.bad { background: var(--bad); }
 .diag li span:last-child { overflow-wrap: anywhere; }
 pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; overflow: auto; max-height: 50vh; font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 10px 0 0; }
 .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
@@ -250,6 +254,8 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
   <div id="annBox"></div>
   <div class="banner" id="notifyBanner" hidden style="--c: var(--warn)"><p id="notifyBannerText"></p><div class="row"><button class="btn" type="button" data-open-notify>Открыть настройки уведомлений</button><button class="btn ghost" type="button" id="notifyLater">Не сейчас</button></div></div>
+  <!-- 0.9.8: обновление пришло — поставить сейчас, не дожидаясь; до перезапуска в новую версию -->
+  <div class="banner" id="updBanner" hidden><div id="updText"></div><button class="btn" id="updNow" type="button">Поставить сейчас</button></div>
   <div class="banner" id="newsBanner" hidden><div id="newsText"></div><button class="btn ghost" id="newsOk">Понятно</button></div>
   <div class="banner" id="loginBanner" hidden style="--c: var(--warn)"><p>Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN.</p><a class="btn" href="#settings">Войти</a></div>
 
@@ -484,7 +490,8 @@ const R = () => S?.snapshot?.route || null;
 const mbps = (x) => x == null ? "—" : `${num(x, x < 10 ? 1 : 0)} Мбит/с`;
 const msf = (x) => x == null ? "—" : x >= 1000 ? `${num(x / 1000, 1)} с` : `${num(x)} мс`;
 const clientName = () => S?.snapshot?.client?.name || "VPN";
-const clientFull = () => { const c = S?.snapshot?.client; const at = c?.profile || (c?.server ? `сервер ${c.server}` : ""); return c ? `${c.name}${at ? " · " + at : ""}` : "клиент VPN не определён"; };
+// адрес сервера — только для админов (лог, отчёт); сотруднику — имя профиля или сервера (0.9.8)
+const clientFull = () => { const c = S?.snapshot?.client; return c ? `${c.name}${c.profile ? " · " + c.profile : ""}` : "клиент VPN не определён"; };
 const officeT = () => (S?.snapshot?.targets || []).filter((x) => x.role === "light" || x.role === "speed");
 function verdict() {
   const sn = S?.snapshot, r = R(), th = TH();
@@ -553,7 +560,7 @@ function renderNow() {
     if (wl && rows.length >= 4) { rows[2].classList.add("mainend"); rows[3].classList.add("branch"); drawBranch(rt, rows[wl.direct ? 0 : 1].querySelector(".node"), rows[3].querySelector(".node"), P(wl.st)); }
     else rt.querySelectorAll("svg.branchline").forEach((x) => x.remove()); }
   // звенья против порогов (медиана трёх проверок)
-  $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин` : "Ещё не проверяли";
+  $("#normSub").textContent = sn.at ? `Проверено в ${hhmm(sn.at)}${sn.took_ms ? ` за ${num(sn.took_ms / 1000, 1)} с` : ""}; следующая — ${S.next_check_ms ? `в ${hhmm(S.next_check_ms)}` : `через ${Math.round((sn.color === "green" ? S.intervals.green_sec : S.intervals.alert_sec) / 60)} мин`}` : "Ещё не проверяли";
   const norms = $("#norms"); norms.replaceChildren();
   const row = (name, st, val, frac, mark, cmp) => { const tr = el("div", { class: "track" }, el("i", { style: `width:${Math.max(3, Math.min(1, frac) * 100)}%` })); if (mark != null) tr.append(el("em", { style: `left:calc(${Math.min(1, mark) * 100}% - 1px)` })); norms.append(el("div", { class: `nr ${st}` }, badge(st, name), el("span", { class: "val", text: val }), tr, el("span", { class: "cmp", text: cmp }))); };
   if (r) {
@@ -828,8 +835,10 @@ async function pollDiag() { const r = await api("/api/diagnostics"); const b = $
   $("#diagInfo").textContent = `Проверено в ${hhmm(d.at_ms)} за ${num(d.took_ms / 1000, 1)} с. Нажмите на строку — будут шаги.`;
   const host = $("#diag"); host.replaceChildren();
   for (const t of [...d.targets].sort((a, b) => ({ fail: 0, warn: 1, ok: 2 }[a.verdict] - { fail: 0, warn: 1, ok: 2 }[b.verdict]))) {
-    const ul = el("ul"); for (const s of t.steps) ul.append(el("li", {}, el("span", { class: "n", text: s.name }), el("span", { text: s.detail })));
-    host.append(el("details", {}, el("summary", {}, badge(DSTEP[t.verdict], t.name), el("span", { class: "h", text: t.hint })), ul));
+    // 0.9.8: что прошло — пунктами; шаги — две колонки (шаг 30% | что увидели 70%)
+    const ok = (t.passed || []).length ? el("ul", { class: "passed" }, ...t.passed.map((p) => el("li", { text: p }))) : null;
+    const ul = el("ul", { class: "dsteps" }); for (const s of t.steps) ul.append(el("li", {}, el("span", { class: "n" }, el("span", { class: `dot ${DSTEP[s.status] || "idle"}` }), s.name), el("span", { text: s.detail })));
+    host.append(el("details", {}, el("summary", {}, badge(DSTEP[t.verdict], t.name), el("span", { class: "h", text: t.hint })), ...[ok, ul].filter(Boolean)));
   }
   const net = el("ul"); for (const a of d.adapters.filter((x) => x.up)) net.append(el("li", {}, el("span", { class: "n", text: a.vpn_like ? `VPN · ${a.kind || "туннель"}` : (a.kind || "сеть") }), el("span", { text: `${a.name} — ${a.description}${a.ipv4.length ? " · " + a.ipv4.join(", ") : ""}` })));
   net.append(el("li", {}, el("span", { class: "n", text: "прокси" }), el("span", { text: d.system_proxy })));
@@ -938,6 +947,16 @@ async function renderNotes() {
     host.append(card);
   }
 }
+// версия a новее b: 0.9.8 > 0.9.7, 0.9.8 > 0.9.8-beta.1
+function newer(a, b) { if (!a || !b) return false; const p = (v) => { const [m, pre] = v.split("-"); return [...m.split(".").map(Number), pre ? 0 : 1, Number((pre || "").replace(/\D+/g, "")) || 0]; }; const x = p(a), y = p(b); for (let i = 0; i < x.length; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; }
+function renderUpdate() { const has = newer(S?.latest, S?.version); $("#updBanner").hidden = !has; if (!has) return;
+  const rel = `https://github.com/dominigamesru/vpn-monitor/releases/tag/v${S.latest}`;
+  $("#updText").replaceChildren(el("b", { text: S.installing ? `Ставлю ${S.latest}…` : `Доступна версия ${S.latest}` }), el("span", { class: "sub", text: S.installing ? " Приложение перезапустится само через минуту-две." : ` У вас ${S.version}. Поставится само в ближайшие минуты — или сейчас. ` }), ...(S.installing ? [] : [el("a", { href: rel, target: "_blank", rel: "noopener", text: "Что нового" })]));
+  const b = $("#updNow"); b.hidden = !!S.installing; }
+$("#updNow").addEventListener("click", async () => { const b = $("#updNow"); b.disabled = true; b.classList.add("busy"); b.textContent = "Ставлю…";
+  const r = await api("/api/update", { method: "POST", body: JSON.stringify({ install: true }) }).catch(() => null);
+  if (!r?.installing) { b.disabled = false; b.classList.remove("busy"); b.textContent = "Поставить сейчас"; $("#updText").append(el("span", { class: "sub", text: " Приложение не ответило — попробуйте ещё раз." })); return; }
+  S.installing = true; renderUpdate(); });
 $("#newsOk").addEventListener("click", async () => { $("#newsBanner").hidden = true; await api("/api/prefs", { method: "POST", body: JSON.stringify({ last_seen_version: S.version }) }); });
 
 // ---------- вкладки и опрос ----------
@@ -947,7 +966,7 @@ function renderWelcome() { if (!$("section[data-tab=welcome]") || $("section[dat
   const sn = S?.snapshot, r = sn?.route, svc = r?.services || [];
   const officeOk = svc.length ? svc.every((x) => x.st === "good") : false;
   const steps = [[!!S?.login, "Учётная запись AD", S?.login ? `${S.login} — Jira, Confluence и SVN приняли вход` : "Войдите — без этого Jira, Confluence и SVN не проверить", S?.login ? null : ["Войти", "#settings"]],
-    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", профиль " + sn.client.profile : sn.client.server ? ", сервер " + sn.client.server : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
+    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", " + sn.client.profile : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
     [officeOk, "Офис отвечает", officeOk ? "Confluence, Jira и SVN отвечают" : S?.checking ? "Проверяю Confluence, Jira, SVN…" : "Ждём, когда офис ответит через VPN", null]];
   const firstOpen = steps.findIndex((x) => !x[0]);
   $("#wSteps").replaceChildren(...steps.map(([ok, t, d, act], i) => el("li", {}, el("span", { class: `mark ${ok ? "ok" : i === firstOpen ? "cur" : "wait"}`, text: ok ? "✓" : String(i + 1) }), el("div", {}, el("b", { text: t }), el("small", { text: d })), act ? el("a", { class: "btn ghost sm", href: act[1], text: act[0] }) : el("span"))));
@@ -983,7 +1002,7 @@ async function poll(once) { clearTimeout(pt);
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
     renderHeader(); renderAnnounce(); renderWelcome(); renderNotifyBanner();
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
-    renderNow(); renderConn(); if (!once) news();
+    renderNow(); renderConn(); renderUpdate(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }
   } catch { off = true; $("#offlineBanner").hidden = false; }
   pt = setTimeout(() => poll(), S?.checking ? 1000 : 4000); }

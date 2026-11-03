@@ -24,8 +24,8 @@ pub struct Client {
     /// Профиль (подключение внутри клиента), если удалось прочитать.
     pub profile: Option<String>,
     pub adapter: String,
-    /// 0.9.6: сервер, к которому подключён клиент (`IP:порт`) — по соединениям его процессов; для Happ и других
-    /// клиентов, у которых профиль не прочитать.
+    /// 0.9.6: сервер, к которому подключён клиент (`IP:порт`) — по соединениям его процессов. Сотруднику не
+    /// показывается (0.9.8) — для админов: лог, отчёт в поддержку, метрики (`vs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,
 }
@@ -38,17 +38,18 @@ fn matches_any(text: &str, patterns: &[String]) -> bool {
 }
 
 impl Client {
-    /// Ключ нормы и подпись: «Happ / Lisbon», «Happ / 45.12.0.7:443» или «Happ».
+    /// Ключ нормы (и строка для поддержки): «Happ / AUTO VPN + ОФИС», без имени — «Happ / 45.12.0.7:443», «Happ».
     pub fn key(&self) -> String {
-        match self.place() {
+        match self.profile.as_deref().or(self.server.as_deref()) {
             Some(p) => format!("{} / {p}", self.name),
             None => self.name.clone(),
         }
     }
 
-    /// Куда подключён: профиль, иначе сервер.
+    /// Что показать сотруднику: имя профиля или сервера. Адрес сервера — только админам (лог, отчёт, метрики),
+    /// заказчик 03.11.
     pub fn place(&self) -> Option<&str> {
-        self.profile.as_deref().or(self.server.as_deref())
+        self.profile.as_deref()
     }
 }
 
@@ -92,12 +93,8 @@ pub fn detect(
             .unwrap_or(by_adapter[0]),
     };
     let profile = profile(&rule.name);
-    // сервер — когда профиль не прочитан (Happ): по TCP-соединениям процессов клиента
-    let server = if profile.is_none() {
-        platform::server_of(&rule.processes)
-    } else {
-        None
-    };
+    // адрес сервера — по TCP-соединениям процессов клиента (для админов: лог, отчёт, метрики)
+    let server = platform::server_of(&rule.processes);
     Some(Client {
         name: rule.name.clone(),
         profile,
@@ -354,33 +351,162 @@ fn title_from_ovpn(text: &str) -> Option<String> {
 
 static HAPP_KEYS_LOGGED: std::sync::Once = std::sync::Once::new();
 
+/// Имя выбранного сервера Happ («AUTO VPN + ОФИС»): из `%LOCALAPPDATA%\Happ\*.json`. Формат не документирован —
+/// ищем по смыслу (`happ_server_name`); один раз пишем в лог файлы и пути полей без значений, чтобы уточнить.
 fn happ_profile() -> Option<String> {
-    let path = env_path("LOCALAPPDATA", "Happ\\config.json")?;
-    let text = std::fs::read_to_string(&path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    // формат конфига Happ не документирован: один раз пишем в лог имена полей верхнего уровня (без значений),
-    // чтобы уточнить чтение профиля
-    HAPP_KEYS_LOGGED.call_once(|| {
-        let keys: Vec<&str> = v
-            .as_object()
-            .map(|o| o.keys().map(String::as_str).collect())
+    let dir = env_path("LOCALAPPDATA", "Happ")?;
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("json"))
+        })
+        .collect();
+    // config.json — первым
+    files.sort_by_key(|p| p.file_name().map(|n| n != "config.json").unwrap_or(true));
+    let mut skeleton = vec![];
+    let mut found = None;
+    for f in &files {
+        let Some(v) = std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        else {
+            continue;
+        };
+        let name = f
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        info!("vpn", "Happ config.json: поля {keys:?}");
+        skeleton.push(format!("{name}: {:?}", key_paths(&v, 3)));
+        if found.is_none() {
+            found = happ_server_name(&v);
+        }
+    }
+    HAPP_KEYS_LOGGED.call_once(|| {
+        info!(
+            "vpn",
+            "Happ: имя сервера {}; файлы и поля (без значений): {}",
+            if found.is_some() {
+                "найдено"
+            } else {
+                "не найдено"
+            },
+            skeleton.join(" | ")
+        );
     });
+    found
+}
+
+/// Пути полей JSON до глубины `depth` (без значений; массивы — `[]`, по первому элементу).
+fn key_paths(v: &serde_json::Value, depth: usize) -> Vec<String> {
+    fn walk(v: &serde_json::Value, pre: &str, depth: usize, out: &mut Vec<String>) {
+        if depth == 0 || out.len() > 60 {
+            return;
+        }
+        match v {
+            serde_json::Value::Object(o) => {
+                for (k, x) in o {
+                    let p = if pre.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{pre}.{k}")
+                    };
+                    out.push(p.clone());
+                    walk(x, &p, depth - 1, out);
+                }
+            }
+            serde_json::Value::Array(a) => {
+                if let Some(x) = a.first() {
+                    walk(x, &format!("{pre}[]"), depth - 1, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = vec![];
+    walk(v, "", depth, &mut out);
+    out
+}
+
+/// Имя выбранного сервера в JSON клиента: (1) поле верхнего уровня вроде `selectedServerName`; (2) id выбранного
+/// (`selectedServerId`, `currentServer`…) → объект с этим id → его `name`/`remarks`; (3) объект с `selected: true`.
+pub fn happ_server_name(v: &serde_json::Value) -> Option<String> {
+    const NAME_KEYS: &[&str] = &["name", "remarks", "remark", "title", "displayName", "tag"];
     for key in [
         "selectedServerName",
         "currentServerName",
-        "selectedServer",
-        "currentServer",
-        "selected",
-        "remarks",
-        "name",
+        "activeServerName",
+        "serverName",
     ] {
-        if let Some(safe) = v.get(key).and_then(|x| x.as_str()).and_then(safe_label) {
-            return Some(safe);
+        if let Some(t) = v.get(key).and_then(|x| x.as_str()).and_then(safe_label) {
+            return Some(t);
         }
     }
-    None
+    let name_of = |o: &serde_json::Map<String, serde_json::Value>| {
+        NAME_KEYS
+            .iter()
+            .filter_map(|k| o.get(*k).and_then(|x| x.as_str()))
+            .find_map(safe_label)
+    };
+    // id выбранного — значение ключа со словом selected/current/active
+    fn ids(v: &serde_json::Value, out: &mut Vec<String>) {
+        if let serde_json::Value::Object(o) = v {
+            for (k, x) in o {
+                let kl = k.to_lowercase();
+                if (kl.contains("selected") || kl.contains("current") || kl.contains("active"))
+                    && !kl.contains("name")
+                {
+                    match x {
+                        serde_json::Value::String(s) if !s.is_empty() => out.push(s.clone()),
+                        serde_json::Value::Number(n) => out.push(n.to_string()),
+                        _ => {}
+                    }
+                }
+                ids(x, out);
+            }
+        } else if let serde_json::Value::Array(a) = v {
+            a.iter().for_each(|x| ids(x, out));
+        }
+    }
+    fn find<'a>(
+        v: &'a serde_json::Value,
+        f: &dyn Fn(&serde_json::Map<String, serde_json::Value>) -> bool,
+    ) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+        match v {
+            serde_json::Value::Object(o) => {
+                if f(o) {
+                    return Some(o);
+                }
+                o.values().find_map(|x| find(x, f))
+            }
+            serde_json::Value::Array(a) => a.iter().find_map(|x| find(x, f)),
+            _ => None,
+        }
+    }
+    let mut sel = vec![];
+    ids(v, &mut sel);
+    for id in &sel {
+        let is_it = |o: &serde_json::Map<String, serde_json::Value>| {
+            ["id", "uuid", "guid", "key", "serverId"].iter().any(|k| {
+                o.get(*k).is_some_and(|x| {
+                    x.as_str() == Some(id.as_str())
+                        || x.as_i64().map(|n| n.to_string()).as_deref() == Some(id.as_str())
+                })
+            }) && name_of(o).is_some()
+        };
+        if let Some(o) = find(v, &is_it) {
+            return name_of(o);
+        }
+    }
+    let flagged = |o: &serde_json::Map<String, serde_json::Value>| {
+        ["selected", "isSelected", "active", "isActive", "current"]
+            .iter()
+            .any(|k| o.get(*k).and_then(|x| x.as_bool()) == Some(true))
+            && name_of(o).is_some()
+    };
+    find(v, &flagged).and_then(name_of)
 }
 
 /// Подпись, которую можно показать: из ссылки `vless://…#Подпись` — только подпись; ссылку целиком — никогда
@@ -480,6 +606,24 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn happ_server_name_by_meaning() {
+        // имена — как у заказчика в Happ (скрин 03.11); ссылки vless:// с ключами наружу не идут
+        let by_id = serde_json::json!({"selectedServerId": "s2", "subscriptions": [{"name": "Dominigames VPN",
+            "servers": [{"id": "s1", "name": "EU + Офис"}, {"id": "s2", "remarks": "AUTO VPN + ОФИС"}]}]});
+        assert_eq!(happ_server_name(&by_id).as_deref(), Some("AUTO VPN + ОФИС"));
+        let by_flag = serde_json::json!({"servers": [{"name": "EU + Офис"}, {"name": "Германия + ОФИС", "selected": true}]});
+        assert_eq!(
+            happ_server_name(&by_flag).as_deref(),
+            Some("Германия + ОФИС")
+        );
+        let top = serde_json::json!({"selectedServerName": "EU + Офис Rezerv"});
+        assert_eq!(happ_server_name(&top).as_deref(), Some("EU + Офис Rezerv"));
+        let link = serde_json::json!({"servers": [{"name": "vless://uuid@1.2.3.4:443?security=reality#EU + Офис", "selected": true}]});
+        assert_eq!(happ_server_name(&link).as_deref(), Some("EU + Офис"));
+        assert_eq!(happ_server_name(&serde_json::json!({"servers": []})), None);
+    }
 
     #[test]
     fn server_by_connections() {

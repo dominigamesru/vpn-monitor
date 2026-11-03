@@ -77,6 +77,9 @@ pub struct Record {
     pub vc: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vp: Option<String>,
+    /// 0.9.8: адрес сервера VPN (`IP:порт`) — для админов; `vp` с 0.9.8 — только имя профиля или сервера.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +177,7 @@ impl Record {
                 .client
                 .as_ref()
                 .and_then(|c| c.place().map(str::to_string)),
+            vs: s.client.as_ref().and_then(|c| c.server.clone()),
         }
     }
 }
@@ -470,6 +474,7 @@ mod tests {
             jit: None,
             vc: None,
             vp: None,
+            vs: None,
         }
     }
 

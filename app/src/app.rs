@@ -59,6 +59,10 @@ pub struct Shared {
     /// Сообщения админов к показу (v0.9) и последний разобранный файл (для пересчёта после «Закрыть»).
     pub announce: Vec<vpn_monitor::announce::Shown>,
     pub announce_file: vpn_monitor::announce::File,
+    /// 0.9.8: когда следующая проверка по расписанию (мс UNIX).
+    pub next_check_ms: Option<i64>,
+    /// 0.9.8: «Поставить сейчас» — ставить, даже если проверки на паузе; идёт установка (для плашки).
+    pub install_now: bool,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -202,6 +206,8 @@ pub fn run(replace: bool, first_run: bool) {
         city_at: None,
         announce: vec![],
         announce_file: Default::default(),
+        next_check_ms: None,
+        install_now: false,
         checking: false,
         latest: None,
         update_error: None,
@@ -526,16 +532,64 @@ fn spawn_checker(
             settings.check_interval_alert_sec,
         );
         let mut m = Monitor::new(settings, secrets);
+        // свой сдвиг расписания (0.9.8): выбрать один раз и запомнить в user.json
+        let slot = {
+            let mut sh = lock(&shared);
+            match sh.prefs.slot.filter(|s| s.valid()) {
+                Some(s) => s,
+                None => {
+                    let s = vpn_monitor::schedule::Slot::random();
+                    sh.prefs.slot = Some(s);
+                    if let Err(e) = sh.prefs.save(&sh.dir) {
+                        warn!("check", "сдвиг расписания не сохранён: {e}");
+                    }
+                    s
+                }
+            }
+        };
+        info!(
+            "check",
+            "расписание: всё хорошо — раз в {} мин (минута {}), иначе — раз в {} мин (минута {}), секунда {}",
+            green / 60,
+            slot.minute_for(green / 60),
+            alert / 60,
+            slot.minute_for(alert / 60),
+            slot.sec
+        );
         let mut rev = 0u64;
         let mut notifier = vpn_monitor::notify::Notifier::default();
         let mut wait = Duration::from_secs(2); // первая проверка — сразу после старта
         let mut manual = false;
         let mut last_check = std::time::SystemTime::now();
+        // 0.9.8: между полными проверками при не зелёном — лёгкий пинг; когда полная по расписанию и молчал ли офис
+        let mut next_full: Option<std::time::Instant> = None;
+        let mut office_down = false;
+        // ожидание до полной проверки (без пингов) — по нему «ноутбук спал»
+        let mut full_wait = wait;
         loop {
             match rx.recv_timeout(wait) {
                 Ok(Cmd::CheckNow) => manual = true,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            if !manual
+                && !lock(&shared).prefs.paused(vpn_monitor::metrics::now_ms())
+                && let Some(nf) = next_full
+                && let Some(left) = nf.checked_duration_since(std::time::Instant::now())
+                && left > Duration::from_secs(5)
+            {
+                // проснулись для лёгкого пинга: офис снова отвечает — полная проверка сразу, иначе ждём дальше
+                let ping = m.light_ping();
+                if office_down && let Some(ms) = ping {
+                    info!(
+                        "check",
+                        "лёгкий пинг: офис снова отвечает ({ms:.0} мс) — проверяю полностью"
+                    );
+                } else {
+                    let every = Duration::from_secs(m.settings.light_ping_sec.max(30));
+                    wait = left.min(every);
+                    continue;
+                }
             }
             // удалённые настройки поменялись — проверка берёт новые (пороги, цели) без перезапуска
             {
@@ -557,7 +611,7 @@ fn spawn_checker(
             let gap = std::time::SystemTime::now()
                 .duration_since(last_check)
                 .unwrap_or_default();
-            if gap > wait + Duration::from_secs(90) {
+            if gap > full_wait + Duration::from_secs(90) {
                 info!(
                     "check",
                     "перерыв {} с — похоже, ноутбук спал: 2 минуты провалы не считаю",
@@ -610,12 +664,25 @@ fn spawn_checker(
                     });
                 }
             }
-            // R3.4: зелёный — раз в 3 минуты, иначе — раз в минуту
-            wait = Duration::from_secs(if snap.verdict.color == Color::Green {
+            // 0.9.8: зелёный — раз в 15 минут, иначе — раз в 10, в свою минуту часа и секунду (разнести сотрудников)
+            let interval = if snap.verdict.color == Color::Green {
                 green
             } else {
                 alert
-            });
+            };
+            let now_s = vpn_monitor::metrics::now_ms() as u64 / 1000;
+            let at = vpn_monitor::schedule::next_at(now_s, interval, &slot, 60);
+            wait = Duration::from_secs(at.saturating_sub(now_s).max(1));
+            lock(&shared).next_check_ms = Some(at as i64 * 1000);
+            next_full = Some(std::time::Instant::now() + wait);
+            full_wait = wait;
+            // лёгкий пинг — пока не зелёный и офис молчал (ждём, когда вернётся); в свою секунду, как и проверки
+            office_down = matches!(snap.verdict.badge, vpn_monitor::score::Badge::NoVpn);
+            let ping = m.settings.light_ping_sec;
+            if office_down && ping > 0 {
+                let every = Duration::from_secs(ping.max(30) + (slot.sec as u64 % 30));
+                wait = wait.min(every);
+            }
             // уведомления: только о подтверждённой смене состояния и с лимитами (notify.rs)
             let (prefs, paused) = {
                 let sh = lock(&shared);
@@ -844,11 +911,12 @@ fn spawn_updater(
         let mut failed: Option<(String, u32)> = None;
         std::thread::sleep(Duration::from_secs(10));
         loop {
-            let (channel, paused) = {
+            let (channel, paused, force) = {
                 let sh = lock(&shared);
                 (
                     sh.prefs.channel.clone(),
                     sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+                    sh.install_now,
                 )
             };
             match update::fetch_channel_version(&base, &channel) {
@@ -865,7 +933,8 @@ fn spawn_updater(
                         .filter(|(v, _)| *v == latest)
                         .map_or(0, |(_, n)| *n);
                     // во время паузы не обновляемся: сотрудник, скорее всего, на звонке
-                    if update::needs_update(VERSION, &latest) && tries < 3 && !paused {
+                    // «Поставить сейчас» из окна — и на паузе, и после неудачных попыток
+                    if update::needs_update(VERSION, &latest) && (force || (tries < 3 && !paused)) {
                         match apply_update(&base, &latest, &dir) {
                             Ok(exe) => {
                                 let _ = proxy.send_event(UserEvent::RestartInto(exe));
@@ -877,7 +946,11 @@ fn spawn_updater(
                                     "обновление до {latest} не удалось (попытка {}): {e}",
                                     tries + 1
                                 );
-                                lock(&shared).update_error = Some(e.clone());
+                                {
+                                    let mut sh = lock(&shared);
+                                    sh.update_error = Some(e.clone());
+                                    sh.install_now = false;
+                                }
                                 let _ = proxy.send_event(UserEvent::UpdateError(e));
                                 failed = Some((latest, tries + 1));
                             }
