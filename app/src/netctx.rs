@@ -92,6 +92,65 @@ pub fn minutes_per_gb(svn_mbps: f64) -> Option<f64> {
     (svn_mbps > 0.05).then(|| 8192.0 / svn_mbps / 60.0)
 }
 
+/// Баблы под вердиктом в меню (0.9.11) — те же правила, что в `flyout.html` (`ctxRow`): (ключ, текст, почему).
+/// Нужны для лога «повесил / снял и почему».
+pub fn bubbles(
+    net: &Net,
+    call: Option<&Call>,
+    svn_mbps: Option<f64>,
+    usual_svn_mbps: Option<f64>,
+) -> Vec<(&'static str, String, String)> {
+    let mut out = vec![];
+    if weak_wifi(net, None) {
+        out.push((
+            "wifi",
+            format!("слабый Wi‑Fi {}%", net.signal.unwrap_or(0)),
+            format!("сигнал {}% < {WEAK_SIGNAL}%", net.signal.unwrap_or(0)),
+        ));
+    } else if net.kind == "phone" || net.metered {
+        out.push((
+            "net",
+            if net.kind == "phone" {
+                "через телефон"
+            } else {
+                "лимитная сеть"
+            }
+            .into(),
+            if net.kind == "phone" {
+                "адрес или имя сети — хотспот телефона".into()
+            } else {
+                "Windows отмечает сеть как лимитную".into()
+            },
+        ));
+    }
+    if let Some(c) = call.filter(|c| c.st != "good") {
+        out.push((
+            "call",
+            if c.st == "warn" {
+                "лучше без видео"
+            } else {
+                "связь рвётся"
+            }
+            .into(),
+            format!(
+                "потери {:.1}%, разброс задержки {:.0} мс (8 TCP-соединений до офиса)",
+                c.loss_pct, c.jitter_ms
+            ),
+        ));
+    }
+    if let (Some(now), Some(usual)) = (svn_mbps, usual_svn_mbps)
+        && let (Some(a), Some(b)) = (minutes_per_gb(now), minutes_per_gb(usual))
+        && a > 2.0 * b
+    {
+        out.push((
+            "gb",
+            format!("1 ГБ ≈ {a:.0} мин"),
+            format!("SVN {now:.1} Мбит/с — вдвое медленнее обычных {usual:.1}"),
+        ));
+    }
+    out
+}
+
 /// Сеть сейчас — по Windows: Wi‑Fi (WlanAPI), хотспот телефона, кабель; лимитная — NetworkCost.
 #[cfg(windows)]
 pub fn current() -> Net {
@@ -165,6 +224,42 @@ mod tests {
         assert!(!weak_wifi(&n, Some(15.0)));
         assert_eq!(band_of(6), "2,4 ГГц");
         assert_eq!(band_of(44), "5 ГГц");
+    }
+
+    #[test]
+    fn bubbles_with_reasons() {
+        // лог заказчика 03.11: одна потеря из 8 TCP — бабл «связь рвётся» и почему
+        let call = call_quality(&[
+            Some(1.0),
+            Some(2.0),
+            None,
+            Some(1.0),
+            Some(1.0),
+            Some(2.0),
+            Some(1.0),
+            Some(1.0),
+        ])
+        .unwrap();
+        let wifi = Net {
+            kind: "wifi".into(),
+            name: "Home".into(),
+            signal: Some(80),
+            ..Default::default()
+        };
+        let b = bubbles(&wifi, Some(&call), Some(10.0), Some(10.0));
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].0, "call");
+        assert_eq!(b[0].1, "связь рвётся");
+        assert!(b[0].2.contains("потери 12.5%"));
+        let weak = Net {
+            signal: Some(30),
+            ..wifi
+        };
+        let b = bubbles(&weak, None, Some(2.0), Some(10.0));
+        assert_eq!(
+            b.iter().map(|x| x.0).collect::<Vec<_>>(),
+            vec!["wifi", "gb"]
+        );
     }
 
     #[test]
