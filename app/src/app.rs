@@ -1142,7 +1142,7 @@ fn apply_update(base: &str, ver: &str, dir: &std::path::Path) -> Result<PathBuf,
     }
     let dest = dir.join(update::exe_name(ver));
     info!("update", "качаю exe → {}", dest.display());
-    let size = update::download_exe(base, ver, &exe_info.sha256, &dest)?;
+    let size = update::download_exe(base, ver, &exe_info.sha256, &exe_info.asset, &dest)?;
     info!("update", "exe скачан ({size} байт), SHA-256 совпал");
     std::fs::write(dir.join("settings.json"), raw).map_err(|e| format!("settings.json: {e}"))?;
     // на постоянное место `vpn-monitor.exe` (запущенный — в `vpn-monitor.old.exe`)

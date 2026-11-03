@@ -119,23 +119,40 @@ pub fn exe_info(settings_text: &str) -> Result<ExeInfo, String> {
     .map_err(|e| format!("settings.json, блок exe: {e}"))
 }
 
+/// Какие имена exe пробовать по порядку: имя из `settings.json` релиза (0.10.0: с версией и платформой), затем старые —
+/// бета `-beta`, стабильный без, у релизов до 0.5.4 — `vpn-monitor.exe`.
+pub fn exe_names(ver: &str, asset: &str) -> Vec<String> {
+    let old = if ver.contains('-') {
+        [EXE_ASSET_BETA, EXE_ASSET, LEGACY_EXE_ASSET]
+    } else {
+        [EXE_ASSET, EXE_ASSET_BETA, LEGACY_EXE_ASSET]
+    };
+    let mut v: Vec<String> = vec![];
+    if !asset.is_empty() && !asset.contains(['/', '\\']) {
+        v.push(asset.to_string());
+    }
+    v.extend(old.iter().map(|s| s.to_string()).filter(|s| s != asset));
+    v
+}
+
+/// Имя exe нового релиза: `domini-vpn-monitor-0.10.0-windows-x64.exe` (бета — с `-beta.N` в версии).
+pub fn release_asset(ver: &str) -> String {
+    format!("domini-vpn-monitor-{ver}-windows-x64.exe")
+}
+
 /// Качает exe версии `ver` в `dest` через `dest.part`, сверяя SHA-256. Возвращает размер.
 pub fn download_exe(
     base: &str,
     ver: &str,
     expected_sha256: &str,
+    asset: &str,
     dest: &Path,
 ) -> Result<u64, String> {
     let agent = crate::net::agent(Duration::from_secs(600));
-    // имя exe в релизе: бета — `-beta`, стабильный — без; у релизов до 0.5.4 — `vpn-monitor.exe`
-    let names = if ver.contains('-') {
-        [EXE_ASSET_BETA, EXE_ASSET, LEGACY_EXE_ASSET]
-    } else {
-        [EXE_ASSET, EXE_ASSET_BETA, LEGACY_EXE_ASSET]
-    };
-    let mut url = asset_url(base, ver, names[0]);
+    let names = exe_names(ver, asset);
+    let mut url = asset_url(base, ver, &names[0]);
     let mut resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
-    for name in &names[1..] {
+    for name in names.iter().skip(1) {
         if resp.status().as_u16() != 404 {
             break;
         }
@@ -204,6 +221,31 @@ pub fn exe_name(ver: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exe_names_new_then_old() {
+        assert_eq!(
+            exe_names("0.10.0", "domini-vpn-monitor-0.10.0-windows-x64.exe"),
+            vec![
+                "domini-vpn-monitor-0.10.0-windows-x64.exe",
+                "domini-vpn-monitor.exe",
+                "domini-vpn-monitor-beta.exe",
+                "vpn-monitor.exe"
+            ]
+        );
+        // старый settings.json (без asset) — как раньше
+        assert_eq!(exe_names("0.9.12", "")[0], "domini-vpn-monitor.exe");
+        assert_eq!(
+            exe_names("0.10.0-beta.1", "")[0],
+            "domini-vpn-monitor-beta.exe"
+        );
+        // путь в имени — не доверяем
+        assert_eq!(exe_names("0.10.0", "../x.exe")[0], "domini-vpn-monitor.exe");
+        assert_eq!(
+            release_asset("0.10.0"),
+            "domini-vpn-monitor-0.10.0-windows-x64.exe"
+        );
+    }
 
     #[test]
     fn versions() {

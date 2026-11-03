@@ -34,7 +34,7 @@ jobs:
         run: |
           v="${VERSION#v}"
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Не версия: $VERSION"; exit 1; }
-          gh release view "v$v" --json assets --jq '.assets[].name' | grep -qxE 'domini-vpn-monitor(-beta)?\.exe|vpn-monitor\.exe' \
+          gh release view "v$v" --json assets --jq '.assets[].name' | grep -qxE 'domini-vpn-monitor(-.*-windows-x64|-beta)?\.exe|vpn-monitor\.exe' \
             || { echo "::error::Нет релиза v$v с exe"; exit 1; }
           gh release view "v$v" --json assets --jq '.assets[].name' | grep -qx settings.json \
             || { echo "::error::В релизе v$v нет settings.json"; exit 1; }
@@ -44,5 +44,6 @@ jobs:
           CHANNEL: ${{ inputs.channel }}
         run: |
           gh release upload "$CHANNEL" latest.version --clobber
-          if [ "$CHANNEL" = "latest" ]; then gh release edit latest --latest; fi
+          # стабильный канал: «Latest» на стартовой странице — у этой версии (ADR 0018)
+          if [ "$CHANNEL" = "latest" ]; then gh release edit "v$(cat latest.version)" --latest; fi
           echo "$CHANNEL = $(cat latest.version)"

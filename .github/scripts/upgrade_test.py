@@ -68,10 +68,11 @@ def main() -> int:
         "sha256": hashlib.sha256(exe).hexdigest(),
         "crc32": f"{zlib.crc32(exe) & 0xFFFFFFFF:08x}",
         "size": len(exe),
+        "asset": f"domini-vpn-monitor-{new_ver}-windows-x64.exe",
     }
-    # как в release.yml: новое имя и старое (его качают обновлятели версий до 0.5.4)
+    # как в release.yml (ADR 0018): имя с версией и старое — его ищут обновлятели до 0.10.0 (как этот последний релиз)
+    (srv / f"v{new_ver}/domini-vpn-monitor-{new_ver}-windows-x64.exe").write_bytes(exe)
     (srv / f"v{new_ver}/{'domini-vpn-monitor-beta.exe' if '-' in new_ver else 'domini-vpn-monitor.exe'}").write_bytes(exe)
-    (srv / f"v{new_ver}/vpn-monitor.exe").write_bytes(exe)
     (srv / f"v{new_ver}/settings.json").write_text(json.dumps(new_settings, ensure_ascii=False, indent=2), encoding="utf-8")
     (srv / "latest/latest.version").write_text(new_ver + "\n", encoding="utf-8")
 
@@ -82,8 +83,18 @@ def main() -> int:
     # с 0.5.4 установка живёт в постоянном domini-vpn-monitor.exe (обновление — переименованием), до — по версиям
     stable_era = tuple(int(x) for x in old_ver.split("-")[0].split(".")) >= (0, 5, 4)
     old_exe = install / ("domini-vpn-monitor.exe" if stable_era else f"vpn-monitor-{old_ver}.exe")
-    old_exe.write_bytes(fetch(f"{GH}/v{old_ver}/vpn-monitor.exe"))
     old_settings = json.loads(fetch(f"{GH}/v{old_ver}/settings.json"))
+    # exe последнего релиза: с 0.10.0 — имя из settings.json, раньше — domini-vpn-monitor.exe или vpn-monitor.exe
+    names = [old_settings.get("exe", {}).get("asset") or "", "domini-vpn-monitor.exe", "vpn-monitor.exe"]
+    for name in [n for n in names if n]:
+        try:
+            old_exe.write_bytes(fetch(f"{GH}/v{old_ver}/{name}"))
+            print(f"последний релиз: {name}")
+            break
+        except Exception as e:  # noqa: BLE001 — пробуем следующее имя
+            print(f"нет {name}: {e}")
+    else:
+        raise SystemExit(f"в релизе v{old_ver} не нашёл exe")
     old_settings["release_base_url"] = BASE
     (install / "settings.json").write_text(json.dumps(old_settings, ensure_ascii=False, indent=2), encoding="utf-8")
 

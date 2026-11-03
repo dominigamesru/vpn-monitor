@@ -100,10 +100,22 @@ pub fn detect(
         && rule.name.to_lowercase().contains("happ")
         && let Some(s) = &server
     {
-        profile = env_path("LOCALAPPDATA", "Happ\\config.json")
+        let cfg = env_path("LOCALAPPDATA", "Happ\\config.json")
             .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| tag_for_server(&v, s));
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        if let Some(v) = &cfg {
+            HAPP_OUTBOUNDS_LOGGED.call_once(|| {
+                info!("vpn", "Happ: серверы в config.json: {}", proxies_line(v));
+            });
+            let resolve = |h: &str| -> Vec<String> {
+                use std::net::ToSocketAddrs;
+                (h, 0u16)
+                    .to_socket_addrs()
+                    .map(|a| a.map(|x| x.ip().to_string()).collect())
+                    .unwrap_or_default()
+            };
+            profile = tag_for_server(v, s, &resolve);
+        }
     }
     Some(Client {
         name: rule.name.clone(),
@@ -113,22 +125,87 @@ pub fn detect(
     })
 }
 
-/// Имя сервера по адресу (0.9.11): в конфиге Happ (sing-box) — `outbounds[]` с `server`, `server_port` и `tag`;
-/// адрес — «IP:порт» из соединений. Совпал адрес (и порт, если есть) — `tag`.
-pub fn tag_for_server(config: &serde_json::Value, server: &str) -> Option<String> {
+/// Прокси-серверы в конфиге Happ (sing-box): `outbounds[]` с `server` (кроме `direct`, `block`, `dns`, групп).
+const PROXY_TYPES: &[&str] = &[
+    "vless",
+    "vmess",
+    "trojan",
+    "shadowsocks",
+    "hysteria",
+    "hysteria2",
+    "tuic",
+    "wireguard",
+    "socks",
+    "http",
+    "shadowtls",
+    "anytls",
+];
+
+fn proxies(config: &serde_json::Value) -> Vec<&serde_json::Value> {
+    config
+        .get("outbounds")
+        .and_then(|x| x.as_array())
+        .map(|a| {
+            a.iter()
+                .filter(|o| {
+                    o.get("server").is_some()
+                        && o.get("type")
+                            .and_then(|t| t.as_str())
+                            .is_none_or(|t| PROXY_TYPES.contains(&t))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Имя сервера по адресу (0.9.11, 0.10.0): в конфиге Happ — `outbounds[]` с `server`, `server_port` и `tag`; адрес —
+/// «IP:порт» из соединений. `resolve` — адреса домена (в конфиге бывает имя, а не IP). Совпал адрес — `tag`; не
+/// совпал, но прокси-сервер в конфиге один — его `tag` (Happ пишет в конфиг выбранный сервер).
+pub fn tag_for_server(
+    config: &serde_json::Value,
+    server: &str,
+    resolve: &dyn Fn(&str) -> Vec<String>,
+) -> Option<String> {
     let (ip, port) = server.rsplit_once(':').unwrap_or((server, ""));
-    let outs = config.get("outbounds")?.as_array()?;
-    let same = |o: &&serde_json::Value| {
-        o.get("server").and_then(|x| x.as_str()) == Some(ip)
-            && (port.is_empty()
-                || o.get("server_port")
-                    .and_then(|x| x.as_u64())
-                    .is_none_or(|p| p.to_string() == port))
+    let list = proxies(config);
+    let tag = |o: &serde_json::Value| o.get("tag").and_then(|x| x.as_str()).and_then(safe_label);
+    let port_ok = |o: &serde_json::Value| {
+        port.is_empty()
+            || o.get("server_port")
+                .and_then(|x| x.as_u64())
+                .is_none_or(|p| p.to_string() == port)
     };
-    outs.iter()
-        .find(same)
-        .and_then(|o| o.get("tag")?.as_str())
-        .and_then(safe_label)
+    let host_ok = |o: &serde_json::Value| {
+        let h = o.get("server").and_then(|x| x.as_str()).unwrap_or("");
+        h == ip || (h.parse::<std::net::IpAddr>().is_err() && resolve(h).iter().any(|a| a == ip))
+    };
+    if let Some(o) = list.iter().find(|o| host_ok(o) && port_ok(o)) {
+        return tag(o);
+    }
+    match list.as_slice() {
+        [one] => tag(one),
+        _ => None,
+    }
+}
+
+/// Для лога (раз за запуск, данные для админа): прокси-серверы Happ — «тип · тег · адрес:порт», без ключей.
+pub fn proxies_line(config: &serde_json::Value) -> String {
+    proxies(config)
+        .iter()
+        .map(|o| {
+            format!(
+                "{} · {} · {}:{}",
+                o.get("type").and_then(|x| x.as_str()).unwrap_or("?"),
+                o.get("tag")
+                    .and_then(|x| x.as_str())
+                    .and_then(safe_label)
+                    .unwrap_or_default(),
+                o.get("server").and_then(|x| x.as_str()).unwrap_or("?"),
+                o.get("server_port").and_then(|x| x.as_u64()).unwrap_or(0)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Адрес, который можно считать сервером VPN: внешний, не локальный и не подставной (fake-ip 198.18.0.0/15, 1.2.3.x
@@ -378,6 +455,7 @@ fn title_from_ovpn(text: &str) -> Option<String> {
 }
 
 static HAPP_KEYS_LOGGED: std::sync::Once = std::sync::Once::new();
+static HAPP_OUTBOUNDS_LOGGED: std::sync::Once = std::sync::Once::new();
 
 /// Имя выбранного сервера Happ («AUTO VPN + ОФИС»): из `%LOCALAPPDATA%\Happ\*.json`. Формат не документирован —
 /// ищем по смыслу (`happ_server_name`); один раз пишем в лог файлы и пути полей без значений, чтобы уточнить.
@@ -660,16 +738,43 @@ mod tests {
             {"type": "direct", "tag": "direct"},
             {"type": "vless", "tag": "EU + Офис", "server": "77.241.242.96", "server_port": 2221},
             {"type": "vless", "tag": "Германия + ОФИС", "server": "185.144.63.23", "server_port": 2221}]});
+        let none = |_: &str| vec![];
         assert_eq!(
-            tag_for_server(&c, "77.241.242.96:2221").as_deref(),
+            tag_for_server(&c, "77.241.242.96:2221", &none).as_deref(),
             Some("EU + Офис")
         );
         assert_eq!(
-            tag_for_server(&c, "185.144.63.23:2221").as_deref(),
+            tag_for_server(&c, "185.144.63.23:2221", &none).as_deref(),
             Some("Германия + ОФИС")
         );
-        assert_eq!(tag_for_server(&c, "185.144.63.23:443"), None);
-        assert_eq!(tag_for_server(&c, "1.1.1.1:2221"), None);
+        assert_eq!(tag_for_server(&c, "185.144.63.23:443", &none), None);
+        assert_eq!(tag_for_server(&c, "1.1.1.1:2221", &none), None);
+        // в конфиге — домен: сравниваем по его адресам
+        let d = serde_json::json!({"outbounds": [
+            {"type": "vless", "tag": "AUTO VPN + ОФИС", "server": "eu1.example.net", "server_port": 2221},
+            {"type": "vless", "tag": "EU + Офис Rezerv", "server": "eu2.example.net", "server_port": 2221}]});
+        let dns = |h: &str| {
+            if h == "eu1.example.net" {
+                vec!["77.241.242.96".to_string()]
+            } else {
+                vec![]
+            }
+        };
+        assert_eq!(
+            tag_for_server(&d, "77.241.242.96:2221", &dns).as_deref(),
+            Some("AUTO VPN + ОФИС")
+        );
+        // один прокси в конфиге — его имя, даже если адрес другой (Happ подставил промежуточный)
+        let one = serde_json::json!({"outbounds": [{"type": "direct", "tag": "direct"},
+            {"type": "vless", "tag": "Германия + ОФИС", "server": "de.example.net", "server_port": 443}]});
+        assert_eq!(
+            tag_for_server(&one, "185.144.63.23:2221", &none).as_deref(),
+            Some("Германия + ОФИС")
+        );
+        assert_eq!(
+            proxies_line(&one),
+            "vless · Германия + ОФИС · de.example.net:443"
+        );
     }
 
     #[test]

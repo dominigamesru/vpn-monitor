@@ -17,8 +17,8 @@
 ## Поставить
 Пока только Windows 10 и 11.
 
-1. Скачайте `domini-vpn-monitor.exe` со страницы [релизов](https://github.com/dominigamesru/vpn-monitor/releases)
-   (верхний релиз без пометки Pre-release).
+1. Скачайте `domini-vpn-monitor-X.Y.Z-windows-x64.exe` из [последнего релиза](https://github.com/dominigamesru/vpn-monitor/releases/latest)
+   (до 0.10.0 файл назывался `domini-vpn-monitor.exe`).
 2. Запустите двойным кликом. Права администратора не нужны: приложение встанет в `%LOCALAPPDATA%\DominiVPNMonitor`,
    включит автозапуск, положит ярлык «Domini VPN Monitor» на рабочий стол и откроет окно.
 3. Войдите логином и паролем AD на вкладке «Настройки». Пароль хранится в Диспетчере учётных данных Windows.

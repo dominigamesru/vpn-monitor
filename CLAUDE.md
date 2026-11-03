@@ -44,9 +44,10 @@
 ## Поставка
 GitHub Releases ([ADR 0004](docs/adr/0004-delivery-github-releases.md)), публикует CI при новой версии в `main`.
 Semver: `0.6.0` — стабильная (оба канала), `0.6.0-beta.1` — бета (только бета-канал). Релиз «Domini VPN Monitor
-vX.Y.Z»: `domini-vpn-monitor.exe` (бета — `-beta`), `settings.json`, `sha256` и `vpn-monitor.exe` для обновлятелей до
-0.5.4; `make_latest: false`, опубликованный не перезаписывается. Последняя версия — `latest.version` в релизе
-`latest` (бета — в `beta`); откат — workflow `promote`. Подробно — скилл `release`.
+vX.Y.Z»: `domini-vpn-monitor-X.Y.Z-windows-x64.exe`, то же exe как `domini-vpn-monitor.exe` (бета — `-beta`) для
+обновлятелей до 0.10.0 и `settings.json` ([ADR 0018](docs/adr/0018-release-assets-and-latest.md)); стабильная —
+«Latest» на стартовой странице, опубликованный не перезаписывается. Последняя версия — `latest.version` в служебном
+релизе `latest` (бета — в `beta`); откат — workflow `promote`. Подробно — скилл `release`.
 
 ## Скиллы
 | Скилл | Когда |

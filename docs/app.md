@@ -73,9 +73,9 @@ Rust, один exe без рантаймов ([ADR 0001](adr/0001-rust.md)). Т�
   переименовать, но не перезаписать), положить новый на его место, перезапуститься. Версии до 0.5.4 ставят
   обновление в `vpn-monitor-X.Y.Z.exe` — новая версия, запущенная так, копирует себя в `domini-vpn-monitor.exe`, переносит
   автозапуск и перезапускается оттуда. CI (`upgrade_test.py`) проверяет, что новая версия работает из него.
-- **Релиз** «Domini VPN Monitor vX.Y.Z»: `domini-vpn-monitor.exe`, `settings.json`, `sha256` и `vpn-monitor.exe` —
-  то же exe под старым именем для обновлятелей версий до 0.5.4 (новые качают `domini-vpn-monitor.exe`, а у старых
-  релизов — `vpn-monitor.exe`). Старое имя убрать, когда все установки будут не старше 0.5.4.
+- **Релиз** «Domini VPN Monitor vX.Y.Z» (ADR 0018): `domini-vpn-monitor-X.Y.Z-windows-x64.exe`, то же exe как
+  `domini-vpn-monitor.exe` (обновлятели до 0.10.0 знают только это имя; убрать, когда все обновятся) и `settings.json`
+  с SHA-256 и именем exe (`exe.asset`). Стабильная — «Latest» на стартовой странице репо.
 - **Semver и каналы:** `0.6.0` — стабильная (тег `v0.6.0`, `latest.version` и бета-канал), `0.6.0-beta.1` — бета
   (тег `v0.6.0-beta.1`, pre-release, exe `domini-vpn-monitor-beta.exe`, только бета-канал); канал выводится из версии
   (файл `app/config/channel` больше не нужен). Версии до 0.5.4 бету в `latest.version` бета-канала не разберут и
@@ -165,7 +165,7 @@ Windows (`DominiVPNMonitor/ad`), и дальше все пробы идут с �
 Prometheus и недельный архив, «Собрать контекст», переезд папки установки, подпись кода.
 
 ## Как тестировать
-1. Скачать `domini-vpn-monitor.exe` из последнего релиза
+1. Скачать `domini-vpn-monitor-X.Y.Z-windows-x64.exe` из последнего релиза
    (<https://github.com/dominigamesru/vpn-monitor/releases>) или из артефактов прогона CI нужной ветки.
 2. Двойной клик → сообщение «установлен», откроется `secrets.env`. Вписать креды (можно вставить свой `.env`
    целиком — имена ключей те же), сохранить.
@@ -196,7 +196,7 @@ vpn-monitor-0.1.0.exe --check
 ## Релиз
 1. Поднять `version` в `app/Cargo.toml` в ветке, pull request, слить в `main` (сливает пользователь).
 2. Workflow `release` видит новую версию: тесты, сборка, GitHub Release `vX.Y.Z` с тегом на этот коммит
-   (`domini-vpn-monitor.exe`, `settings.json` с SHA-256 exe, `sha256`, `vpn-monitor.exe` для старых обновлятелей), затем `latest.version := X.Y.Z`. Если `vX.Y.Z`
+   (exe с версией, `domini-vpn-monitor.exe` для обновлятелей до 0.10.0, `settings.json` с SHA-256 и именем exe), затем `latest.version := X.Y.Z`. Если `vX.Y.Z`
    уже есть — ничего не делает. Можно и вручную: Actions → `release` → Run workflow, или тег `vX.Y.Z`.
 3. Откат — Actions → `promote` → старая версия. Установленные копии перейдут на неё за ~5 минут.
 

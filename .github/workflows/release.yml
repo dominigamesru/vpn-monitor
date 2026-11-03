@@ -1,6 +1,6 @@
 # Релиз (ADR 0004): когда в main приходит новая версия в app/Cargo.toml (или вручную / по тегу vX.Y.Z) —
-# GitHub Release «Domini VPN Monitor vX.Y.Z»: domini-vpn-monitor.exe, settings.json (с SHA-256 exe), sha256 и
-# vpn-monitor.exe (то же exe — для обновлятелей версий до 0.5.4, они знают только это имя), make_latest=false; тег ставит сам релиз.
+# GitHub Release «Domini VPN Monitor vX.Y.Z» (ADR 0018): domini-vpn-monitor-X.Y.Z-windows-x64.exe, то же exe как
+# domini-vpn-monitor.exe (обновлятели до 0.10.0) и settings.json (SHA-256 и имя exe); стабильная — «Latest»; тег ставит сам релиз.
 # Затем latest/latest.version := X.Y.Z — установленные копии обновятся сами за ~5 минут.
 # Опубликованный релиз не перезаписывается: если vX.Y.Z уже есть — прогон ничего не делает.
 name: release
@@ -45,8 +45,10 @@ jobs:
           if not re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?", cargo):
               raise SystemExit(f"Версия {cargo} в app/Cargo.toml — не semver (0.6.0 или 0.6.0-beta.1)")
           pre = "-" in cargo
-          asset = "domini-vpn-monitor-beta.exe" if pre else "domini-vpn-monitor.exe"
-          open(os.environ["GITHUB_OUTPUT"], "a").write(f"version={cargo}\npre={str(pre).lower()}\nasset={asset}\n")
+          # 0.10.0 (ADR 0018): exe с версией и платформой; под старым именем — для обновлятелей до 0.10.0
+          asset = f"domini-vpn-monitor-{cargo}-windows-x64.exe"
+          compat = "domini-vpn-monitor-beta.exe" if pre else "domini-vpn-monitor.exe"
+          open(os.environ["GITHUB_OUTPUT"], "a").write(f"version={cargo}\npre={str(pre).lower()}\nasset={asset}\ncompat={compat}\n")
 
       - name: Релиз v${{ steps.ver.outputs.version }} уже есть?
         id: exists
@@ -90,27 +92,28 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           ASSET: ${{ steps.ver.outputs.asset }}
+          COMPAT: ${{ steps.ver.outputs.compat }}
         run: |
           import hashlib, json, os, pathlib, sys, zlib
           ver = os.environ["VERSION"]
           out = pathlib.Path("dist"); out.mkdir()
           exe = pathlib.Path("app/target/release/vpn-monitor.exe").read_bytes()
-          asset = os.environ["ASSET"]
+          asset, compat = os.environ["ASSET"], os.environ["COMPAT"]
           (out / asset).write_bytes(exe)
-          # то же exe под старым именем — его качают обновлятели версий до 0.5.4
-          (out / "vpn-monitor.exe").write_bytes(exe)
+          # то же exe под старым именем — его ищут обновлятели версий до 0.10.0 (убрать, когда все обновятся)
+          (out / compat).write_bytes(exe)
           settings = json.loads(pathlib.Path("app/config/settings.json").read_text(encoding="utf-8"))
           settings["exe"] = {
               "version": ver,
               "sha256": hashlib.sha256(exe).hexdigest(),
               "crc32": f"{zlib.crc32(exe) & 0xFFFFFFFF:08x}",
               "size": len(exe),
+              "asset": asset,
           }
           (out / "settings.json").write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-          sums = "".join(f"{hashlib.sha256((out / n).read_bytes()).hexdigest()}  {n}\n" for n in (asset, "vpn-monitor.exe", "settings.json"))
-          (out / "sha256").write_text(sums, encoding="utf-8", newline="\n")
+          # контрольные суммы — в settings.json (exe.sha256) и у каждого файла на GitHub; отдельный sha256 больше не кладём
           (out / "latest.version").write_text(ver + "\n", encoding="utf-8", newline="\n")
-          print(sums)
+          print(asset, settings["exe"]["sha256"])
           # заметки релиза — scripts/release_notes.py: эта версия и все невыпущенные после последней опубликованной
           import subprocess, urllib.request
           try:
@@ -124,16 +127,17 @@ jobs:
         shell: bash
         run: |
           tag="v${{ steps.ver.outputs.version }}"
-          pre=""; [ "${{ steps.ver.outputs.pre }}" = "true" ] && pre="--prerelease"
-          gh release create "$tag" "dist/${{ steps.ver.outputs.asset }}" dist/settings.json dist/sha256 dist/vpn-monitor.exe \
-            --target "$GITHUB_SHA" --title "Domini VPN Monitor $tag" --notes-file dist/notes.md --latest=false $pre
+          # стабильная — «Latest» на стартовой странице репо; бета — пререлиз (ADR 0018)
+          flags="--latest"; [ "${{ steps.ver.outputs.pre }}" = "true" ] && flags="--prerelease --latest=false"
+          gh release create "$tag" "dist/${{ steps.ver.outputs.asset }}" "dist/${{ steps.ver.outputs.compat }}" dist/settings.json \
+            --target "$GITHUB_SHA" --title "Domini VPN Monitor $tag" --notes-file dist/notes.md $flags
 
       - name: Канал beta := ${{ steps.ver.outputs.version }} (всегда)
         if: steps.exists.outputs.skip != 'true'
         shell: bash
         run: |
           if ! gh release view beta >/dev/null 2>&1; then
-            gh release create beta --target "$GITHUB_SHA" --title "Бета-канал" --latest=false \
+            gh release create beta --target "$GITHUB_SHA" --title "Служебный: бета-канал" --latest=false \
               --notes "Служебный релиз: latest.version — версия бета-канала (её ставят сотрудники, включившие «Бета»)."
           fi
           gh release upload beta dist/latest.version --clobber
@@ -144,9 +148,11 @@ jobs:
         shell: bash
         run: |
           if ! gh release view latest >/dev/null 2>&1; then
-            gh release create latest --target "$GITHUB_SHA" --title "Последняя версия" \
+            gh release create latest --target "$GITHUB_SHA" --latest=false --title "Служебный: последняя версия для обновлений" \
               --notes "Служебный релиз: latest.version — версия, которую ставят все установленные копии. Сами сборки — в релизах vX.Y.Z. Откат — workflow promote."
           fi
           gh release upload latest dist/latest.version --clobber
-          gh release edit latest --latest
+          # служебный — не «Latest» (её носит релиз vX.Y.Z); название — понятное в списке релизов
+          gh release edit latest --latest=false --title "Служебный: последняя версия для обновлений"
+          gh release edit beta --latest=false --title "Служебный: бета-канал" || true
           echo "latest.version = $(cat dist/latest.version)"
