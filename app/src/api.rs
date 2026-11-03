@@ -206,6 +206,7 @@ fn handle(
                 let settings = lock(&shared).settings.clone();
                 let r = vpn_monitor::login::login(&settings, &login, &password);
                 if r.saved {
+                    os_facts_reset();
                     lock(&shared).store.set_login(&r.login);
                     let _ = cmd.send(Cmd::CheckNow);
                 }
@@ -262,7 +263,24 @@ fn handle(
             Response::from_string(HELP.replace("{port}", &port.to_string()))
                 .with_header(ctype("text/markdown; charset=utf-8"))
         }
-        (Method::Get, "/api/state") => json_resp(&state(shared), 200),
+        (Method::Get, "/api/state") => {
+            let t0 = std::time::Instant::now();
+            let v = state(shared);
+            let took = t0.elapsed().as_millis();
+            if took > 1000 {
+                warn!("api", "/api/state ответил за {took} мс — окно и меню ждали");
+            }
+            json_resp(&v, 200)
+        }
+        // 0.9.11: ошибка отрисовки окна — одной строкой в лог (без данных страницы, только текст ошибки)
+        (Method::Post, "/api/client-log") => {
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            let msg: String = v["msg"].as_str().unwrap_or("").chars().take(600).collect();
+            if !msg.is_empty() {
+                warn!("window", "{msg}");
+            }
+            json_resp(&json!({"ok": true}), 200)
+        }
         (Method::Get, "/api/history") => {
             let range = query
                 .split('&')
@@ -435,6 +453,7 @@ fn handle(
         }
         (Method::Delete, "/api/credentials") => match vpn_monitor::creds::delete_ad() {
             Ok(()) => {
+                os_facts_reset();
                 info!("login", "вход AD удалён из Диспетчера учётных данных");
                 lock(shared).store.set_login("");
                 // сразу перепроверить без входа — иконка, подсказка и окно покажут «Требуется вход»
@@ -539,6 +558,7 @@ fn handle(
             Response::from_string(tail_log(n)).with_header(ctype("text/plain; charset=utf-8"))
         }
         (Method::Post, "/api/autostart") => {
+            os_facts_reset();
             let on = serde_json::from_str::<Value>(&body)
                 .ok()
                 .and_then(|v| v["on"].as_bool())
@@ -858,7 +878,57 @@ fn probe_json(r: &ProbeResult) -> Value {
     })
 }
 
+/// Что читаем из Windows для `/api/state` (0.9.11): автозапуск (реестр), логин AD (Диспетчер учётных данных),
+/// уведомления (WinRT). Читаем вне общей блокировки и не чаще раза в 15 с: эти вызовы могут задуматься, и под
+/// блокировкой из-за них ждали окно, меню и проверки (окно «висело» после обновления).
+#[derive(Clone)]
+struct OsFacts {
+    autostart: bool,
+    login: Option<String>,
+    notify_blocked: &'static str,
+    updated_ms: Option<i64>,
+}
+
+static OS_FACTS: std::sync::Mutex<Option<(std::time::Instant, OsFacts)>> =
+    std::sync::Mutex::new(None);
+
+fn os_facts() -> OsFacts {
+    if let Some((t, f)) = OS_FACTS.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+        && t.elapsed() < std::time::Duration::from_secs(15)
+    {
+        return f.clone();
+    }
+    let t0 = std::time::Instant::now();
+    let f = OsFacts {
+        autostart: win::autostart_get().is_some(),
+        login: vpn_monitor::creds::load_ad().map(|c| c.login),
+        notify_blocked: win::notifications_blocked(),
+        // когда поставлена эта версия: время файла exe (скачан при обновлении)
+        updated_ms: std::env::current_exe()
+            .ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok())
+            .map(ms),
+    };
+    let took = t0.elapsed().as_millis();
+    if took > 500 {
+        warn!(
+            "api",
+            "чтение Windows (автозапуск, вход AD, уведомления) заняло {took} мс"
+        );
+    }
+    *OS_FACTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((std::time::Instant::now(), f.clone()));
+    f
+}
+
+/// Сбросить кэш (вошли, вышли, переключили автозапуск) — следующий `/api/state` прочитает заново.
+fn os_facts_reset() {
+    *OS_FACTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 fn state(shared: &SharedRef) -> Value {
+    let os = os_facts();
     let sh = lock(shared);
     let s = &sh.settings;
     let snap = sh.snapshot.as_ref().map(|sn| {
@@ -917,7 +987,7 @@ fn state(shared: &SharedRef) -> Value {
         "checking": sh.checking,
         // 0.9.5: ход проверки — узлы, где идёт проба, и шаги (только пока идёт проверка)
         "progress": vpn_monitor::progress::snapshot(),
-        "autostart": win::autostart_get().is_some(),
+        "autostart": os.autostart,
         "dir": sh.dir.display().to_string(),
         "computer": std::env::var("COMPUTERNAME").unwrap_or_default(),
         "user": std::env::var("USERNAME").unwrap_or_default(),
@@ -935,21 +1005,17 @@ fn state(shared: &SharedRef) -> Value {
         "slot": sh.prefs.slot,
         "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
-        "login": vpn_monitor::creds::load_ad().map(|c| c.login),
+        "login": os.login,
         "prefs": sh.prefs,
         "paused": sh.prefs.paused(vpn_monitor::metrics::now_ms()),
         "gitlab_oauth_configured": s.gitlab_oauth.is_some(),
         "city": sh.city,
         "support_url": s.support_url,
         "announce": sh.announce,
-        "notify_blocked": win::notifications_blocked(),
+        "notify_blocked": os.notify_blocked,
         "office": {"keys": sh.office_keys, "at_ms": sh.office_at},
         "services": services,
-        // когда поставлена эта версия: время файла exe (скачан при обновлении)
-        "updated_ms": std::env::current_exe().ok()
-            .and_then(|p| std::fs::metadata(p).ok())
-            .and_then(|m| m.modified().ok())
-            .map(ms),
+        "updated_ms": os.updated_ms,
     })
 }
 
