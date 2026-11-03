@@ -291,7 +291,7 @@ fn diag_url(
 
     // TCP
     let t = Instant::now();
-    let mut tcp_ms = 0;
+    let tcp_ms: u128;
     match TcpStream::connect_timeout(&addr, Duration::from_secs(8)) {
         Ok(_) => {
             let ms = t.elapsed().as_millis();
