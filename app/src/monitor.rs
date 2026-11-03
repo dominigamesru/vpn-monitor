@@ -72,6 +72,8 @@ pub struct Monitor {
     pub grace_until: Option<Instant>,
     /// 0.9.7: когда были короткие обрывы туннеля (для «обрывов за час»).
     drops: VecDeque<Instant>,
+    /// 0.9.11: какие баблы висят (ключ → текст) — в лог «повесил / снял и почему».
+    bubbles: HashMap<&'static str, String>,
 }
 
 /// Сколько последних проверок сглаживает оценку.
@@ -122,6 +124,7 @@ impl Monitor {
             last_client: None,
             grace_until: None,
             drops: VecDeque::new(),
+            bubbles: HashMap::new(),
         }
     }
 
@@ -652,6 +655,28 @@ impl Monitor {
             verdict.explain,
             t0.elapsed().as_secs_f64()
         );
+        {
+            let svn_now = route.as_ref().and_then(|r| r.svn.value);
+            let usual = self.baseline.as_ref().and_then(|b| b.speed_mbps);
+            let list = crate::netctx::bubbles(&net, call.as_ref(), svn_now, usual);
+            let (sig, c) = (net.signal, call.clone());
+            self.log_bubbles(list, &|k| match k {
+                "call" => match &c {
+                    Some(c) => format!(
+                        "звонок в норме — потери {:.1}%, разброс {:.0} мс",
+                        c.loss_pct, c.jitter_ms
+                    ),
+                    None => "звонок не измерялся в этой проверке (нет офиса или подставной адрес туннеля)".into(),
+                },
+                "wifi" => format!("сигнал {}%", sig.map_or("—".into(), |s| s.to_string())),
+                "net" => "сеть сменилась на обычную".into(),
+                "gb" => format!(
+                    "SVN {}",
+                    svn_now.map_or("не мерили".into(), |v| format!("{v:.1} Мбит/с"))
+                ),
+                _ => String::new(),
+            });
+        }
         Snapshot {
             at: now,
             targets,
@@ -671,6 +696,30 @@ impl Monitor {
             call,
             drops_hour: drops_in_hour(&mut self.drops),
         }
+    }
+
+    /// Баблы меню: что повесили и что сняли с прошлой проверки — одной строкой с причиной (заказчик 03.11).
+    fn log_bubbles(
+        &mut self,
+        now: Vec<(&'static str, String, String)>,
+        why_gone: &dyn Fn(&str) -> String,
+    ) {
+        for (k, text, why) in &now {
+            if self.bubbles.get(k) != Some(text) {
+                info!("bubble", "повесил «{text}»: {why}");
+            }
+        }
+        let keys: Vec<&'static str> = now.iter().map(|b| b.0).collect();
+        let gone: Vec<(&'static str, String)> = self
+            .bubbles
+            .iter()
+            .filter(|(k, _)| !keys.contains(k))
+            .map(|(k, t)| (*k, t.clone()))
+            .collect();
+        for (k, text) in gone {
+            info!("bubble", "снял «{text}»: {}", why_gone(k));
+        }
+        self.bubbles = now.into_iter().map(|(k, t, _)| (k, t)).collect();
     }
 }
 
@@ -712,6 +761,15 @@ fn call_pings(url: &str) -> Option<crate::netctx::Call> {
         None => (host, if url.starts_with("https") { 443 } else { 80 }),
     };
     let addr = (h, port).to_socket_addrs().ok()?.next()?;
+    // 0.9.11: подставной адрес (Happ, fake-ip) — TCP доходит только до своего туннеля на этом компьютере: задержка ~1 мс
+    // и «потери» ничего не говорят о звонке (заказчик 03.11: «связь рвётся» при оценке 99). Не меряем.
+    if crate::probe::is_fake_ip(&addr) {
+        info!(
+            "check",
+            "звонок: через подставной адрес туннеля не измерить — пропускаю"
+        );
+        return None;
+    }
     let mut pings = vec![];
     for i in 0..8 {
         if i > 0 {

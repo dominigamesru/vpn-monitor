@@ -92,15 +92,43 @@ pub fn detect(
             .find(|r| running(r))
             .unwrap_or(by_adapter[0]),
     };
-    let profile = profile(&rule.name);
+    let mut profile = profile(&rule.name);
     // адрес сервера — по TCP-соединениям процессов клиента (для админов: лог, отчёт, метрики)
     let server = platform::server_of(&rule.processes);
+    // 0.9.11: Happ — имя сервера по адресу: в его config.json у каждого сервера есть `server` и `tag`
+    if profile.is_none()
+        && rule.name.to_lowercase().contains("happ")
+        && let Some(s) = &server
+    {
+        profile = env_path("LOCALAPPDATA", "Happ\\config.json")
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| tag_for_server(&v, s));
+    }
     Some(Client {
         name: rule.name.clone(),
         profile,
         adapter: adapter.into(),
         server,
     })
+}
+
+/// Имя сервера по адресу (0.9.11): в конфиге Happ (sing-box) — `outbounds[]` с `server`, `server_port` и `tag`;
+/// адрес — «IP:порт» из соединений. Совпал адрес (и порт, если есть) — `tag`.
+pub fn tag_for_server(config: &serde_json::Value, server: &str) -> Option<String> {
+    let (ip, port) = server.rsplit_once(':').unwrap_or((server, ""));
+    let outs = config.get("outbounds")?.as_array()?;
+    let same = |o: &&serde_json::Value| {
+        o.get("server").and_then(|x| x.as_str()) == Some(ip)
+            && (port.is_empty()
+                || o.get("server_port")
+                    .and_then(|x| x.as_u64())
+                    .is_none_or(|p| p.to_string() == port))
+    };
+    outs.iter()
+        .find(same)
+        .and_then(|o| o.get("tag")?.as_str())
+        .and_then(safe_label)
 }
 
 /// Адрес, который можно считать сервером VPN: внешний, не локальный и не подставной (fake-ip 198.18.0.0/15, 1.2.3.x
@@ -623,6 +651,25 @@ mod tests {
         let link = serde_json::json!({"servers": [{"name": "vless://uuid@1.2.3.4:443?security=reality#EU + Офис", "selected": true}]});
         assert_eq!(happ_server_name(&link).as_deref(), Some("EU + Офис"));
         assert_eq!(happ_server_name(&serde_json::json!({"servers": []})), None);
+    }
+
+    #[test]
+    fn happ_tag_by_server_address() {
+        // поля — как в config.json Happ у заказчика (лог 03.11): outbounds[].server/server_port/tag
+        let c = serde_json::json!({"outbounds": [
+            {"type": "direct", "tag": "direct"},
+            {"type": "vless", "tag": "EU + Офис", "server": "77.241.242.96", "server_port": 2221},
+            {"type": "vless", "tag": "Германия + ОФИС", "server": "185.144.63.23", "server_port": 2221}]});
+        assert_eq!(
+            tag_for_server(&c, "77.241.242.96:2221").as_deref(),
+            Some("EU + Офис")
+        );
+        assert_eq!(
+            tag_for_server(&c, "185.144.63.23:2221").as_deref(),
+            Some("Германия + ОФИС")
+        );
+        assert_eq!(tag_for_server(&c, "185.144.63.23:443"), None);
+        assert_eq!(tag_for_server(&c, "1.1.1.1:2221"), None);
     }
 
     #[test]

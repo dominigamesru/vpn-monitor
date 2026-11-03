@@ -727,7 +727,7 @@ fn probe_url(
 
 /// Подставные адреса, которые отдаёт DNS клиентов VPN с раздельным туннелированием (Happ: `1.2.3.4`;
 /// sing-box/xray fake-ip: `198.18.0.0/15`).
-fn is_fake_ip(addr: &SocketAddr) -> bool {
+pub(crate) fn is_fake_ip(addr: &SocketAddr) -> bool {
     match addr.ip() {
         std::net::IpAddr::V4(ip) => {
             let o = ip.octets();
