@@ -201,10 +201,13 @@ th { color: var(--muted); font-weight: 600; } td.num { white-space: nowrap; }
 .svcstate .row2 .spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); border-right-color: transparent; animation: spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .svcstate .row2 .spin { animation: none; } }
 .svcstate .row2 small { grid-column: 2; color: var(--muted); font-size: 12px; }
-.svcstate .row2 small.now { color: var(--ink); }
-.svcstate .row2 small.now.bad { color: var(--bad); }
+.svcstate .row2 small.svc-now { color: var(--ink); }
+.svcstate .row2 small.svc-now.bad { color: var(--bad); }
 .supform .gather { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 13px; padding: 6px 0; }
 .supform .gather .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); border-right-color: transparent; animation: spin .8s linear infinite; flex: none; }
+.svcstate .svc-mon { display: inline-flex; width: auto; align-items: center; gap: 5px; margin-left: 8px; padding: 0 7px; border-radius: 999px; font-size: 11px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); vertical-align: 1px; }
+.svcstate .svc-mon i { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent; animation: spin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .svcstate .svc-mon i { animation: none; } }
 .svcstate .svchead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 form.login { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 10px; align-items: end; }
@@ -780,6 +783,10 @@ function renderHistory() {
 }
 
 // ---------- ПОДКЛЮЧЕНИЕ ----------
+function svcRefresh() { if (!svcRefresh.b) { const b = el("button", { class: "btn ghost sm", type: "button", title: "Проверить сервисы сейчас", text: "Обновить" });
+  b.addEventListener("click", async () => { svcRefresh.pending = Date.now(); renderConn(); await api("/api/check", { method: "POST", body: JSON.stringify({ watch: true }) }).catch(() => {}); poll(true); }); svcRefresh.b = b; } return svcRefresh.b; }
+// 0.9.10: «На мониторинге» — сервис не ответил, приложение само проверяет его раз в минуту и сообщит, когда заработает
+function monTag() { const t = el("span", { class: "svc-mon", tabindex: "0", "aria-label": "На мониторинге" }, el("i"), "на мониторинге"); tip(t, () => el("div", { class: "tip" }, el("span", { text: "Сам проверяю раз в минуту и пришлю уведомление, когда заработает." }))); return t; }
 let editing = false;
 function renderConn() {
   const host = $("#loginState"); host.replaceChildren(); const form = $("#loginForm");
@@ -794,9 +801,9 @@ function renderConn() {
   // 0.9.6: «сейчас» — что показала последняя проверка: вход не принят (Auth) — это пароль, остальное — связь; кнопка
   // «Обновить» — проверить сейчас, не дожидаясь расписания
   const busy = !!S.checking, svcs = S.services || [];
-  const refresh = el("button", { class: `btn ghost sm${busy ? " busy" : ""}`, type: "button", text: busy ? "Проверяю…" : "Обновить", title: "Проверить сервисы сейчас" });
-  if (busy) refresh.disabled = true;
-  refresh.addEventListener("click", async () => { refresh.disabled = true; await api("/api/check", { method: "POST", body: JSON.stringify({ watch: true }) }).catch(() => {}); poll(true); });
+  // 0.9.10: кнопка создаётся один раз — перерисовка каждые 1–4 с съедала клик (нажал на старую, отпустил на новой)
+  const refresh = svcRefresh(); const pend = !!svcRefresh.pending; refresh.classList.toggle("busy", busy || pend); refresh.disabled = busy || pend; refresh.textContent = busy || pend ? "Проверяю…" : "Обновить";
+  if (!busy && svcRefresh.pending && Date.now() - svcRefresh.pending > 4000) svcRefresh.pending = 0;
   const now = (x) => { if (busy) return "сейчас: проверяю…"; if (x.ok) return x.note ? "сейчас: открылась страница входа — войдите" : "сейчас: отвечает, вход принят";
     if (x.ok == null) return "сейчас: ещё не проверяли"; if (x.fail === "auth") return "сейчас: вход не принят";
     const why = (x.error || "").replace(/\s*\(.*\)\s*$/, ""); return `сейчас: не ответил${/timeout/i.test(why) ? " — таймаут, это связь, не пароль" : why ? ` — ${why.slice(0, 70)}` : ""}`; };
@@ -805,7 +812,7 @@ function renderConn() {
     const st = busy ? "idle" : x.ok ? (x.note ? "warn" : "good") : x.fail === "auth" ? "warn" : x.ok === false ? "bad" : "idle";
     const auth = busy && (x.note || !x.auth) ? (S.login ? "проверяю…" : "не задан") : x.note ? "не задан" : x.auth || "—";
     return el("div", { class: `row2 ${st}${busy ? " busy" : ""}` }, el("span", { class: busy ? "spin" : "dot" }), el("b", { text: x.name }),
-      el("small", { class: st === "bad" ? "now bad" : "now", text: now(x) + ((S.jobs || []).some((j) => j.key === `watch:${x.id}`) ? " · слежу, сообщу, когда ответит" : "") }), el("small", { text: `вход: ${auth} · последний успех: ${ago(x.last_ok_ms)}` }));
+      el("small", { class: st === "bad" ? "svc-now bad" : "svc-now" }, now(x), (S.jobs || []).some((j) => j.key === `watch:${x.id}` || j.key === x.id) && !x.ok && !busy ? monTag() : null), el("small", { text: `вход: ${auth} · последний успех: ${ago(x.last_ok_ms)}` }));
   }));
   // слева — проверка входа, справа — связь: вход принят, а сервис не отвечает — сказать прямо, что это не пароль
   const net = !busy && svcs.filter((x) => x.ok === false && x.fail !== "auth").map((x) => x.name);

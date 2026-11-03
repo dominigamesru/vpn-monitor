@@ -672,6 +672,8 @@ fn spawn_checker(
             if only.is_none() {
                 plan_jobs(&m, &snap, &shared, was_manual);
             }
+            // 0.9.10: проверка увидела зелёным то, что сторожилось с уведомлением, — снять и сообщить сразу
+            settle_watches(&snap, &shared);
             // уведомления: только о подтверждённой смене состояния и с лимитами (notify.rs)
             let (prefs, paused) = {
                 let sh = lock(&shared);
@@ -751,6 +753,46 @@ fn plan_jobs(m: &Monitor, snap: &Snapshot, shared: &SharedRef, manual: bool) {
     }
 }
 
+/// Уведомляющие джобы, чью цель проверка увидела зелёной: убрать и сообщить (сотрудник видел красное).
+fn settle_watches(snap: &Snapshot, shared: &SharedRef) {
+    let (done, notify_on, paused) = {
+        let mut sh = lock(shared);
+        let done: Vec<(String, String)> = sh
+            .jobs
+            .list()
+            .iter()
+            .filter(|j| j.notify)
+            .filter_map(|j| {
+                let id = j.key.strip_prefix("watch:")?;
+                snap.targets
+                    .iter()
+                    .any(|r| r.target_id == id && !r.full && r.ok)
+                    .then(|| (j.key.clone(), j.name.clone()))
+            })
+            .collect();
+        for (k, _) in &done {
+            sh.jobs.remove(k);
+        }
+        (
+            done,
+            sh.prefs.notify.vpn,
+            sh.prefs.paused(vpn_monitor::metrics::now_ms()),
+        )
+    };
+    for (_, name) in done {
+        info!(
+            "jobs",
+            "«{name}» снова отвечает (по проверке) — снимаю мониторинг"
+        );
+        if notify_on && !paused {
+            let body = format!("Вы проверяли — {name} не отвечал. Теперь отвечает.");
+            if let Err(e) = win::toast(&format!("{name} снова отвечает"), &body) {
+                warn!("notify", "{e}");
+            }
+        }
+    }
+}
+
 /// Микроджобы (0.9.9): раз в 5 с смотрим, чей срок подошёл; лёгкая проверка; ответила — убрать, уведомить (если
 /// надо) и запустить проверку пошире.
 pub fn spawn_jobs(cmd: mpsc::Sender<Cmd>, shared: SharedRef) {
@@ -772,9 +814,22 @@ pub fn spawn_jobs(cmd: mpsc::Sender<Cmd>, shared: SharedRef) {
             }
             for j in due {
                 let ok = match &j.probe {
-                    Probe::Ping { urls } => urls.iter().any(|u| {
-                        vpn_monitor::probe::light_ping(u, Duration::from_secs(5)).is_some()
-                    }),
+                    Probe::Ping { urls } => {
+                        let mut why = vec![];
+                        let ok = urls.iter().any(|u| {
+                            match vpn_monitor::probe::light_ping_why(u, Duration::from_secs(5)) {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    why.push(e);
+                                    false
+                                }
+                            }
+                        });
+                        if !ok {
+                            info!("jobs", "«{}»: {}", j.name, why.join("; "));
+                        }
+                        ok
+                    }
                     Probe::Internet { hosts } => hosts.iter().any(|h| {
                         use std::net::ToSocketAddrs;
                         h.to_socket_addrs()
@@ -787,6 +842,10 @@ pub fn spawn_jobs(cmd: mpsc::Sender<Cmd>, shared: SharedRef) {
                     }),
                 };
                 if !ok {
+                    info!(
+                        "jobs",
+                        "«{}» пока не отвечает — следующая попытка через {} с", j.name, j.period_s
+                    );
                     lock(&shared).jobs.again(&j.key, now);
                     continue;
                 }

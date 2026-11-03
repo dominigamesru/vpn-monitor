@@ -94,6 +94,21 @@ svg.branchline path { fill: none; stroke-width: 2; }
 .tile .val { font-size: 18px; font-weight: 700; line-height: 1.15; }
 .tile .val small { font-size: 12px; font-weight: 500; color: var(--muted); }
 .tile .nb { font-size: 11.5px; color: var(--muted); }
+/* 0.9.10: группа «Интернет» / «Сервисы в офисе» */
+.tile.group { gap: 6px; align-content: start; grid-column: 1 / -1; }
+.ghead { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: start; }
+.ghead .k { font-size: 12.5px; color: var(--ink); font-weight: 600; padding-top: 2px; }
+.gv { display: grid; justify-items: end; line-height: 1.2; }
+.gv b { font-size: 14px; font-weight: 700; white-space: nowrap; }
+.gv small { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.glist { display: grid; gap: 3px; padding-left: 14px; }
+.grow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; font-size: 12px; }
+.grow .nm { display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
+.grow .nm > span:not(.dot):not(.g-mon) { display: inline-flex; align-items: center; gap: 5px; }
+.grow .nm small { color: var(--muted); font-size: 10.5px; }
+.grow .gx { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.g-mon { display: inline-flex; align-items: center; padding: 0 2px; }
+.g-mon i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--accent); border-right-color: transparent; animation: spin .9s linear infinite; }
 .gauge { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 8%, transparent); position: relative; margin: 5px 0 3px; }
 .gauge i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
 .gauge b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .5; }
@@ -315,7 +330,10 @@ function svcChip(t) {
 }
 function worldChip(t) {
   const st = S?.paused ? "idle" : t.ok ? "good" : t.reachable ? "warn" : "bad";
-  return tip(h("span", {}, h("span", { class: `dot d-${st}` }), t.name, t.via_vpn != null ? h("small", { text: t.via_vpn ? "VPN" : "напрямую" }) : null), () =>
+  return tip(h("span", {}, h("span", { class: `dot d-${st}` }), t.name, t.via_vpn != null ? h("small", { text: t.via_vpn ? "VPN" : "напрямую" }) : null), () => worldTip(t, st));
+}
+function worldTip(t, st) {
+  return (
     tipBox(h("div", { class: "row" }, h("span", { class: `dot d-${st}` }), h("span", { class: "big", text: `${t.name} — ${t.ok ? "открывается" : "не открывается"}` })),
       kv([["задержка", t.reachable ? ms(t.latency) : "—"], ["маршрут", t.via_vpn == null ? "—" : t.via_vpn ? "через VPN" : "напрямую, без VPN"], t.adapter ? ["адаптер", t.adapter] : null]),
       !t.ok && t.error ? h("span", { class: "tm", text: t.error }) : t.http === 403 ? h("span", { class: "tm", text: "Отвечает проверкой Cloudflare (HTTP 403) — в браузере откроется." }) : null));
@@ -447,9 +465,25 @@ function viewDash() {
     tile("Скорость SVN", P(r?.st_svn), svn == null ? "—" : num(svn, 1), "Мбит/с", gauge(svn, Math.max(16, th.svn_good_mbps * 2), th.svn_good_mbps, P(r?.st_svn), B()?.speed_mbps), r?.because_office ? `${r.because_office} · норма от ${num(th.svn_good_mbps)}` : `норма от ${num(th.svn_good_mbps)}`, tipSvn),
     tile("Задержка VPN", P(r?.st_vpn_lat ?? r?.st_vpn), vpn == null ? "нет" : vpn >= 1000 ? num(vpn / 1000, 1) : num(vpn), vpn == null ? "" : vpn >= 1000 ? "с" : "мс", gauge(vpn == null ? 0 : Math.min(vpn, th.vpn_bad_ms * 1.15), th.vpn_bad_ms * 1.15, th.vpn_good_ms, P(r?.st_vpn_lat ?? r?.st_vpn), B()?.latency_ms != null ? Math.min(B().latency_ms, th.vpn_bad_ms * 1.15) : null), vpn == null ? "не подключён" : r?.because_vpn ? `${r.because_vpn} · норма до ${ms(th.vpn_good_ms)}` : `норма до ${ms(th.vpn_good_ms)}`, tipVpn),
     // приборная панель: мир — под интернетом (ChatGPT и др. идут напрямую или через VPN), справа — только офис
-    tile("Интернет", P(r?.st_inet), r?.inet.value == null ? "—" : num(r.inet.value, r.inet.value < 10 ? 1 : 0), "Мбит/с", worldT().length ? h("div", { class: "svc" }, ...worldT().map(worldChip)) : null, `задержка ${ms(r?.inet_ms.value)}${r && r.st_inet_lat !== "good" ? " — медленно" : ""}`, tipInet),
-    h("div", { class: "tile" }, h("div", { class: "k" }, h("span", { class: `dot d-${P(r?.st_office)}` }), "Сервисы в офисе"), h("div", { class: "svc" }, ...office().map(svcChip)))
+    groupTile("Интернет", P(r?.st_inet), r?.inet.value == null ? "—" : mbps(r.inet.value), `задержка ${ms(r?.inet_ms.value)}${r && r.st_inet_lat !== "good" ? " — медленно" : ""}`, tipInet, worldT().map(worldRow)),
+    groupTile("Сервисы в офисе", P(r?.st_office), office().length ? `отвечают ${office().filter((t) => t.ok).length} из ${office().length}` : "—", "", null, office().map(officeRow))
   )];
+}
+// 0.9.10: группа — заголовок слева, цифры справа (главное и под ним второе), сервисы — списком с отступом
+function groupTile(name, st, main, second, tipFn, rows) {
+  const head = tip(h("div", { class: "ghead" }, h("div", { class: "k" }, h("span", { class: `dot d-${st}` }), name), h("div", { class: "gv" }, h("b", { text: main }), second ? h("small", { text: second }) : null)), tipFn);
+  return h("div", { class: "tile group" }, head, h("div", { class: "glist" }, ...rows));
+}
+const watched = (id) => (S?.jobs || []).some((j) => j.key === id || j.key === `watch:${id}`);
+function monTag() { return tip(h("span", { class: "g-mon", "aria-label": "На мониторинге" }, h("i")), () => tipBox(h("span", { text: "На мониторинге: сам проверяю раз в минуту и сообщу, когда заработает." }))); }
+function worldRow(t) {
+  const st = S?.paused ? "idle" : t.ok ? "good" : t.reachable ? "warn" : "bad";
+  return tip(h("div", { class: "grow" }, h("span", { class: "nm" }, h("span", { class: `dot d-${st}` }), t.name, t.via_vpn != null ? h("small", { text: t.via_vpn ? "VPN" : "напрямую" }) : null), h("span", { class: "gx", text: t.reachable && t.latency != null ? ms(t.latency) : t.ok ? "" : "нет" })), () => worldTip(t, st));
+}
+function officeRow(t) {
+  const s = svcOf(t.name), st = S?.paused ? "idle" : s ? s.st : t.ok ? "good" : "bad";
+  const val = !t.ok ? (t.reachable ? "ошибка" : "нет") : t.mbps != null && t.role === "speed" ? mbps(t.mbps) : t.latency != null ? ms(t.latency) : "";
+  return h("div", { class: "grow" }, h("span", { class: "nm" }, svcChip(t), watched(t.id) ? monTag() : null), h("span", { class: "gx", text: val }));
 }
 function viewStrip() {
   const r = R(), th = TH(), recs = H.slice(-20);

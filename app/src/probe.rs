@@ -439,8 +439,16 @@ pub fn confluence_rest_url(url: &str) -> Option<String> {
 /// сервере не проверяется. Любой HTTP-ответ — сервер отвечает через туннель (TCP у Happ «отвечает» всегда — это свой
 /// туннель). Возвращает время ответа, мс.
 pub fn light_ping(url: &str, timeout: Duration) -> Option<f64> {
-    let u: ureq::http::Uri = url.parse().ok()?;
-    let origin = format!("{}://{}/", u.scheme_str()?, u.authority()?);
+    light_ping_why(url, timeout).ok()
+}
+
+/// То же, с причиной отказа — для лога микроджоб (0.9.10).
+pub fn light_ping_why(url: &str, timeout: Duration) -> Result<f64, String> {
+    let u: ureq::http::Uri = url.parse().map_err(|e| format!("адрес: {e}"))?;
+    let (Some(scheme), Some(auth)) = (u.scheme_str(), u.authority()) else {
+        return Err("адрес без схемы или сервера".into());
+    };
+    let origin = format!("{scheme}://{auth}/");
     let t = Instant::now();
     let r = crate::net::agent(timeout)
         .head(&origin)
@@ -448,9 +456,9 @@ pub fn light_ping(url: &str, timeout: Duration) -> Option<f64> {
         .max_redirects(0)
         .build()
         .call()
-        .ok()?;
+        .map_err(|e| format!("{origin}: {e}"))?;
     let _ = r.status();
-    Some(ms(t.elapsed()))
+    Ok(ms(t.elapsed()))
 }
 
 /// `svn info` по HTTP: PROPFIND Depth 0 с тем же входом. Ответ 207 Multi-Status — SVN отвечает как SVN.
