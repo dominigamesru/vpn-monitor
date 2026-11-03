@@ -474,8 +474,6 @@ function notes() {
   // совет по известной причине (v0.7) — что сделать самому до обращения в поддержку
   if (!S?.paused && outage()) out.push(h("div", { class: "note advice", text: "Звонить в поддержку не нужно — админы знают и чинят." }));
   else if (!S?.paused && sn?.advice?.length) out.push(h("div", { class: "note advice", text: `Совет: ${sn.advice[0]}` }));
-  // 0.9.7: туннель рвётся на секунды — сказать прямо, что это сервер VPN, а не сотрудник
-  if (!S?.paused && (sn?.drops_hour || 0) >= 2) out.push(h("div", { class: "note advice", text: `Туннель обрывался ${sn.drops_hour} ${plural(sn.drops_hour, "раз", "раза", "раз")} за час — это сервер VPN${sn.client?.profile ? ` «${sn.client.profile}»` : ""}, а не вы. Мешает — смените сервер.` }));
   const c = ctxRow(); if (c) out.push(c);
   return out;
 }

@@ -127,18 +127,26 @@ impl Monitor {
 
     /// Одна проверка. `manual` — по клику: интернет мерится, только если подошёл его интервал (рейт-лимиты).
     pub fn run_check(&mut self, manual: bool) -> Snapshot {
+        self.run_check_for(manual, None)
+    }
+
+    /// 0.9.9: проверка только этих целей (микроджоба «SVN снова отвечает» → перепроверить SVN): без интернета и
+    /// большого файла; остальные цели — из прошлой проверки.
+    pub fn run_check_for(&mut self, manual: bool, only: Option<&[String]>) -> Snapshot {
         self.check_no += 1;
         crate::progress::begin();
         crate::gitlab::ensure_fresh(self.settings.gitlab_oauth.as_ref());
         crate::probe::set_min_probe_kbps(self.settings.thresholds.min_probe_kbps);
         let secrets = Secrets::load(&self.secrets_path);
         let s = &self.settings;
-        let full_due = self
-            .last_full
-            .is_none_or(|t| t.elapsed() >= Duration::from_secs(s.full_probe_interval_min * 60));
+        let full_due = only.is_none()
+            && self
+                .last_full
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(s.full_probe_interval_min * 60));
         let lite = crate::diag::lite_reason();
         let waking = self.grace_until.is_some_and(|g| Instant::now() < g);
         let internet_due = lite.is_none()
+            && only.is_none()
             && self
                 .last_internet_at
                 .is_none_or(|t| t.elapsed() >= Duration::from_secs(s.internet_interval_min * 60));
@@ -146,10 +154,10 @@ impl Monitor {
             "check",
             "проверка #{} ({}), полная проба: {}, интернет: {}",
             self.check_no,
-            if manual {
-                "по клику"
-            } else {
-                "по расписанию"
+            match only {
+                Some(o) => format!("только {}", o.join(", ")),
+                None if manual => "по клику".into(),
+                None => "по расписанию".into(),
             },
             if full_due { "да" } else { "нет" },
             if internet_due { "да" } else { "нет" }
@@ -161,7 +169,9 @@ impl Monitor {
                 .targets
                 .iter()
                 .filter(|t| {
-                    t.enabled && (lite.is_none() || matches!(t.role, Role::Light | Role::World))
+                    t.enabled
+                        && (lite.is_none() || matches!(t.role, Role::Light | Role::World))
+                        && only.is_none_or(|o| o.contains(&t.id))
                 })
                 .map(|t| {
                     let secrets = &secrets;
@@ -214,8 +224,9 @@ impl Monitor {
         });
 
         let mut results = results;
-        // 0.9.7: офис молчит целиком, а интернет есть — повтор через 3 с: у Happ туннель рвётся на секунды (лог
-        // заказчика 03.11: проверка всё «НЕДОСТУПНА», следующая — всё OK). Прошёл — короткий обрыв, не «VPN выключен».
+        // 0.9.9: любой провал по сети (DNS, соединение, таймаут) — повтор через 3 с; прошёл — берём повтор, в метриках
+        // провала нет, только строка в логе (заказчик 03.11: «меньше ложных срабатываний»). Офис молчал целиком, а повтор
+        // прошёл — короткий обрыв туннеля (0.9.7).
         let light_ids: Vec<&str> = s
             .targets
             .iter()
@@ -223,19 +234,36 @@ impl Monitor {
             .map(|t| t.id.as_str())
             .collect();
         let light_silent = !light_ids.is_empty()
-            && online_hint.is_some()
             && results
                 .iter()
                 .filter(|r| light_ids.contains(&r.target_id.as_str()))
-                .all(|r| !r.reachable);
-        if light_silent && lite.is_none() {
-            info!("check", "офис не ответил целиком — повтор через 3 с");
+                .all(|r| !r.reachable)
+            && results
+                .iter()
+                .any(|r| light_ids.contains(&r.target_id.as_str()));
+        let retry: Vec<&crate::settings::Target> = s
+            .targets
+            .iter()
+            .filter(|t| {
+                results
+                    .iter()
+                    .any(|r| r.target_id == t.id && !r.full && crate::jobs::network_fail(r.fail))
+            })
+            .collect();
+        if !retry.is_empty() && online_hint.is_some() && lite.is_none() {
+            info!(
+                "check",
+                "не ответили по сети: {} — повтор через 3 с",
+                retry
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             std::thread::sleep(Duration::from_secs(3));
             let again: Vec<ProbeResult> = std::thread::scope(|sc| {
-                let hs: Vec<_> = s
-                    .targets
+                let hs: Vec<_> = retry
                     .iter()
-                    .filter(|t| light_ids.contains(&t.id.as_str()))
                     .map(|t| {
                         let secrets = &secrets;
                         sc.spawn(move || {
@@ -249,23 +277,28 @@ impl Monitor {
                     .collect();
                 hs.into_iter().filter_map(|h| h.join().ok()).collect()
             });
-            if again.iter().any(|r| r.reachable) {
-                for a in again {
+            let mut light_back = false;
+            for a in again {
+                if a.reachable {
+                    info!("check", "повтор: {} ответил — провал не считаю", a.name);
+                    light_back |= light_ids.contains(&a.target_id.as_str());
                     if let Some(x) = results
                         .iter_mut()
                         .find(|r| r.target_id == a.target_id && !r.full)
                     {
                         *x = a;
                     }
+                } else {
+                    info!("check", "повтор: {} снова не ответил", a.name);
                 }
+            }
+            if light_silent && light_back {
                 self.drops.push_back(Instant::now());
                 info!(
                     "check",
-                    "повтор прошёл — короткий обрыв туннеля; обрывов за час: {}",
+                    "короткий обрыв туннеля; обрывов за час: {}",
                     drops_in_hour(&mut self.drops)
                 );
-            } else {
-                info!("check", "повтор тоже без ответа");
             }
         }
         let mut internet = internet;
@@ -642,25 +675,18 @@ impl Monitor {
 }
 
 impl Monitor {
-    /// Лёгкий пинг офиса (0.9.8): хоть одна цель светофора ответила на `HEAD` — сколько мс у самой быстрой.
-    pub fn light_ping(&self) -> Option<f64> {
+    /// Адреса целей для микроджоб (0.9.9): (id, имя, роль, адрес лёгкой пробы).
+    pub fn target_urls(&self) -> Vec<(String, String, Role, String)> {
         let secrets = Secrets::load(&self.secrets_path);
-        let urls: Vec<String> = self
-            .settings
+        self.settings
             .targets
             .iter()
-            .filter(|t| t.enabled && t.role == Role::Light)
-            .filter_map(|t| probe::target_url(t, &secrets, false))
-            .collect();
-        std::thread::scope(|sc| {
-            let hs: Vec<_> = urls
-                .iter()
-                .map(|u| sc.spawn(move || probe::light_ping(u, Duration::from_secs(5))))
-                .collect();
-            hs.into_iter()
-                .filter_map(|h| h.join().ok().flatten())
-                .reduce(f64::min)
-        })
+            .filter(|t| t.enabled)
+            .filter_map(|t| {
+                probe::target_url(t, &secrets, false)
+                    .map(|u| (t.id.clone(), t.name.clone(), t.role, u))
+            })
+            .collect()
     }
 }
 

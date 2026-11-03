@@ -7,6 +7,7 @@ pub mod creds;
 pub mod diag;
 pub mod gitlab;
 pub mod icon;
+pub mod jobs;
 pub mod jsm;
 pub mod log;
 pub mod login;
