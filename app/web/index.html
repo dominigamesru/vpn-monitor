@@ -250,6 +250,8 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
   <div id="annBox"></div>
   <div class="banner" id="notifyBanner" hidden style="--c: var(--warn)"><p id="notifyBannerText"></p><div class="row"><button class="btn" type="button" data-open-notify>Открыть настройки уведомлений</button><button class="btn ghost" type="button" id="notifyLater">Не сейчас</button></div></div>
+  <!-- 0.9.8: обновление пришло — поставить сейчас, не дожидаясь; до перезапуска в новую версию -->
+  <div class="banner" id="updBanner" hidden><div id="updText"></div><button class="btn" id="updNow" type="button">Поставить сейчас</button></div>
   <div class="banner" id="newsBanner" hidden><div id="newsText"></div><button class="btn ghost" id="newsOk">Понятно</button></div>
   <div class="banner" id="loginBanner" hidden style="--c: var(--warn)"><p>Войдите с учётной записью AD, чтобы проверять Jira, Confluence и SVN.</p><a class="btn" href="#settings">Войти</a></div>
 
@@ -484,7 +486,8 @@ const R = () => S?.snapshot?.route || null;
 const mbps = (x) => x == null ? "—" : `${num(x, x < 10 ? 1 : 0)} Мбит/с`;
 const msf = (x) => x == null ? "—" : x >= 1000 ? `${num(x / 1000, 1)} с` : `${num(x)} мс`;
 const clientName = () => S?.snapshot?.client?.name || "VPN";
-const clientFull = () => { const c = S?.snapshot?.client; const at = c?.profile || (c?.server ? `сервер ${c.server}` : ""); return c ? `${c.name}${at ? " · " + at : ""}` : "клиент VPN не определён"; };
+// адрес сервера — только для админов (лог, отчёт); сотруднику — имя профиля или сервера (0.9.8)
+const clientFull = () => { const c = S?.snapshot?.client; return c ? `${c.name}${c.profile ? " · " + c.profile : ""}` : "клиент VPN не определён"; };
 const officeT = () => (S?.snapshot?.targets || []).filter((x) => x.role === "light" || x.role === "speed");
 function verdict() {
   const sn = S?.snapshot, r = R(), th = TH();
@@ -938,6 +941,16 @@ async function renderNotes() {
     host.append(card);
   }
 }
+// версия a новее b: 0.9.8 > 0.9.7, 0.9.8 > 0.9.8-beta.1
+function newer(a, b) { if (!a || !b) return false; const p = (v) => { const [m, pre] = v.split("-"); return [...m.split(".").map(Number), pre ? 0 : 1, Number((pre || "").replace(/\D+/g, "")) || 0]; }; const x = p(a), y = p(b); for (let i = 0; i < x.length; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; }
+function renderUpdate() { const has = newer(S?.latest, S?.version); $("#updBanner").hidden = !has; if (!has) return;
+  const rel = `https://github.com/dominigamesru/vpn-monitor/releases/tag/v${S.latest}`;
+  $("#updText").replaceChildren(el("b", { text: S.installing ? `Ставлю ${S.latest}…` : `Доступна версия ${S.latest}` }), el("span", { class: "sub", text: S.installing ? " Приложение перезапустится само через минуту-две." : ` У вас ${S.version}. Поставится само в ближайшие минуты — или сейчас. ` }), ...(S.installing ? [] : [el("a", { href: rel, target: "_blank", rel: "noopener", text: "Что нового" })]));
+  const b = $("#updNow"); b.hidden = !!S.installing; }
+$("#updNow").addEventListener("click", async () => { const b = $("#updNow"); b.disabled = true; b.classList.add("busy"); b.textContent = "Ставлю…";
+  const r = await api("/api/update", { method: "POST", body: JSON.stringify({ install: true }) }).catch(() => null);
+  if (!r?.installing) { b.disabled = false; b.classList.remove("busy"); b.textContent = "Поставить сейчас"; $("#updText").append(el("span", { class: "sub", text: " Приложение не ответило — попробуйте ещё раз." })); return; }
+  S.installing = true; renderUpdate(); });
 $("#newsOk").addEventListener("click", async () => { $("#newsBanner").hidden = true; await api("/api/prefs", { method: "POST", body: JSON.stringify({ last_seen_version: S.version }) }); });
 
 // ---------- вкладки и опрос ----------
@@ -947,7 +960,7 @@ function renderWelcome() { if (!$("section[data-tab=welcome]") || $("section[dat
   const sn = S?.snapshot, r = sn?.route, svc = r?.services || [];
   const officeOk = svc.length ? svc.every((x) => x.st === "good") : false;
   const steps = [[!!S?.login, "Учётная запись AD", S?.login ? `${S.login} — Jira, Confluence и SVN приняли вход` : "Войдите — без этого Jira, Confluence и SVN не проверить", S?.login ? null : ["Войти", "#settings"]],
-    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", профиль " + sn.client.profile : sn.client.server ? ", сервер " + sn.client.server : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
+    [!!sn?.client, "VPN найден", sn?.client ? `${sn.client.name}${sn.client.profile ? ", " + sn.client.profile : ""}` : "Включите клиент VPN — приложение найдёт его само", null],
     [officeOk, "Офис отвечает", officeOk ? "Confluence, Jira и SVN отвечают" : S?.checking ? "Проверяю Confluence, Jira, SVN…" : "Ждём, когда офис ответит через VPN", null]];
   const firstOpen = steps.findIndex((x) => !x[0]);
   $("#wSteps").replaceChildren(...steps.map(([ok, t, d, act], i) => el("li", {}, el("span", { class: `mark ${ok ? "ok" : i === firstOpen ? "cur" : "wait"}`, text: ok ? "✓" : String(i + 1) }), el("div", {}, el("b", { text: t }), el("small", { text: d })), act ? el("a", { class: "btn ghost sm", href: act[1], text: act[0] }) : el("span"))));
@@ -983,7 +996,7 @@ async function poll(once) { clearTimeout(pt);
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
     renderHeader(); renderAnnounce(); renderWelcome(); renderNotifyBanner();
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
-    renderNow(); renderConn(); if (!once) news();
+    renderNow(); renderConn(); renderUpdate(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }
   } catch { off = true; $("#offlineBanner").hidden = false; }
   pt = setTimeout(() => poll(), S?.checking ? 1000 : 4000); }

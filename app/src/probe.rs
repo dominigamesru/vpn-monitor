@@ -435,6 +435,24 @@ pub fn confluence_rest_url(url: &str) -> Option<String> {
     ))
 }
 
+/// Лёгкий пинг (0.9.8): `HEAD` к корню сервера цели без входа и без скачивания — ответ в сотни байт, пароль на
+/// сервере не проверяется. Любой HTTP-ответ — сервер отвечает через туннель (TCP у Happ «отвечает» всегда — это свой
+/// туннель). Возвращает время ответа, мс.
+pub fn light_ping(url: &str, timeout: Duration) -> Option<f64> {
+    let u: ureq::http::Uri = url.parse().ok()?;
+    let origin = format!("{}://{}/", u.scheme_str()?, u.authority()?);
+    let t = Instant::now();
+    let r = crate::net::agent(timeout)
+        .head(&origin)
+        .config()
+        .max_redirects(0)
+        .build()
+        .call()
+        .ok()?;
+    let _ = r.status();
+    Some(ms(t.elapsed()))
+}
+
 /// `svn info` по HTTP: PROPFIND Depth 0 с тем же входом. Ответ 207 Multi-Status — SVN отвечает как SVN.
 fn svn_info(url: &str, headers: &[(String, String)], timeout: Duration) -> (bool, Option<f64>) {
     const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/><getlastmodified/></prop></propfind>"#;

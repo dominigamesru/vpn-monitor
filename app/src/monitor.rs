@@ -296,11 +296,17 @@ impl Monitor {
                 "vpn",
                 "клиент VPN: {}{} (адаптер «{}»)",
                 c.name,
-                match (&c.profile, &c.server) {
-                    (Some(p), _) => format!(", профиль «{p}»"),
-                    (None, Some(s)) => format!(", сервер {s}"),
-                    _ => String::new(),
-                },
+                format!(
+                    "{}{}",
+                    c.profile
+                        .as_deref()
+                        .map(|p| format!(", профиль «{p}»"))
+                        .unwrap_or_default(),
+                    c.server
+                        .as_deref()
+                        .map(|s| format!(", сервер {s}"))
+                        .unwrap_or_default()
+                ),
                 c.adapter
             ),
             None => info!("vpn", "клиент VPN не определён"),
@@ -632,6 +638,29 @@ impl Monitor {
             call,
             drops_hour: drops_in_hour(&mut self.drops),
         }
+    }
+}
+
+impl Monitor {
+    /// Лёгкий пинг офиса (0.9.8): хоть одна цель светофора ответила на `HEAD` — сколько мс у самой быстрой.
+    pub fn light_ping(&self) -> Option<f64> {
+        let secrets = Secrets::load(&self.secrets_path);
+        let urls: Vec<String> = self
+            .settings
+            .targets
+            .iter()
+            .filter(|t| t.enabled && t.role == Role::Light)
+            .filter_map(|t| probe::target_url(t, &secrets, false))
+            .collect();
+        std::thread::scope(|sc| {
+            let hs: Vec<_> = urls
+                .iter()
+                .map(|u| sc.spawn(move || probe::light_ping(u, Duration::from_secs(5))))
+                .collect();
+            hs.into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .reduce(f64::min)
+        })
     }
 }
 

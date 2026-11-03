@@ -290,6 +290,7 @@ fn handle(
             };
             if v["install"].as_bool() == Some(true) {
                 info!("api", "установка обновления по запросу");
+                lock(shared).install_now = true;
                 let _ = update_now.send(());
                 json_resp(&json!({"installing": true}), 202)
             } else {
@@ -898,6 +899,7 @@ fn state(shared: &SharedRef) -> Value {
         },
         // 0.9.8: следующая проверка по расписанию и свой сдвиг (минута часа, секунда)
         "next_check_ms": sh.next_check_ms,
+        "installing": sh.install_now,
         "slot": sh.prefs.slot,
         "targets": s.targets.iter().filter(|t| t.enabled).map(|t| json!({"id": t.id, "name": t.name, "role": format!("{:?}", t.role).to_lowercase()})).collect::<Vec<_>>(),
         "snapshot": snap,
