@@ -286,6 +286,9 @@ pub struct ExeInfo {
     pub crc32: String,
     #[serde(default)]
     pub size: u64,
+    /// 0.10.0: имя exe в релизе (`domini-vpn-monitor-0.10.0-windows-x64.exe`); нет — старые имена.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub asset: String,
 }
 
 impl Settings {
