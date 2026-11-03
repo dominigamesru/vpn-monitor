@@ -256,6 +256,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
     </nav>
     <button class="ib" id="themeBtn" type="button" aria-label="Тема окна"></button>
   </header>
+  <div class="banner" id="jsErr" hidden style="--c: var(--bad)"><p id="jsErrText"></p></div>
   <div class="banner" id="offlineBanner" hidden style="--c: var(--bad)"><p>Приложение не отвечает — возможно, перезапускается после обновления. Страница переподключится сама.</p></div>
   <div id="annBox"></div>
   <div class="banner" id="notifyBanner" hidden style="--c: var(--warn)"><p id="notifyBannerText"></p><div class="row"><button class="btn" type="button" data-open-notify>Открыть настройки уведомлений</button><button class="btn ghost" type="button" id="notifyLater">Не сейчас</button></div></div>
@@ -326,7 +327,7 @@ pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; over
           <h2>Учётная запись AD</h2>
           <p class="sub">Один вход для Jira, Confluence, SVN и GitLab. Пароль хранится в Диспетчере учётных данных Windows; приложение только читает.</p>
           <div id="loginState"></div>
-          <form class="login" id="loginForm" autocomplete="on">
+          <form class="login" id="loginForm" autocomplete="on" hidden>
             <label class="f">Логин<input type="text" id="loginInput" autocomplete="username" placeholder="i.ivanov" required></label>
             <label class="f">Пароль<input type="password" id="passInput" autocomplete="current-password" required></label>
             <button class="btn" type="submit" id="loginBtn">Войти</button>
@@ -1017,8 +1018,19 @@ async function loadNets() { try { const r = await api("/api/networks"); const li
   $("#netsTable").replaceChildren(list.length ? el("table", {}, el("thead", {}, el("tr", {}, ...["Сеть", "Проверок", "Интернет", "VPN", "SVN, Мбит/с", "Плохо", "Последний раз", ""].map((t) => el("th", { text: t })))), tb) : el("div", { class: "empty", text: "Данные о сетях появятся после обновления — с первой проверки." })); } catch {} }
 async function loadHistory() { try { if (!TICKETS.length) { const r = await api("/api/tickets").catch(() => ({})); TICKETS = r.tickets || []; } H = await api(`/api/history?range=${range}`); renderHistory(); } catch {} }
 let pt = null, off = false;
+// 0.9.11: ошибка отрисовки — не «приложение не отвечает»: показать текст и записать в лог приложения
+function pageError(e) { const msg = `${e?.message || e}${e?.stack ? " @ " + String(e.stack).split("\n").slice(1, 3).join(" | ").trim() : ""}`.slice(0, 600);
+  $("#jsErrText").textContent = `Ошибка окна: ${msg}`; $("#jsErr").hidden = false;
+  if (pageError.last !== msg) { pageError.last = msg; api("/api/client-log", { method: "POST", body: JSON.stringify({ msg }) }).catch(() => {}); } }
+addEventListener("error", (e) => pageError(e.error || e.message));
+addEventListener("unhandledrejection", (e) => pageError(e.reason));
 async function poll(once) { clearTimeout(pt);
-  try { S = await api("/api/state"); if (off) { off = false; $("#offlineBanner").hidden = true; }
+  try { S = await api("/api/state"); } catch { off = true; $("#offlineBanner").hidden = false; pt = setTimeout(() => poll(), 4000); return; }
+  // 0.9.11: последнее состояние — в браузер, чтобы после перезагрузки сразу показать его, а не «нет данных» и вход
+  try { localStorage.setItem("vpnmon.state", JSON.stringify(S)); } catch {}
+  renderAll(once); pt = setTimeout(() => poll(), S?.checking ? 1000 : 4000); }
+function renderAll(once) {
+  try { if (off) { off = false; $("#offlineBanner").hidden = true; }
     applyTheme();
     // фавикон = иконка в трее с текущим статусом
     const fk = `${S.snapshot?.at ?? 0}-${S.checking}`; const fav = $("#favicon"); if (fav && fk !== poll.fk) { poll.fk = fk; fav.href = `/favicon.ico?s=${encodeURIComponent(fk)}`; }
@@ -1026,9 +1038,11 @@ async function poll(once) { clearTimeout(pt);
     $("#loginBanner").hidden = !!S.login || !(S.snapshot?.targets || []).some((t) => t.note);
     renderNow(); renderConn(); renderUpdate(); if (!once) news();
     const at = S.snapshot?.at || 0; if (at !== lastAt) { lastAt = at; if (!$("section[data-tab=history]").hidden) loadHistory(); }
-  } catch { off = true; $("#offlineBanner").hidden = false; }
-  pt = setTimeout(() => poll(), S?.checking ? 1000 : 4000); }
+    $("#jsErr").hidden = true;
+  } catch (e) { pageError(e); } }
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderHistory, 150); });
+// перезагрузка: сразу — последнее известное состояние (без «новостей»), свежее заменит его через долю секунды
+try { const last = JSON.parse(localStorage.getItem("vpnmon.state") || "null"); if (last?.version) { S = last; renderAll(true); } } catch {}
 showTab(); poll();
 </script>
 </body>
