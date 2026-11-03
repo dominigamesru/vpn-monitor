@@ -221,7 +221,11 @@ input[type=text], input[type=password] { font: inherit; color: var(--ink); backg
 .diag summary::-webkit-details-marker { display: none; }
 .diag summary .h { margin-left: auto; color: var(--muted); font-size: 12.5px; text-align: right; }
 .diag ul { list-style: none; padding: 8px 0 0 26px; margin: 0; display: grid; gap: 3px; font-size: 12.5px; }
-.diag li { display: grid; grid-template-columns: 70px minmax(0,1fr); gap: 8px; } .diag li .n { color: var(--muted); }
+.diag ul.dsteps li { display: grid; grid-template-columns: 30% 70%; gap: 0; } .diag li .n { color: var(--muted); display: flex; gap: 6px; align-items: center; padding-right: 8px; }
+.diag ul.passed { list-style: disc; padding-left: 44px; color: var(--ink); }
+.diag ul.passed li { display: list-item; }
+.diag li .n .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
+.diag li .n .dot.good { background: var(--good); } .diag li .n .dot.warn { background: var(--warn); } .diag li .n .dot.bad { background: var(--bad); }
 .diag li span:last-child { overflow-wrap: anywhere; }
 pre.log { background: var(--surface-2); border-radius: 10px; padding: 12px; overflow: auto; max-height: 50vh; font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 10px 0 0; }
 .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
@@ -831,8 +835,10 @@ async function pollDiag() { const r = await api("/api/diagnostics"); const b = $
   $("#diagInfo").textContent = `Проверено в ${hhmm(d.at_ms)} за ${num(d.took_ms / 1000, 1)} с. Нажмите на строку — будут шаги.`;
   const host = $("#diag"); host.replaceChildren();
   for (const t of [...d.targets].sort((a, b) => ({ fail: 0, warn: 1, ok: 2 }[a.verdict] - { fail: 0, warn: 1, ok: 2 }[b.verdict]))) {
-    const ul = el("ul"); for (const s of t.steps) ul.append(el("li", {}, el("span", { class: "n", text: s.name }), el("span", { text: s.detail })));
-    host.append(el("details", {}, el("summary", {}, badge(DSTEP[t.verdict], t.name), el("span", { class: "h", text: t.hint })), ul));
+    // 0.9.8: что прошло — пунктами; шаги — две колонки (шаг 30% | что увидели 70%)
+    const ok = (t.passed || []).length ? el("ul", { class: "passed" }, ...t.passed.map((p) => el("li", { text: p }))) : null;
+    const ul = el("ul", { class: "dsteps" }); for (const s of t.steps) ul.append(el("li", {}, el("span", { class: "n" }, el("span", { class: `dot ${DSTEP[s.status] || "idle"}` }), s.name), el("span", { text: s.detail })));
+    host.append(el("details", {}, el("summary", {}, badge(DSTEP[t.verdict], t.name), el("span", { class: "h", text: t.hint })), ...[ok, ul].filter(Boolean)));
   }
   const net = el("ul"); for (const a of d.adapters.filter((x) => x.up)) net.append(el("li", {}, el("span", { class: "n", text: a.vpn_like ? `VPN · ${a.kind || "туннель"}` : (a.kind || "сеть") }), el("span", { text: `${a.name} — ${a.description}${a.ipv4.length ? " · " + a.ipv4.join(", ") : ""}` })));
   net.append(el("li", {}, el("span", { class: "n", text: "прокси" }), el("span", { text: d.system_proxy })));
